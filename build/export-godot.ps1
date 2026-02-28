@@ -170,4 +170,9 @@ if ($failed.Count -gt 0) {
     Write-Host ":: All exports complete!" -ForegroundColor Green
     Write-Host "   Artifact root: build\_artifacts\$semver" -ForegroundColor Green
     Write-Host "   Version:       $semver" -ForegroundColor Green
+
+    # Write latest pointer for easy launching
+    $latestFile = Join-Path $repoRoot "build" "_artifacts" "latest.txt"
+    $semver | Set-Content $latestFile -Encoding UTF8 -NoNewline
+    Write-Host "   Latest:        build\_artifacts\latest.txt -> $semver" -ForegroundColor Green
 }

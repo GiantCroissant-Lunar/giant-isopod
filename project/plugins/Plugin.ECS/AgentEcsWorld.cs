@@ -53,7 +53,7 @@ public sealed class AgentEcsWorld
 
         var entity = _store.CreateEntity(
             new AgentIdentity { AgentId = agentId, DisplayName = info.DisplayName },
-            new WorldPosition { X = 200 + rng.Next(800), Y = 150 + rng.Next(500) },
+            new WorldPosition { X = 100 + rng.Next(600), Y = 80 + rng.Next(300) },
             new Movement(),
             new ActivityState { Current = Activity.Idle },
             new AgentVisual { PaletteIndex = paletteIndex, Facing = Direction.Down },

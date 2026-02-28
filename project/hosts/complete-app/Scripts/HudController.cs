@@ -54,34 +54,42 @@ public partial class HudController : Control
 
     private void CreateButtons()
     {
+        // Floating create button — added directly to this Control (HUDRoot)
+        // Positioned top-left, big and obvious
+        var spawnBtn = new Button { Text = "+ Create Agent" };
+        spawnBtn.Name = "SpawnButton";
+        spawnBtn.AddThemeColorOverride("font_color", new Color(0.85f, 1.0f, 0.85f));
+        spawnBtn.AddThemeFontSizeOverride("font_size", 16);
+        var spawnStyle = new StyleBoxFlat();
+        spawnStyle.BgColor = new Color(0.1f, 0.35f, 0.15f, 0.95f);
+        spawnStyle.CornerRadiusTopLeft = 6;
+        spawnStyle.CornerRadiusTopRight = 6;
+        spawnStyle.CornerRadiusBottomLeft = 6;
+        spawnStyle.CornerRadiusBottomRight = 6;
+        spawnStyle.ContentMarginLeft = 16;
+        spawnStyle.ContentMarginRight = 16;
+        spawnStyle.ContentMarginTop = 8;
+        spawnStyle.ContentMarginBottom = 8;
+        spawnStyle.BorderWidthTop = 2;
+        spawnStyle.BorderWidthBottom = 2;
+        spawnStyle.BorderWidthLeft = 2;
+        spawnStyle.BorderWidthRight = 2;
+        spawnStyle.BorderColor = new Color(0.3f, 0.7f, 0.35f, 0.8f);
+        spawnBtn.AddThemeStyleboxOverride("normal", spawnStyle);
+        var spawnHover = (StyleBoxFlat)spawnStyle.Duplicate();
+        spawnHover.BgColor = new Color(0.15f, 0.45f, 0.2f, 0.98f);
+        spawnBtn.AddThemeStyleboxOverride("hover", spawnHover);
+        spawnBtn.Position = new Vector2(12, 40);
+        spawnBtn.Pressed += () => OnSpawnRequested?.Invoke();
+        AddChild(spawnBtn);
+
         if (_agentList == null) return;
 
-        // Header
+        // Header in side panel
         var header = new Label { Text = "Agents" };
         header.AddThemeColorOverride("font_color", new Color(0.55f, 0.58f, 0.65f));
         header.AddThemeFontSizeOverride("font_size", 12);
         _agentList.AddChild(header);
-
-        // Spawn button
-        var spawnBtn = new Button { Text = "+ Spawn Agent" };
-        spawnBtn.AddThemeColorOverride("font_color", new Color(0.3f, 0.85f, 0.4f));
-        spawnBtn.AddThemeFontSizeOverride("font_size", 12);
-        var spawnStyle = new StyleBoxFlat();
-        spawnStyle.BgColor = new Color(0.15f, 0.25f, 0.18f, 0.8f);
-        spawnStyle.CornerRadiusTopLeft = 4;
-        spawnStyle.CornerRadiusTopRight = 4;
-        spawnStyle.CornerRadiusBottomLeft = 4;
-        spawnStyle.CornerRadiusBottomRight = 4;
-        spawnStyle.ContentMarginLeft = 8;
-        spawnStyle.ContentMarginRight = 8;
-        spawnStyle.ContentMarginTop = 4;
-        spawnStyle.ContentMarginBottom = 4;
-        spawnBtn.AddThemeStyleboxOverride("normal", spawnStyle);
-        var spawnHover = (StyleBoxFlat)spawnStyle.Duplicate();
-        spawnHover.BgColor = new Color(0.18f, 0.32f, 0.22f, 0.9f);
-        spawnBtn.AddThemeStyleboxOverride("hover", spawnHover);
-        spawnBtn.Pressed += () => OnSpawnRequested?.Invoke();
-        _agentList.AddChild(spawnBtn);
 
         var sep = new HSeparator();
         sep.AddThemeConstantOverride("separation", 6);

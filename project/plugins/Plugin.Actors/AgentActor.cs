@@ -138,6 +138,17 @@ public sealed class AgentActor : UntypedActor
                     var state = DemoStates[tick.Index % DemoStates.Length];
                     Context.System.ActorSelection("/user/viewport")
                         .Tell(new AgentStateChanged(_agentId, state));
+                    // Emit demo console output so the CLI panel isn't empty
+                    var demoLine = state switch
+                    {
+                        AgentActivityState.Thinking => $"[{DateTime.Now:HH:mm:ss}] thinking...",
+                        AgentActivityState.Typing => $"[{DateTime.Now:HH:mm:ss}] writing code in src/main.cs",
+                        AgentActivityState.Reading => $"[{DateTime.Now:HH:mm:ss}] reading docs/architecture.md",
+                        AgentActivityState.Waiting => $"[{DateTime.Now:HH:mm:ss}] waiting for response...",
+                        _ => $"[{DateTime.Now:HH:mm:ss}] idle"
+                    };
+                    Context.System.ActorSelection("/user/viewport")
+                        .Tell(new ProcessOutput(_agentId, demoLine));
                     ScheduleNextDemoTick(tick.Index + 1);
                 }
                 break;

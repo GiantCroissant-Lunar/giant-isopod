@@ -29,8 +29,8 @@ public class WanderSystem : QuerySystem<WorldPosition, Movement, ActivityState>
 
             mov.TargetTileX = (int)(pos.X / 16f) + _rng.Next(-4, 5);
             mov.TargetTileY = (int)(pos.Y / 16f) + _rng.Next(-3, 4);
-            mov.TargetTileX = Math.Clamp(mov.TargetTileX, 12, 70);
-            mov.TargetTileY = Math.Clamp(mov.TargetTileY, 8, 50);
+            mov.TargetTileX = Math.Clamp(mov.TargetTileX, 4, 56);
+            mov.TargetTileY = Math.Clamp(mov.TargetTileY, 4, 30);
             mov.HasTarget = true;
         });
     }
