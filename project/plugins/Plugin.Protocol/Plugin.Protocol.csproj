@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>GiantIsopod.Plugin.Protocol</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\contracts\Contracts.Core\Contracts.Core.csproj" />
+    <ProjectReference Include="..\..\contracts\Contracts.Protocol\Contracts.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>
