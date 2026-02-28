@@ -25,8 +25,7 @@ public partial class HudController : Control
     private Label? _consoleTitle;
     private string? _selectedAgentId;
     private Control? _terminalContainer; // holds the currently visible Terminal
-    private readonly Dictionary<string, GodotObject> _agentTerminals = new(); // agentId → Terminal node
-    private readonly Dictionary<string, GodotObject> _agentPtys = new(); // agentId → PTY node
+    private readonly Dictionary<string, GodotObject> _agentTerminals = new(); // agentId → AgentTerminal instance
     private static readonly string ConsoleLogPath = System.IO.Path.Combine(
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
         "giant-isopod-console.log");
@@ -283,55 +282,30 @@ public partial class HudController : Control
     }
 
     /// <summary>
-    /// Creates a GodotXterm Terminal + PTY pair for an agent and forks pi.
+    /// Creates a GodotXterm Terminal + PTY pair for an agent by instantiating the AgentTerminal scene.
     /// </summary>
     private void CreateTerminalForAgent(string agentId)
     {
         if (_agentTerminals.ContainsKey(agentId) || _terminalContainer == null) return;
 
-        // Create Terminal node (GDExtension class)
-        var terminal = ClassDB.Instantiate("Terminal").AsGodotObject();
-        if (terminal is not Control termControl)
+        var scene = GD.Load<PackedScene>("res://Scenes/AgentTerminal.tscn");
+        if (scene == null)
         {
-            GD.PrintErr($"Failed to create Terminal node for {agentId}");
+            GD.PrintErr($"Failed to load AgentTerminal.tscn for {agentId}");
             return;
         }
 
-        termControl.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        termControl.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        termControl.SetAnchorsPreset(LayoutPreset.FullRect);
-        termControl.Visible = false;
-        _terminalContainer.AddChild(termControl);
+        var instance = scene.Instantiate<Control>();
+        instance.Visible = false;
+        instance.SetAnchorsPreset(LayoutPreset.FullRect);
+        _terminalContainer.AddChild(instance);
 
-        // Create PTY node
-        var pty = ClassDB.Instantiate("PTY").AsGodotObject();
-        if (pty is not Node ptyNode)
-        {
-            GD.PrintErr($"Failed to create PTY node for {agentId}");
-            return;
-        }
+        _agentTerminals[agentId] = instance;
 
-        // Set PTY terminal_path to point to the Terminal node
-        ptyNode.Set("terminal_path", termControl.GetPath());
-        // Set environment variables for pi
-        var env = new Godot.Collections.Dictionary();
-        env["COLORTERM"] = "truecolor";
-        env["TERM"] = "xterm-256color";
-        env["ZAI_API_KEY"] = "08bbb0b6b8d649fbbafa5c11091e5ac3.4dzlUajBX9I8oE0F";
-        ptyNode.Set("env", env);
-        ptyNode.Set("use_os_env", true);
-
-        termControl.AddChild(ptyNode);
-
-        _agentTerminals[agentId] = terminal;
-        _agentPtys[agentId] = pty;
-
-        // Fork pi in text mode
-        var args = new string[] { "--mode", "text", "--no-session", "--provider", "zai", "--model", "glm-4.7",
-            "-p", "Explore the current directory, read key files, and suggest improvements." };
+        // Fork pi via the GDScript method
         var cwd = @"C:\lunar-horse\yokan-projects\giant-isopod";
-        var result = ptyNode.Call("fork", "pi", args, cwd, 120, 24);
-
+        var apiKey = "08bbb0b6b8d649fbbafa5c11091e5ac3.4dzlUajBX9I8oE0F";
+        var result = instance.Call("fork_pi", cwd, apiKey);
         GD.Print($"PTY fork for {agentId}: {result}");
     }
 
@@ -340,14 +314,9 @@ public partial class HudController : Control
     /// </summary>
     private void CleanupTerminalForAgent(string agentId)
     {
-        if (_agentPtys.TryGetValue(agentId, out var pty) && pty is Node ptyNode)
-        {
-            ptyNode.Call("kill", 9); // SIGKILL
-            ptyNode.QueueFree();
-            _agentPtys.Remove(agentId);
-        }
         if (_agentTerminals.TryGetValue(agentId, out var term) && term is Control termControl)
         {
+            termControl.Call("kill_process");
             termControl.QueueFree();
             _agentTerminals.Remove(agentId);
         }
