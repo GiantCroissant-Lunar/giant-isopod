@@ -18,7 +18,9 @@ func fork_pi(cwd: String, api_key: String) -> int:
 	pty.env["TERM"] = "xterm-256color"
 	pty.use_os_env = true
 
+	# Use cmd /c to resolve PATH on Windows (ConPTY can't find npm-installed binaries directly)
 	var args := PackedStringArray([
+		"/c", "pi",
 		"--mode", "text",
 		"--no-session",
 		"--provider", "zai",
@@ -26,7 +28,7 @@ func fork_pi(cwd: String, api_key: String) -> int:
 		"-p", "Explore the current directory, read key files, and suggest improvements."
 	])
 
-	var result = pty.fork("pi", args, cwd, 120, 24)
+	var result = pty.fork("cmd.exe", args, cwd, 120, 24)
 	_forked = (result == OK)
 	return result
 
