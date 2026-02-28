@@ -52,6 +52,11 @@ public sealed class AgentWorldSystem : IDisposable
             "viewport");
     }
 
+    public void SetViewportBridge(GiantIsopod.Contracts.Core.IViewportBridge bridge)
+    {
+        Viewport.Tell(new GiantIsopod.Contracts.Core.SetViewportBridge(bridge));
+    }
+
     public void Dispose()
     {
         _system.Terminate().Wait(TimeSpan.FromSeconds(10));
