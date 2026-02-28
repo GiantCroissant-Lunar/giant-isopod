@@ -5,6 +5,12 @@
       "repo": "https://github.com/anthropics/skills.git",
       "path": "skills/skill-creator",
       "ref": "main"
+    },
+    {
+      "name": "pdf",
+      "repo": "https://github.com/openai/skills.git",
+      "path": "skills/.curated/pdf",
+      "ref": "main"
     }
   ]
 }
