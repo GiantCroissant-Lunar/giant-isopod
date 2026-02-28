@@ -27,6 +27,48 @@ public partial class HudController : Control
         // Set version from assembly info or project setting
         var version = ProjectSettings.GetSetting("application/config/version", "dev").AsString();
         if (_versionLabel != null) _versionLabel.Text = $"v{version}";
+
+        ApplyTheme();
+    }
+
+    private void ApplyTheme()
+    {
+        // Style the top bar
+        var topBar = GetNodeOrNull<HBoxContainer>("TopBar");
+        if (topBar != null)
+        {
+            var topBg = new StyleBoxFlat();
+            topBg.BgColor = new Color(0.1f, 0.11f, 0.15f, 0.9f);
+            topBg.ContentMarginLeft = 12;
+            topBg.ContentMarginRight = 12;
+            topBg.ContentMarginTop = 6;
+            topBg.ContentMarginBottom = 6;
+            topBg.BorderWidthBottom = 1;
+            topBg.BorderColor = new Color(0.2f, 0.22f, 0.28f);
+            topBar.AddThemeStyleboxOverride("panel", topBg);
+        }
+
+        // Style the agent panel
+        var agentPanel = GetNodeOrNull<PanelContainer>("AgentPanel");
+        if (agentPanel != null)
+        {
+            var panelBg = new StyleBoxFlat();
+            panelBg.BgColor = new Color(0.1f, 0.11f, 0.15f, 0.85f);
+            panelBg.ContentMarginLeft = 10;
+            panelBg.ContentMarginRight = 10;
+            panelBg.ContentMarginTop = 10;
+            panelBg.ContentMarginBottom = 10;
+            panelBg.CornerRadiusTopLeft = 6;
+            panelBg.CornerRadiusBottomLeft = 6;
+            panelBg.BorderWidthLeft = 1;
+            panelBg.BorderColor = new Color(0.2f, 0.22f, 0.28f);
+            agentPanel.AddThemeStyleboxOverride("panel", panelBg);
+        }
+
+        // Style labels
+        _agentCountLabel?.AddThemeColorOverride("font_color", new Color(0.7f, 0.75f, 0.85f));
+        _versionLabel?.AddThemeColorOverride("font_color", new Color(0.45f, 0.48f, 0.55f));
+        _versionLabel?.AddThemeFontSizeOverride("font_size", 12);
     }
 
     /// <summary>
@@ -57,6 +99,19 @@ public partial class HudController : Control
     private void AddAgent(string agentId, AgentVisualInfo info)
     {
         if (_entries.ContainsKey(agentId) || _agentList == null) return;
+
+        // Add header on first agent
+        if (_entries.Count == 0)
+        {
+            var header = new Label { Text = "Active Agents" };
+            header.AddThemeColorOverride("font_color", new Color(0.55f, 0.58f, 0.65f));
+            header.AddThemeFontSizeOverride("font_size", 12);
+            _agentList.AddChild(header);
+
+            var sep = new HSeparator();
+            sep.AddThemeConstantOverride("separation", 6);
+            _agentList.AddChild(sep);
+        }
 
         var entry = new AgentHudEntry(agentId, info.DisplayName);
         _agentList.AddChild(entry.Root);
@@ -110,12 +165,23 @@ public sealed class AgentHudEntry
     public AgentHudEntry(string agentId, string displayName)
     {
         Root = new HBoxContainer();
+        Root.AddThemeConstantOverride("separation", 8);
+
+        // Colored dot indicator
+        var dot = new ColorRect();
+        dot.CustomMinimumSize = new Vector2(8, 8);
+        dot.Color = new Color(0.4f, 0.45f, 0.5f);
+        dot.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+        Root.AddChild(dot);
 
         _nameLabel = new Label { Text = displayName };
         _nameLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        _nameLabel.AddThemeColorOverride("font_color", new Color(0.8f, 0.82f, 0.88f));
+        _nameLabel.AddThemeFontSizeOverride("font_size", 13);
 
         _stateLabel = new Label { Text = "idle" };
-        _stateLabel.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.6f));
+        _stateLabel.AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.55f));
+        _stateLabel.AddThemeFontSizeOverride("font_size", 11);
 
         Root.AddChild(_nameLabel);
         Root.AddChild(_stateLabel);

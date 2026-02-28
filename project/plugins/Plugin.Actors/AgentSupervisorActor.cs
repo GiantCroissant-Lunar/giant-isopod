@@ -67,7 +67,9 @@ public sealed class AgentSupervisorActor : UntypedActor
                 _agents[spawn.AgentId] = agentRef;
                 _logger.LogInformation("Spawned agent {AgentId}", spawn.AgentId);
                 Sender.Tell(new AgentSpawned(spawn.AgentId));
-                Context.Parent.Tell(new AgentSpawned(spawn.AgentId));
+                // Notify viewport so the UI can render the agent
+                Context.System.ActorSelection("/user/viewport")
+                    .Tell(new AgentSpawned(spawn.AgentId));
                 break;
 
             case StopAgent stop:
@@ -77,6 +79,8 @@ public sealed class AgentSupervisorActor : UntypedActor
                     _agents.Remove(stop.AgentId);
                     _logger.LogInformation("Stopped agent {AgentId}", stop.AgentId);
                     Sender.Tell(new AgentStopped(stop.AgentId));
+                    Context.System.ActorSelection("/user/viewport")
+                        .Tell(new AgentStopped(stop.AgentId));
                 }
                 break;
 

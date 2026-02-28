@@ -47,3 +47,7 @@ public record RenderGenUI(string AgentId, string A2UIJson);
 // ── Viewport bridge ──
 
 public record SetViewportBridge(IViewportBridge Bridge);
+
+// ── Agent spawn with visual info (actor → viewport) ──
+
+public record AgentSpawnedWithVisuals(string AgentId, AgentVisualInfo VisualInfo);

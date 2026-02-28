@@ -7,6 +7,7 @@ namespace GiantIsopod.Plugin.Actors;
 /// <summary>
 /// /user/agents/{name} — owns an agent's pi process, skill registration, and memory reference.
 /// Child actors: rpc (process pipe), tasks (task lifecycle).
+/// Loads AIEOS profile for visual identity. Runs a demo activity cycle when pi is not connected.
 /// </summary>
 public sealed class AgentActor : UntypedActor
 {
@@ -20,6 +21,18 @@ public sealed class AgentActor : UntypedActor
     private readonly ILogger<AgentActor> _logger;
 
     private IActorRef? _rpcActor;
+    private bool _piConnected;
+    private ICancelable? _demoTimer;
+
+    private static readonly AgentActivityState[] DemoStates =
+    [
+        AgentActivityState.Idle,
+        AgentActivityState.Thinking,
+        AgentActivityState.Typing,
+        AgentActivityState.Reading,
+        AgentActivityState.Idle,
+        AgentActivityState.Waiting,
+    ];
 
     public AgentActor(
         string agentId,
@@ -51,7 +64,15 @@ public sealed class AgentActor : UntypedActor
             Props.Create(() => new AgentTaskActor(_agentId)),
             "tasks");
 
-        _registry.Tell(new RegisterSkills(_agentId, new HashSet<string>()));
+        // Load AIEOS profile for visual info and capabilities
+        var visualInfo = LoadVisualInfo();
+        var capabilities = LoadCapabilities();
+
+        _registry.Tell(new RegisterSkills(_agentId, capabilities));
+
+        // Notify viewport with rich visual info
+        Context.System.ActorSelection("/user/viewport")
+            .Tell(new AgentSpawnedWithVisuals(_agentId, visualInfo));
 
         if (_memoryFilePath != null)
         {
@@ -60,10 +81,14 @@ public sealed class AgentActor : UntypedActor
 
         _rpcActor.Tell(new StartProcess(_agentId));
         _logger.LogInformation("Agent {AgentId} started (bundle: {Bundle})", _agentId, _skillBundleName);
+
+        // Start demo activity cycle (replaced by real pi events when connected)
+        StartDemoTimer();
     }
 
     protected override void PostStop()
     {
+        _demoTimer?.Cancel();
         _registry.Tell(new UnregisterSkills(_agentId));
         _logger.LogInformation("Agent {AgentId} stopped", _agentId);
     }
@@ -76,26 +101,115 @@ public sealed class AgentActor : UntypedActor
                 _rpcActor?.Forward(prompt);
                 break;
 
+            case ProcessStarted started when started.ProcessId > 0:
+                _piConnected = true;
+                _demoTimer?.Cancel();
+                _logger.LogInformation("Agent {AgentId} pi connected (pid: {Pid})", _agentId, started.ProcessId);
+                break;
+
             case ProcessEvent evt:
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new AgentStateChanged(_agentId, MapEventToState(evt.RawJson)));
-
                 if (_memoryFilePath != null)
-                {
                     _memorySupervisor.Tell(new StoreMemory(_agentId, evt.RawJson, "process_event"));
-                }
                 break;
 
             case ProcessExited exited:
+                _piConnected = false;
                 _logger.LogWarning("Agent {AgentId} process exited (code: {Code})", _agentId, exited.ExitCode);
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new AgentStateChanged(_agentId, AgentActivityState.Idle));
+                StartDemoTimer();
                 break;
 
             case TaskAssigned task:
                 Context.Child("tasks").Forward(task);
                 break;
+
+            case DemoTick tick:
+                if (!_piConnected)
+                {
+                    var state = DemoStates[tick.Index % DemoStates.Length];
+                    Context.System.ActorSelection("/user/viewport")
+                        .Tell(new AgentStateChanged(_agentId, state));
+                    ScheduleNextDemoTick(tick.Index + 1);
+                }
+                break;
         }
+    }
+
+    private void StartDemoTimer()
+    {
+        _demoTimer?.Cancel();
+        ScheduleNextDemoTick(0);
+    }
+
+    private void ScheduleNextDemoTick(int nextIndex)
+    {
+        var rng = new Random(_agentId.GetHashCode() + nextIndex);
+        var delay = TimeSpan.FromSeconds(2.0 + rng.NextDouble() * 4.0);
+        _demoTimer = Context.System.Scheduler.ScheduleTellOnceCancelable(
+            delay, Self, new DemoTick(nextIndex), Self);
+    }
+
+    private AgentVisualInfo LoadVisualInfo()
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(_aieosProfilePath))
+            {
+                // _aieosProfilePath contains the JSON content (read by Godot from PCK)
+                var entity = System.Text.Json.JsonSerializer.Deserialize<
+                    GiantIsopod.Contracts.Protocol.Aieos.AieosEntity>(_aieosProfilePath);
+
+                if (entity != null)
+                {
+                    var displayName = entity.Identity?.Names?.First
+                        ?? entity.Metadata?.Alias
+                        ?? _agentId;
+
+                    return new AgentVisualInfo(
+                        _agentId,
+                        displayName,
+                        SkinTone: entity.Physicality?.Face?.Skin?.Tone,
+                        HairStyle: entity.Physicality?.Face?.Hair?.Style,
+                        HairColor: entity.Physicality?.Face?.Hair?.Color,
+                        AestheticArchetype: entity.Physicality?.Style?.AestheticArchetype);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load AIEOS profile for {AgentId}", _agentId);
+        }
+
+        return new AgentVisualInfo(_agentId, _agentId);
+    }
+
+    private HashSet<string> LoadCapabilities()
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(_aieosProfilePath))
+            {
+                var entity = System.Text.Json.JsonSerializer.Deserialize<
+                    GiantIsopod.Contracts.Protocol.Aieos.AieosEntity>(_aieosProfilePath);
+
+                if (entity?.Capabilities?.Skills != null)
+                {
+                    return entity.Capabilities.Skills
+                        .Where(s => s.Name != null)
+                        .Select(s => s.Name!)
+                        .ToHashSet();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load capabilities for {AgentId}", _agentId);
+        }
+
+        return new HashSet<string>();
     }
 
     private static AgentActivityState MapEventToState(string rawJson)
@@ -105,4 +219,6 @@ public sealed class AgentActor : UntypedActor
         if (rawJson.Contains("\"thinking\"")) return AgentActivityState.Thinking;
         return AgentActivityState.Idle;
     }
+
+    private sealed record DemoTick(int Index);
 }

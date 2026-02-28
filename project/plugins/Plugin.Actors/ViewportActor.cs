@@ -35,6 +35,10 @@ public sealed class ViewportActor : UntypedActor
                 _bridge?.PublishAgentSpawned(spawned.AgentId, new AgentVisualInfo(spawned.AgentId, spawned.AgentId));
                 break;
 
+            case AgentSpawnedWithVisuals spawnedVisuals:
+                _bridge?.PublishAgentSpawned(spawnedVisuals.AgentId, spawnedVisuals.VisualInfo);
+                break;
+
             case AgentStopped stopped:
                 _bridge?.PublishAgentDespawned(stopped.AgentId);
                 break;

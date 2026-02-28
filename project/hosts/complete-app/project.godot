@@ -10,8 +10,9 @@ config_version=5
 
 [application]
 
-config/name="complete-app"
+config/name="Giant Isopod"
 run/main_scene="res://Scenes/Main.tscn"
+config/version="0.1.0"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 
@@ -31,5 +32,6 @@ project/solution_directory="../../"
 
 [rendering]
 
+environment/defaults/default_clear_color=Color(0.08, 0.09, 0.12, 1)
 rendering_device/driver.windows="d3d12"
 textures/vram_compression/import_etc2_astc=true
