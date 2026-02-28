@@ -76,6 +76,23 @@ public partial class Main : Node2D
         {
             _hud.ApplyEvent(evt);
             ApplyEventToEcs(evt);
+
+            // Generate console output directly from state changes
+            // (bypasses actor pipeline which may drop ProcessOutput messages)
+            if (evt is StateChangedEvent sc)
+            {
+                var ts = DateTime.Now.ToString("HH:mm:ss");
+                var line = sc.State switch
+                {
+                    AgentActivityState.Thinking => $"[{ts}] Analyzing task requirements...",
+                    AgentActivityState.Typing => $"[{ts}] tool_use: edit_file src/main.cs",
+                    AgentActivityState.Reading => $"[{ts}] tool_use: read_file docs/architecture.md",
+                    AgentActivityState.Waiting => $"[{ts}] Waiting for tool result...",
+                    AgentActivityState.Idle => $"[{ts}] idle",
+                    _ => $"[{ts}] {sc.State}"
+                };
+                _hud.AppendConsoleOutput(sc.AgentId, line);
+            }
         }
 
         // 2. Tick ECS systems (movement, animation, wander)
