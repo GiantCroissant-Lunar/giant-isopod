@@ -8,7 +8,7 @@ namespace GiantIsopod.Hosts.CompleteApp;
 /// </summary>
 public partial class HudController : Control
 {
-    public event Action? OnSpawnRequested;
+    public event Action<string>? OnSpawnRequested; // passes selected CLI provider id
     public event Action<string>? OnRemoveRequested;
 
     private Label? _agentCountLabel;
@@ -19,6 +19,8 @@ public partial class HudController : Control
 
     private readonly Dictionary<string, AgentHudEntry> _entries = new();
     private readonly HashSet<string> _activeProcesses = new();
+    private OptionButton? _providerDropdown;
+    private List<string> _providerIds = new();
 
     // Console view — GodotXterm Terminal + PTY per agent
     private PanelContainer? _consolePanel;
@@ -69,34 +71,60 @@ public partial class HudController : Control
 
     private void CreateButtons()
     {
-        // Floating create button — added directly to this Control (HUDRoot)
-        // Positioned top-left, big and obvious
-        var spawnBtn = new Button { Text = "+ Create Agent" };
-        spawnBtn.Name = "SpawnButton";
+        // Floating spawn row — dropdown + button, top-left
+        var spawnRow = new HBoxContainer();
+        spawnRow.Name = "SpawnRow";
+        spawnRow.Position = new Vector2(12, 40);
+        spawnRow.AddThemeConstantOverride("separation", 4);
+
+        // CLI provider dropdown
+        _providerDropdown = new OptionButton();
+        _providerDropdown.AddThemeFontSizeOverride("font_size", 14);
+        _providerDropdown.AddThemeColorOverride("font_color", new Color(0.8f, 0.85f, 0.95f));
+        _providerDropdown.CustomMinimumSize = new Vector2(120, 0);
+        var dropStyle = new StyleBoxFlat();
+        dropStyle.BgColor = new Color(0.12f, 0.13f, 0.18f, 0.95f);
+        dropStyle.CornerRadiusTopLeft = 6;
+        dropStyle.CornerRadiusBottomLeft = 6;
+        dropStyle.ContentMarginLeft = 10;
+        dropStyle.ContentMarginRight = 10;
+        dropStyle.ContentMarginTop = 8;
+        dropStyle.ContentMarginBottom = 8;
+        dropStyle.BorderWidthTop = 2;
+        dropStyle.BorderWidthBottom = 2;
+        dropStyle.BorderWidthLeft = 2;
+        dropStyle.BorderColor = new Color(0.25f, 0.3f, 0.4f, 0.8f);
+        _providerDropdown.AddThemeStyleboxOverride("normal", dropStyle);
+        spawnRow.AddChild(_providerDropdown);
+
+        // Spawn button
+        var spawnBtn = new Button { Text = "+ Create" };
         spawnBtn.AddThemeColorOverride("font_color", new Color(0.85f, 1.0f, 0.85f));
-        spawnBtn.AddThemeFontSizeOverride("font_size", 16);
+        spawnBtn.AddThemeFontSizeOverride("font_size", 14);
         var spawnStyle = new StyleBoxFlat();
         spawnStyle.BgColor = new Color(0.1f, 0.35f, 0.15f, 0.95f);
-        spawnStyle.CornerRadiusTopLeft = 6;
         spawnStyle.CornerRadiusTopRight = 6;
-        spawnStyle.CornerRadiusBottomLeft = 6;
         spawnStyle.CornerRadiusBottomRight = 6;
-        spawnStyle.ContentMarginLeft = 16;
-        spawnStyle.ContentMarginRight = 16;
+        spawnStyle.ContentMarginLeft = 12;
+        spawnStyle.ContentMarginRight = 12;
         spawnStyle.ContentMarginTop = 8;
         spawnStyle.ContentMarginBottom = 8;
         spawnStyle.BorderWidthTop = 2;
         spawnStyle.BorderWidthBottom = 2;
-        spawnStyle.BorderWidthLeft = 2;
         spawnStyle.BorderWidthRight = 2;
         spawnStyle.BorderColor = new Color(0.3f, 0.7f, 0.35f, 0.8f);
         spawnBtn.AddThemeStyleboxOverride("normal", spawnStyle);
         var spawnHover = (StyleBoxFlat)spawnStyle.Duplicate();
         spawnHover.BgColor = new Color(0.15f, 0.45f, 0.2f, 0.98f);
         spawnBtn.AddThemeStyleboxOverride("hover", spawnHover);
-        spawnBtn.Position = new Vector2(12, 40);
-        spawnBtn.Pressed += () => OnSpawnRequested?.Invoke();
-        AddChild(spawnBtn);
+        spawnBtn.Pressed += () =>
+        {
+            var selectedId = GetSelectedProviderId();
+            OnSpawnRequested?.Invoke(selectedId);
+        };
+        spawnRow.AddChild(spawnBtn);
+
+        AddChild(spawnRow);
 
         if (_agentList == null) return;
 
@@ -557,6 +585,29 @@ public partial class HudController : Control
             return $"\u001b[31m{text}\u001b[0m"; // red
 
         return text;
+    }
+
+    /// <summary>
+    /// Populates the CLI provider dropdown from the loaded registry.
+    /// Call from Main._Ready() after HUD is initialized.
+    /// </summary>
+    public void SetProviders(IReadOnlyCollection<GiantIsopod.Contracts.Protocol.CliProvider.CliProviderEntry> providers)
+    {
+        _providerIds.Clear();
+        _providerDropdown?.Clear();
+        foreach (var p in providers)
+        {
+            _providerIds.Add(p.Id);
+            _providerDropdown?.AddItem(p.DisplayName ?? p.Id);
+        }
+    }
+
+    private string GetSelectedProviderId()
+    {
+        if (_providerDropdown == null || _providerIds.Count == 0)
+            return "pi";
+        var idx = _providerDropdown.Selected;
+        return idx >= 0 && idx < _providerIds.Count ? _providerIds[idx] : _providerIds[0];
     }
 
     private void DebugLog(string message)

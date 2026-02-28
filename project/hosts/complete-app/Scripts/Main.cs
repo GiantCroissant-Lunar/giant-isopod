@@ -77,6 +77,9 @@ public partial class Main : Node2D
         _hud.OnSpawnRequested += HandleSpawnRequest;
         _hud.OnRemoveRequested += HandleRemoveRequest;
 
+        // Populate CLI provider dropdown
+        _hud.SetProviders(cliProviders.All);
+
         QueueRedraw();
         CacheAgentProfiles();
 
@@ -189,12 +192,12 @@ public partial class Main : Node2D
     }
 
 
-    private void HandleSpawnRequest()
+    private void HandleSpawnRequest(string cliProviderId)
     {
         if (_agentWorld == null) return;
 
         _nextAgentIndex++;
-        var agentId = $"agent-{_nextAgentIndex}";
+        var agentId = $"{cliProviderId}-{_nextAgentIndex}";
 
         // Pick a random cached profile or use a minimal default
         string profileJson = "{}";
@@ -204,9 +207,9 @@ public partial class Main : Node2D
             profileJson = profiles[_nextAgentIndex % profiles.Length];
         }
 
-        _logger?.LogInformation("Spawning agent: {AgentId}", agentId);
+        _logger?.LogInformation("Spawning agent: {AgentId} (cli: {Provider})", agentId, cliProviderId);
         _agentWorld.AgentSupervisor.Tell(
-            new SpawnAgent(agentId, profileJson, "builder"),
+            new SpawnAgent(agentId, profileJson, "builder", CliProviderId: cliProviderId),
             Akka.Actor.ActorRefs.NoSender);
     }
 

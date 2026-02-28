@@ -2,7 +2,7 @@ namespace GiantIsopod.Contracts.Core;
 
 // ── Agent lifecycle ──
 
-public record SpawnAgent(string AgentId, string AieosProfilePath, string SkillBundleName, string? MemoryFilePath = null);
+public record SpawnAgent(string AgentId, string AieosProfilePath, string SkillBundleName, string? MemoryFilePath = null, string? CliProviderId = null);
 public record AgentSpawned(string AgentId);
 public record StopAgent(string AgentId);
 public record AgentStopped(string AgentId);

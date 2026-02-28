@@ -12,14 +12,16 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class AgentRpcActor : UntypedActor
 {
     private readonly string _agentId;
+    private readonly string? _cliProviderId;
     private readonly AgentWorldConfig _config;
     private IAgentProcess? _process;
     private CancellationTokenSource? _cts;
 
-    public AgentRpcActor(string agentId, AgentWorldConfig config)
+    public AgentRpcActor(string agentId, AgentWorldConfig config, string? cliProviderId = null)
     {
         _agentId = agentId;
         _config = config;
+        _cliProviderId = cliProviderId;
     }
 
     protected override void OnReceive(object message)
@@ -48,7 +50,7 @@ public sealed class AgentRpcActor : UntypedActor
             ? _config.CliWorkingDirectory
             : System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
 
-        var provider = _config.CliProviders.ResolveOrDefault(_config.DefaultCliProviderId);
+        var provider = _config.CliProviders.ResolveOrDefault(_cliProviderId ?? _config.DefaultCliProviderId);
         _process = new CliAgentProcess(_agentId, provider, workDir, _config.CliEnvironment);
 
         var self = Self;

@@ -15,6 +15,7 @@ public sealed class AgentActor : UntypedActor
     private readonly string _aieosProfilePath;
     private readonly string _skillBundleName;
     private readonly string? _memoryFilePath;
+    private readonly string? _cliProviderId;
     private readonly IActorRef _registry;
     private readonly IActorRef _memorySupervisor;
     private readonly AgentWorldConfig _config;
@@ -43,12 +44,14 @@ public sealed class AgentActor : UntypedActor
         IActorRef registry,
         IActorRef memorySupervisor,
         AgentWorldConfig config,
-        ILogger<AgentActor> logger)
+        ILogger<AgentActor> logger,
+        string? cliProviderId = null)
     {
         _agentId = agentId;
         _aieosProfilePath = aieosProfilePath;
         _skillBundleName = skillBundleName;
         _memoryFilePath = memoryFilePath;
+        _cliProviderId = cliProviderId;
         _registry = registry;
         _memorySupervisor = memorySupervisor;
         _config = config;
@@ -58,7 +61,7 @@ public sealed class AgentActor : UntypedActor
     protected override void PreStart()
     {
         _rpcActor = Context.ActorOf(
-            Props.Create(() => new AgentRpcActor(_agentId, _config)),
+            Props.Create(() => new AgentRpcActor(_agentId, _config, _cliProviderId)),
             "rpc");
 
         Context.ActorOf(
