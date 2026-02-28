@@ -312,6 +312,7 @@ public partial class HudController : Control
             var result = instance.Call("fork_pi", cwd, apiKey);
             GD.Print($"PTY fork for {agentId}: {result}");
             GD.Print($"Terminal container size: {_terminalContainer!.Size}, instance size: {instance.Size}");
+            DebugLog($"PTY fork for {agentId}: result={result}, container={_terminalContainer!.Size}, instance={instance.Size}");
         }).CallDeferred();
     }
 
@@ -335,6 +336,7 @@ public partial class HudController : Control
 
         _consoleTitle.Text = $"Console — {agentId}";
         _consolePanel.Visible = true;
+        DebugLog($"SelectAgent: {agentId}, panel visible, has terminal: {_agentTerminals.ContainsKey(agentId)}");
 
         // Create terminal on first click
         if (!_agentTerminals.ContainsKey(agentId))
@@ -352,10 +354,15 @@ public partial class HudController : Control
     {
         // With GodotXterm, console output goes through PTY directly.
         // This method is kept for compatibility but only logs to file now.
+        DebugLog($"[{agentId}] {line}");
+    }
+
+    private void DebugLog(string message)
+    {
         try
         {
             System.IO.File.AppendAllText(ConsoleLogPath,
-                $"[{DateTime.Now:HH:mm:ss.fff}] [{agentId}] {line}\n");
+                $"[{DateTime.Now:HH:mm:ss.fff}] {message}\n");
         }
         catch { /* ignore file errors */ }
     }
