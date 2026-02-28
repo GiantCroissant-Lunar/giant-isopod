@@ -109,7 +109,6 @@ public sealed class PiRpcClient : IAgentProcess
 
                 case EventKind.ThinkingEnd:
                     if (thinkBuf.Length > 0) { yield return $"💭 {thinkBuf}"; thinkBuf.Clear(); }
-                    yield return "[thinking complete]";
                     break;
 
                 case EventKind.TextDelta:
@@ -138,18 +137,15 @@ public sealed class PiRpcClient : IAgentProcess
     }
 
     /// <summary>
-    /// Flush buffer when we hit a sentence end, newline, or 120+ chars.
+    /// Flush buffer on newlines or when buffer exceeds ~100 chars.
+    /// Avoids splitting on periods mid-sentence (e.g. "Godot 4.6").
     /// </summary>
     private static bool ShouldFlush(StringBuilder buf)
     {
         if (buf.Length == 0) return false;
-        if (buf.Length >= 120) return true;
+        if (buf.Length >= 100) return true;
 
-        var last = buf[^1];
-        // Flush on sentence-ending punctuation or newlines
-        if (last is '.' or '!' or '?' or '\n' or ':') return true;
-
-        // Also flush if buffer contains a newline anywhere
+        // Flush on newlines
         for (int i = buf.Length - 1; i >= 0; i--)
         {
             if (buf[i] == '\n') return true;
@@ -175,11 +171,11 @@ public sealed class PiRpcClient : IAgentProcess
             return type switch
             {
                 "session" => (EventKind.Lifecycle, "[session started]"),
-                "agent_start" => (EventKind.Lifecycle, "[agent started]"),
-                "turn_start" => (EventKind.Lifecycle, "[turn started]"),
-                "turn_end" => (EventKind.Lifecycle, "[turn complete]"),
-                "agent_end" => (EventKind.Lifecycle, "[agent finished]"),
-                "message_start" => ParseMessageStart(root),
+                "agent_start" => (EventKind.Skip, null),
+                "turn_start" => (EventKind.Skip, null),
+                "turn_end" => (EventKind.Skip, null),
+                "agent_end" => (EventKind.Lifecycle, "[finished]"),
+                "message_start" => (EventKind.Skip, null),
                 "message_end" => (EventKind.Skip, null),
                 "message_update" => ParseMessageUpdate(root),
                 _ => (EventKind.Skip, null)
@@ -191,16 +187,6 @@ public sealed class PiRpcClient : IAgentProcess
         }
     }
 
-    private static (EventKind, string?) ParseMessageStart(JsonElement root)
-    {
-        if (root.TryGetProperty("message", out var msg) &&
-            msg.TryGetProperty("role", out var role) &&
-            role.GetString() == "assistant")
-        {
-            return (EventKind.Lifecycle, "[assistant responding...]");
-        }
-        return (EventKind.Skip, null);
-    }
 
     private static (EventKind, string?) ParseMessageUpdate(JsonElement root)
     {
@@ -212,7 +198,7 @@ public sealed class PiRpcClient : IAgentProcess
 
         return t switch
         {
-            "thinking_start" => (EventKind.Lifecycle, "[thinking...]"),
+            "thinking_start" => (EventKind.Skip, null),
             "thinking_delta" => (EventKind.ThinkingDelta, evt.TryGetProperty("delta", out var td) ? td.GetString() : null),
             "thinking_end" => (EventKind.ThinkingEnd, null),
             "text_start" => (EventKind.Skip, null),
