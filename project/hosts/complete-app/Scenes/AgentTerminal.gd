@@ -1,38 +1,19 @@
 extends Control
 
-## GDScript wrapper for GodotXterm Terminal + PTY.
-## Instantiated from C# HudController for each agent.
+## GDScript wrapper for GodotXterm Terminal (render-only, no PTY).
+## Text is fed from C# via write_text().
 
 @onready var terminal: Terminal = $Terminal
-@onready var pty: PTY = $PTY
 
-var _forked := false
+func _ready():
+	# Ensure terminal has visible colors
+	terminal.add_theme_color_override("foreground_color", Color(0.85, 0.87, 0.92))
+	terminal.add_theme_color_override("background_color", Color(0.06, 0.07, 0.1))
 
-func fork_pi(cwd: String, api_key: String) -> int:
-	if _forked:
-		return OK
+func write_text(text: String):
+	if terminal:
+		terminal.write(text)
 
-	# Set env vars
-	pty.env["ZAI_API_KEY"] = api_key
-	pty.env["COLORTERM"] = "truecolor"
-	pty.env["TERM"] = "xterm-256color"
-	pty.use_os_env = true
-
-	# Use cmd /c to resolve PATH on Windows (ConPTY can't find npm-installed binaries directly)
-	var args := PackedStringArray([
-		"/c", "pi",
-		"--mode", "text",
-		"--no-session",
-		"--provider", "zai",
-		"--model", "glm-4.7",
-		"-p", "Explore the current directory, read key files, and suggest improvements."
-	])
-
-	var result = pty.fork("cmd.exe", args, cwd, 120, 24)
-	_forked = (result == OK)
-	return result
-
-func kill_process():
-	if _forked:
-		pty.kill(9)
-		_forked = false
+func clear_terminal():
+	if terminal:
+		terminal.clear()

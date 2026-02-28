@@ -303,16 +303,13 @@ public partial class HudController : Control
 
         _agentTerminals[agentId] = instance;
 
-        // Defer fork_pi until after _ready() runs (so @onready vars are set)
-        var cwd = @"C:\lunar-horse\yokan-projects\giant-isopod";
-        var apiKey = "08bbb0b6b8d649fbbafa5c11091e5ac3.4dzlUajBX9I8oE0F";
+        // Make visible after _ready() runs on next frame
         Callable.From(() =>
         {
             instance.Visible = true;
-            var result = instance.Call("fork_pi", cwd, apiKey);
-            GD.Print($"PTY fork for {agentId}: {result}");
-            GD.Print($"Terminal container size: {_terminalContainer!.Size}, instance size: {instance.Size}");
-            DebugLog($"PTY fork for {agentId}: result={result}, container={_terminalContainer!.Size}, instance={instance.Size}");
+            // Write a welcome line so we know the terminal is working
+            instance.Call("write_text", $"\u001b[32m● Agent {agentId} connected\u001b[0m\r\n");
+            DebugLog($"Terminal created for {agentId}: container={_terminalContainer!.Size}, instance={instance.Size}");
         }).CallDeferred();
     }
 
@@ -323,7 +320,6 @@ public partial class HudController : Control
     {
         if (_agentTerminals.TryGetValue(agentId, out var term) && term is Control termControl)
         {
-            termControl.Call("kill_process");
             termControl.QueueFree();
             _agentTerminals.Remove(agentId);
         }
@@ -352,9 +348,13 @@ public partial class HudController : Control
 
     public void AppendConsoleOutput(string agentId, string line)
     {
-        // With GodotXterm, console output goes through PTY directly.
-        // This method is kept for compatibility but only logs to file now.
         DebugLog($"[{agentId}] {line}");
+
+        // Write to the GodotXterm Terminal for this agent
+        if (_agentTerminals.TryGetValue(agentId, out var term))
+        {
+            term.Call("write_text", line + "\r\n");
+        }
     }
 
     private void DebugLog(string message)
