@@ -219,39 +219,45 @@ public partial class HudController : Control
     {
         _consolePanel = new PanelContainer();
         _consolePanel.Visible = false;
-        _consolePanel.SetAnchorsPreset(Control.LayoutPreset.BottomWide);
-        _consolePanel.OffsetTop = -220;
+        // Position at bottom of screen, 180px tall
+        _consolePanel.AnchorLeft = 0;
+        _consolePanel.AnchorRight = 1;
+        _consolePanel.AnchorTop = 1;
+        _consolePanel.AnchorBottom = 1;
+        _consolePanel.OffsetTop = -180;
         _consolePanel.OffsetBottom = 0;
         _consolePanel.OffsetLeft = 0;
         _consolePanel.OffsetRight = 0;
+        _consolePanel.GrowHorizontal = Control.GrowDirection.Both;
+        _consolePanel.GrowVertical = Control.GrowDirection.Begin;
 
         var bg = new StyleBoxFlat();
         bg.BgColor = new Color(0.06f, 0.07f, 0.1f, 0.95f);
-        bg.BorderWidthTop = 1;
-        bg.BorderColor = new Color(0.2f, 0.22f, 0.28f);
-        bg.ContentMarginLeft = 10;
-        bg.ContentMarginRight = 10;
-        bg.ContentMarginTop = 6;
-        bg.ContentMarginBottom = 6;
+        bg.BorderWidthTop = 2;
+        bg.BorderColor = new Color(0.25f, 0.5f, 0.3f, 0.8f);
+        bg.ContentMarginLeft = 8;
+        bg.ContentMarginRight = 8;
+        bg.ContentMarginTop = 4;
+        bg.ContentMarginBottom = 4;
         _consolePanel.AddThemeStyleboxOverride("panel", bg);
 
         var vbox = new VBoxContainer();
-        vbox.AddThemeConstantOverride("separation", 4);
+        vbox.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        vbox.AddThemeConstantOverride("separation", 2);
         _consolePanel.AddChild(vbox);
 
-        // Header row with title and close button
+        // Header row
         var header = new HBoxContainer();
-        header.AddThemeConstantOverride("separation", 8);
         vbox.AddChild(header);
 
         _consoleTitle = new Label { Text = "Console" };
         _consoleTitle.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        _consoleTitle.AddThemeColorOverride("font_color", new Color(0.7f, 0.75f, 0.85f));
-        _consoleTitle.AddThemeFontSizeOverride("font_size", 13);
+        _consoleTitle.AddThemeColorOverride("font_color", new Color(0.3f, 0.85f, 0.4f));
+        _consoleTitle.AddThemeFontSizeOverride("font_size", 11);
         header.AddChild(_consoleTitle);
 
         var closeBtn = new Button { Text = "✕" };
-        closeBtn.AddThemeFontSizeOverride("font_size", 11);
+        closeBtn.AddThemeFontSizeOverride("font_size", 10);
         closeBtn.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.65f));
         var closeBg = new StyleBoxFlat();
         closeBg.BgColor = new Color(0.15f, 0.15f, 0.2f, 0.6f);
@@ -261,19 +267,20 @@ public partial class HudController : Control
         closeBg.CornerRadiusBottomRight = 3;
         closeBg.ContentMarginLeft = 4;
         closeBg.ContentMarginRight = 4;
-        closeBg.ContentMarginTop = 2;
-        closeBg.ContentMarginBottom = 2;
+        closeBg.ContentMarginTop = 1;
+        closeBg.ContentMarginBottom = 1;
         closeBtn.AddThemeStyleboxOverride("normal", closeBg);
         closeBtn.Pressed += () => { _consolePanel.Visible = false; _selectedAgentId = null; };
         header.AddChild(closeBtn);
 
-        // Output area
+        // Output area — use plain RichTextLabel with minimum size
         _consoleOutput = new RichTextLabel();
         _consoleOutput.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        _consoleOutput.BbcodeEnabled = true;
+        _consoleOutput.CustomMinimumSize = new Vector2(0, 120);
+        _consoleOutput.BbcodeEnabled = false; // plain text, no BBCode parsing issues
         _consoleOutput.ScrollFollowing = true;
-        _consoleOutput.AddThemeColorOverride("default_color", new Color(0.75f, 0.8f, 0.7f));
-        _consoleOutput.AddThemeFontSizeOverride("normal_font_size", 12);
+        _consoleOutput.AddThemeColorOverride("default_color", new Color(0.75f, 0.82f, 0.7f));
+        _consoleOutput.AddThemeFontSizeOverride("normal_font_size", 10);
         vbox.AddChild(_consoleOutput);
 
         AddChild(_consolePanel);
