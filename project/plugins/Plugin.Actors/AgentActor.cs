@@ -1,5 +1,6 @@
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
+using Microsoft.Extensions.Logging;
 
 namespace GiantIsopod.Plugin.Actors;
 
@@ -16,6 +17,7 @@ public sealed class AgentActor : UntypedActor
     private readonly IActorRef _registry;
     private readonly IActorRef _memorySupervisor;
     private readonly AgentWorldConfig _config;
+    private readonly ILogger<AgentActor> _logger;
 
     private IActorRef? _rpcActor;
 
@@ -26,7 +28,8 @@ public sealed class AgentActor : UntypedActor
         string? memoryFilePath,
         IActorRef registry,
         IActorRef memorySupervisor,
-        AgentWorldConfig config)
+        AgentWorldConfig config,
+        ILogger<AgentActor> logger)
     {
         _agentId = agentId;
         _aieosProfilePath = aieosProfilePath;
@@ -35,11 +38,11 @@ public sealed class AgentActor : UntypedActor
         _registry = registry;
         _memorySupervisor = memorySupervisor;
         _config = config;
+        _logger = logger;
     }
 
     protected override void PreStart()
     {
-        // Create child actors
         _rpcActor = Context.ActorOf(
             Props.Create(() => new AgentRpcActor(_agentId, _config.PiExecutable)),
             "rpc");
@@ -48,23 +51,21 @@ public sealed class AgentActor : UntypedActor
             Props.Create(() => new AgentTaskActor(_agentId)),
             "tasks");
 
-        // Register capabilities with the skill registry
-        // TODO: Load skill bundle, derive capabilities, register
         _registry.Tell(new RegisterSkills(_agentId, new HashSet<string>()));
 
-        // Initialize memory
         if (_memoryFilePath != null)
         {
             _memorySupervisor.Tell(new StoreMemory(_agentId, $"Agent {_agentId} started", "session_start"));
         }
 
-        // Start the pi process
         _rpcActor.Tell(new StartProcess(_agentId));
+        _logger.LogInformation("Agent {AgentId} started (bundle: {Bundle})", _agentId, _skillBundleName);
     }
 
     protected override void PostStop()
     {
         _registry.Tell(new UnregisterSkills(_agentId));
+        _logger.LogInformation("Agent {AgentId} stopped", _agentId);
     }
 
     protected override void OnReceive(object message)
@@ -76,11 +77,9 @@ public sealed class AgentActor : UntypedActor
                 break;
 
             case ProcessEvent evt:
-                // Forward to viewport for rendering
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new AgentStateChanged(_agentId, MapEventToState(evt.RawJson)));
 
-                // Store in memory
                 if (_memoryFilePath != null)
                 {
                     _memorySupervisor.Tell(new StoreMemory(_agentId, evt.RawJson, "process_event"));
@@ -88,6 +87,7 @@ public sealed class AgentActor : UntypedActor
                 break;
 
             case ProcessExited exited:
+                _logger.LogWarning("Agent {AgentId} process exited (code: {Code})", _agentId, exited.ExitCode);
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new AgentStateChanged(_agentId, AgentActivityState.Idle));
                 break;
@@ -100,7 +100,6 @@ public sealed class AgentActor : UntypedActor
 
     private static AgentActivityState MapEventToState(string rawJson)
     {
-        // TODO: Parse pi RPC event and map tool_use types to activity states
         if (rawJson.Contains("\"tool_use\"")) return AgentActivityState.Typing;
         if (rawJson.Contains("\"tool_result\"")) return AgentActivityState.Reading;
         if (rawJson.Contains("\"thinking\"")) return AgentActivityState.Thinking;

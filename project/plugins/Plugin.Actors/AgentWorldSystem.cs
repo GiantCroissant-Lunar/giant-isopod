@@ -1,5 +1,6 @@
 using Akka.Actor;
 using Akka.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace GiantIsopod.Plugin.Actors;
 
@@ -9,6 +10,7 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class AgentWorldSystem : IDisposable
 {
     private readonly ActorSystem _system;
+    private readonly ILogger<AgentWorldSystem> _logger;
 
     public IActorRef Registry { get; }
     public IActorRef MemorySupervisor { get; }
@@ -16,8 +18,10 @@ public sealed class AgentWorldSystem : IDisposable
     public IActorRef Dispatch { get; }
     public IActorRef Viewport { get; }
 
-    public AgentWorldSystem(AgentWorldConfig config)
+    public AgentWorldSystem(AgentWorldConfig config, ILoggerFactory loggerFactory)
     {
+        _logger = loggerFactory.CreateLogger<AgentWorldSystem>();
+
         var hocon = ConfigurationFactory.ParseString(@"
             akka {
                 loglevel = INFO
@@ -32,24 +36,34 @@ public sealed class AgentWorldSystem : IDisposable
         _system = ActorSystem.Create("agent-world", hocon);
 
         Registry = _system.ActorOf(
-            Props.Create(() => new SkillRegistryActor()),
+            Props.Create(() => new SkillRegistryActor(
+                loggerFactory.CreateLogger<SkillRegistryActor>())),
             "registry");
 
         MemorySupervisor = _system.ActorOf(
-            Props.Create(() => new MemorySupervisorActor(config.MemoryBasePath)),
+            Props.Create(() => new MemorySupervisorActor(
+                config.MemoryBasePath,
+                loggerFactory.CreateLogger<MemorySupervisorActor>())),
             "memory");
 
         AgentSupervisor = _system.ActorOf(
-            Props.Create(() => new AgentSupervisorActor(Registry, MemorySupervisor, config)),
+            Props.Create(() => new AgentSupervisorActor(
+                Registry, MemorySupervisor, config,
+                loggerFactory)),
             "agents");
 
         Dispatch = _system.ActorOf(
-            Props.Create(() => new DispatchActor(Registry, AgentSupervisor)),
+            Props.Create(() => new DispatchActor(
+                Registry, AgentSupervisor,
+                loggerFactory.CreateLogger<DispatchActor>())),
             "dispatch");
 
         Viewport = _system.ActorOf(
-            Props.Create(() => new ViewportActor()),
+            Props.Create(() => new ViewportActor(
+                loggerFactory.CreateLogger<ViewportActor>())),
             "viewport");
+
+        _logger.LogInformation("Actor system started");
     }
 
     public void SetViewportBridge(GiantIsopod.Contracts.Core.IViewportBridge bridge)
@@ -61,6 +75,7 @@ public sealed class AgentWorldSystem : IDisposable
     {
         _system.Terminate().Wait(TimeSpan.FromSeconds(10));
         _system.Dispose();
+        _logger.LogInformation("Actor system stopped");
     }
 }
 

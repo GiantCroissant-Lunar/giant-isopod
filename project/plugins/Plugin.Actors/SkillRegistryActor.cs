@@ -1,5 +1,6 @@
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
+using Microsoft.Extensions.Logging;
 
 namespace GiantIsopod.Plugin.Actors;
 
@@ -9,7 +10,13 @@ namespace GiantIsopod.Plugin.Actors;
 /// </summary>
 public sealed class SkillRegistryActor : UntypedActor
 {
+    private readonly ILogger<SkillRegistryActor> _logger;
     private readonly Dictionary<string, IReadOnlySet<string>> _agentCapabilities = new();
+
+    public SkillRegistryActor(ILogger<SkillRegistryActor> logger)
+    {
+        _logger = logger;
+    }
 
     protected override void OnReceive(object message)
     {
@@ -17,10 +24,13 @@ public sealed class SkillRegistryActor : UntypedActor
         {
             case RegisterSkills register:
                 _agentCapabilities[register.AgentId] = register.Capabilities;
+                _logger.LogDebug("Registered {Count} capabilities for {AgentId}",
+                    register.Capabilities.Count, register.AgentId);
                 break;
 
             case UnregisterSkills unregister:
                 _agentCapabilities.Remove(unregister.AgentId);
+                _logger.LogDebug("Unregistered capabilities for {AgentId}", unregister.AgentId);
                 break;
 
             case QueryCapableAgents query:
@@ -29,6 +39,7 @@ public sealed class SkillRegistryActor : UntypedActor
                     .Select(kv => kv.Key)
                     .ToList();
                 Sender.Tell(new CapableAgentsResult(matches));
+                _logger.LogDebug("Query matched {Count} agents", matches.Count);
                 break;
         }
     }

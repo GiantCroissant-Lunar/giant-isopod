@@ -1,5 +1,6 @@
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
+using Microsoft.Extensions.Logging;
 
 namespace GiantIsopod.Plugin.Actors;
 
@@ -9,11 +10,13 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class MemorySupervisorActor : UntypedActor
 {
     private readonly string _memoryBasePath;
+    private readonly ILogger<MemorySupervisorActor> _logger;
     private readonly Dictionary<string, IActorRef> _memoryActors = new();
 
-    public MemorySupervisorActor(string memoryBasePath)
+    public MemorySupervisorActor(string memoryBasePath, ILogger<MemorySupervisorActor> logger)
     {
         _memoryBasePath = memoryBasePath;
+        _logger = logger;
     }
 
     protected override void OnReceive(object message)
@@ -39,6 +42,7 @@ public sealed class MemorySupervisorActor : UntypedActor
                 Props.Create(() => new MemvidActor(agentId, mv2Path)),
                 agentId);
             _memoryActors[agentId] = actor;
+            _logger.LogDebug("Created memory actor for {AgentId} at {Path}", agentId, mv2Path);
         }
         return actor;
     }

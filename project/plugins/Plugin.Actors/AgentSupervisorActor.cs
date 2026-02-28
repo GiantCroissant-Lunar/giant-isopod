@@ -1,5 +1,6 @@
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
+using Microsoft.Extensions.Logging;
 
 namespace GiantIsopod.Plugin.Actors;
 
@@ -12,13 +13,21 @@ public sealed class AgentSupervisorActor : UntypedActor
     private readonly IActorRef _registry;
     private readonly IActorRef _memorySupervisor;
     private readonly AgentWorldConfig _config;
+    private readonly ILoggerFactory _loggerFactory;
+    private readonly ILogger<AgentSupervisorActor> _logger;
     private readonly Dictionary<string, IActorRef> _agents = new();
 
-    public AgentSupervisorActor(IActorRef registry, IActorRef memorySupervisor, AgentWorldConfig config)
+    public AgentSupervisorActor(
+        IActorRef registry,
+        IActorRef memorySupervisor,
+        AgentWorldConfig config,
+        ILoggerFactory loggerFactory)
     {
         _registry = registry;
         _memorySupervisor = memorySupervisor;
         _config = config;
+        _loggerFactory = loggerFactory;
+        _logger = loggerFactory.CreateLogger<AgentSupervisorActor>();
     }
 
     protected override SupervisorStrategy SupervisorStrategy()
@@ -51,10 +60,12 @@ public sealed class AgentSupervisorActor : UntypedActor
                         spawn.MemoryFilePath,
                         _registry,
                         _memorySupervisor,
-                        _config)),
+                        _config,
+                        _loggerFactory.CreateLogger<AgentActor>())),
                     spawn.AgentId);
 
                 _agents[spawn.AgentId] = agentRef;
+                _logger.LogInformation("Spawned agent {AgentId}", spawn.AgentId);
                 Sender.Tell(new AgentSpawned(spawn.AgentId));
                 Context.Parent.Tell(new AgentSpawned(spawn.AgentId));
                 break;
@@ -64,6 +75,7 @@ public sealed class AgentSupervisorActor : UntypedActor
                 {
                     Context.Stop(actor);
                     _agents.Remove(stop.AgentId);
+                    _logger.LogInformation("Stopped agent {AgentId}", stop.AgentId);
                     Sender.Tell(new AgentStopped(stop.AgentId));
                 }
                 break;

@@ -1,5 +1,6 @@
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
+using Microsoft.Extensions.Logging;
 
 namespace GiantIsopod.Plugin.Actors;
 
@@ -9,7 +10,13 @@ namespace GiantIsopod.Plugin.Actors;
 /// </summary>
 public sealed class ViewportActor : UntypedActor
 {
+    private readonly ILogger<ViewportActor> _logger;
     private IViewportBridge? _bridge;
+
+    public ViewportActor(ILogger<ViewportActor> logger)
+    {
+        _logger = logger;
+    }
 
     protected override void OnReceive(object message)
     {
@@ -17,6 +24,7 @@ public sealed class ViewportActor : UntypedActor
         {
             case SetViewportBridge setBridge:
                 _bridge = setBridge.Bridge;
+                _logger.LogDebug("Viewport bridge connected");
                 break;
 
             case AgentStateChanged stateChanged:
