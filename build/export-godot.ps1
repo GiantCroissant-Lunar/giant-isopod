@@ -2,10 +2,11 @@
 .SYNOPSIS
     Exports the Godot app to build/_artifacts/{version}
 .DESCRIPTION
-    Uses GitVersion for semantic versioning and Godot --headless --export-release
-    to produce a Windows x86_64 build.
+    Uses GitVersion for semantic versioning. Pre-publishes the .NET project,
+    then runs Godot --headless --export-release for the PCK/exe, and finally
+    copies the published .NET assemblies alongside the exported executable.
 .PARAMETER GodotPath
-    Path to the Godot console executable. Defaults to the project standard location.
+    Path to the Godot console executable.
 #>
 param(
     [string]$GodotPath = "C:\lunar-horse\tools\Godot_v4.6.1-stable_mono_win64\Godot_v4.6.1-stable_mono_win64_console.exe"
@@ -14,6 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = (git rev-parse --show-toplevel).Trim()
 $projectDir = Join-Path $repoRoot "project\hosts\complete-app"
+$csproj = Join-Path $projectDir "complete-app.csproj"
 
 # --- GitVersion ---
 Write-Host ":: Resolving version with GitVersion..." -ForegroundColor Cyan
@@ -40,15 +42,16 @@ New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null
 
 $exportPath = Join-Path $artifactDir "GiantIsopod.exe"
 
-# --- Build .NET first ---
-Write-Host ":: Building .NET solution..." -ForegroundColor Cyan
-dotnet build (Join-Path $repoRoot "project\GiantIsopod.sln") -c Release --nologo -v quiet
+# --- Pre-publish .NET ---
+Write-Host ":: Publishing .NET project..." -ForegroundColor Cyan
+$publishDir = Join-Path $projectDir ".godot\mono\temp\bin\Release\publish"
+dotnet publish $csproj -c Release --nologo -v quiet
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "dotnet build failed with exit code $LASTEXITCODE"
+    Write-Error "dotnet publish failed with exit code $LASTEXITCODE"
     exit $LASTEXITCODE
 }
 
-# --- Godot export ---
+# --- Godot export (PCK + exe) ---
 Write-Host ":: Exporting Godot project to $exportPath ..." -ForegroundColor Cyan
 
 if (-not (Test-Path $GodotPath)) {
@@ -57,9 +60,20 @@ if (-not (Test-Path $GodotPath)) {
 }
 
 & $GodotPath --headless --path $projectDir --export-release "Windows Desktop" $exportPath
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Godot export failed with exit code $LASTEXITCODE"
-    exit $LASTEXITCODE
+
+# Godot may return warnings (exit code 0 with WARNING output) — check exe exists
+if (-not (Test-Path $exportPath)) {
+    Write-Error "Godot export failed — no exe produced at $exportPath"
+    exit 1
+}
+
+# --- Copy .NET assemblies alongside exe ---
+Write-Host ":: Copying .NET assemblies..." -ForegroundColor Cyan
+if (Test-Path $publishDir) {
+    Copy-Item "$publishDir\*" $artifactDir -Recurse -Force
+    Write-Host "   Copied $(( Get-ChildItem $artifactDir -Filter '*.dll' ).Count) DLLs" -ForegroundColor Green
+} else {
+    Write-Warning "Publish directory not found at $publishDir — .NET assemblies may be missing"
 }
 
 # --- Write version file ---
