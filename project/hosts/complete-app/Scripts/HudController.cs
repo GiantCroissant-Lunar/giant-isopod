@@ -348,12 +348,10 @@ public partial class HudController : Control
 
     public void AppendConsoleOutput(string agentId, string line)
     {
-        DebugLog($"[{agentId}] {line}");
-
-        // Write to the GodotXterm Terminal for this agent
+        // Write raw text (with ANSI sequences) to the GodotXterm Terminal
         if (_agentTerminals.TryGetValue(agentId, out var term))
         {
-            term.Call("write_text", line + "\r\n");
+            term.Call("write_text", line);
         }
     }
 
