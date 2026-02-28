@@ -65,12 +65,10 @@ public sealed class CliAgentProcess : IAgentProcess
             .WithWorkingDirectory(_workingDirectory)
             .WithEnvironmentVariables(env =>
             {
-                // Provider-level env from JSON config
+                // Provider-level env from JSON config, with placeholder resolution
+                // e.g. {ZAI_API_KEY} in config gets resolved from _extraEnv
                 foreach (var (key, value) in _provider.Env)
-                    env.Set(key, value);
-                // Runtime env (e.g. API keys from AgentWorldConfig)
-                foreach (var (key, value) in _extraEnv)
-                    env.Set(key, value);
+                    env.Set(key, ResolvePlaceholders(value, _extraEnv));
             })
             .WithValidation(CommandResultValidation.None);
 

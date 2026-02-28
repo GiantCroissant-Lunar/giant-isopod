@@ -81,13 +81,15 @@ public partial class HudController : Control
         _providerDropdown = new OptionButton();
         _providerDropdown.AddThemeFontSizeOverride("font_size", 14);
         _providerDropdown.AddThemeColorOverride("font_color", new Color(0.8f, 0.85f, 0.95f));
-        _providerDropdown.CustomMinimumSize = new Vector2(120, 0);
+        _providerDropdown.AddThemeColorOverride("font_hover_color", new Color(0.9f, 0.95f, 1.0f));
+        _providerDropdown.AddThemeColorOverride("font_focus_color", new Color(0.8f, 0.85f, 0.95f));
+        _providerDropdown.CustomMinimumSize = new Vector2(130, 38);
         var dropStyle = new StyleBoxFlat();
         dropStyle.BgColor = new Color(0.12f, 0.13f, 0.18f, 0.95f);
         dropStyle.CornerRadiusTopLeft = 6;
         dropStyle.CornerRadiusBottomLeft = 6;
-        dropStyle.ContentMarginLeft = 10;
-        dropStyle.ContentMarginRight = 10;
+        dropStyle.ContentMarginLeft = 12;
+        dropStyle.ContentMarginRight = 12;
         dropStyle.ContentMarginTop = 8;
         dropStyle.ContentMarginBottom = 8;
         dropStyle.BorderWidthTop = 2;
@@ -95,6 +97,15 @@ public partial class HudController : Control
         dropStyle.BorderWidthLeft = 2;
         dropStyle.BorderColor = new Color(0.25f, 0.3f, 0.4f, 0.8f);
         _providerDropdown.AddThemeStyleboxOverride("normal", dropStyle);
+        var dropHover = (StyleBoxFlat)dropStyle.Duplicate();
+        dropHover.BgColor = new Color(0.16f, 0.17f, 0.24f, 0.98f);
+        _providerDropdown.AddThemeStyleboxOverride("hover", dropHover);
+        var dropPressed = (StyleBoxFlat)dropStyle.Duplicate();
+        dropPressed.BgColor = new Color(0.14f, 0.15f, 0.22f, 0.98f);
+        _providerDropdown.AddThemeStyleboxOverride("pressed", dropPressed);
+        _providerDropdown.AddThemeStyleboxOverride("focus", dropStyle);
+        // Ensure at least a placeholder item so the dropdown is visible
+        _providerDropdown.AddItem("(loading...)");
         spawnRow.AddChild(_providerDropdown);
 
         // Spawn button
@@ -448,6 +459,18 @@ public partial class HudController : Control
             instance.Call("write_text", $"\u001b[32m● Agent {agentId} connected\u001b[0m\r\n");
             DebugLog($"Terminal created for {agentId}: container={_terminalContainer!.Size}, instance={instance.Size}");
 
+            // Flush any buffered output
+            if (_pendingOutput.TryGetValue(agentId, out var pending))
+            {
+                foreach (var line in pending)
+                {
+                    var text = ColorizeOutput(line) + "\r\n";
+                    instance.Call("write_text", text);
+                }
+                _pendingOutput.Remove(agentId);
+                DebugLog($"Flushed {pending.Count} buffered lines for {agentId}");
+            }
+
             // Start asciicast recording
             try
             {
@@ -483,6 +506,7 @@ public partial class HudController : Control
             _agentMarkdownLabels.Remove(agentId);
         }
         _agentMarkdownBuffers.Remove(agentId);
+        _pendingOutput.Remove(agentId);
 
         // Stop asciicast recording
         if (_agentRecorders.TryGetValue(agentId, out var recorder))
@@ -529,9 +553,30 @@ public partial class HudController : Control
             RefreshMarkdown(agentId);
     }
 
+    // Buffered output for agents whose terminal hasn't been created yet
+    private readonly Dictionary<string, List<string>> _pendingOutput = new();
+
     public void AppendConsoleOutput(string agentId, string line)
     {
-        if (!_agentTerminals.TryGetValue(agentId, out var term)) return;
+        // If terminal doesn't exist yet, buffer the output
+        if (!_agentTerminals.TryGetValue(agentId, out var term))
+        {
+            if (!_pendingOutput.TryGetValue(agentId, out var pending))
+            {
+                pending = new List<string>();
+                _pendingOutput[agentId] = pending;
+            }
+            pending.Add(line);
+
+            // Still accumulate for markdown
+            if (!_agentMarkdownBuffers.TryGetValue(agentId, out var buf))
+            {
+                buf = new System.Text.StringBuilder();
+                _agentMarkdownBuffers[agentId] = buf;
+            }
+            buf.AppendLine(line);
+            return;
+        }
 
         // ListenAsync gives lines without newlines, Terminal needs \r\n
         var text = ColorizeOutput(line) + "\r\n";
@@ -594,12 +639,15 @@ public partial class HudController : Control
     public void SetProviders(IReadOnlyCollection<GiantIsopod.Contracts.Protocol.CliProvider.CliProviderEntry> providers)
     {
         _providerIds.Clear();
-        _providerDropdown?.Clear();
+        if (_providerDropdown == null) return;
+        _providerDropdown.Clear();
         foreach (var p in providers)
         {
             _providerIds.Add(p.Id);
-            _providerDropdown?.AddItem(p.DisplayName ?? p.Id);
+            _providerDropdown.AddItem(p.DisplayName ?? p.Id);
         }
+        if (_providerDropdown.ItemCount > 0)
+            _providerDropdown.Selected = 0;
     }
 
     private string GetSelectedProviderId()

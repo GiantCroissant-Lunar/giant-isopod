@@ -59,6 +59,8 @@ public sealed class AgentRpcActor : UntypedActor
 
         _ = Task.Run(async () =>
         {
+            parent.Tell(new ProcessStarted(_agentId, System.Environment.ProcessId));
+
             bool started = false;
             try
             {
@@ -67,16 +69,10 @@ public sealed class AgentRpcActor : UntypedActor
                 await foreach (var line in _process.ReadEventsAsync(ct))
                 {
                     if (!started)
-                    {
-                        // First output confirms the process is actually running
                         started = true;
-                        parent.Tell(new ProcessStarted(_agentId, System.Environment.ProcessId));
-                    }
 
                     if (!string.IsNullOrWhiteSpace(line))
-                    {
                         self.Tell(new ProcessEvent(_agentId, line));
-                    }
                 }
 
                 parent.Tell(new ProcessExited(_agentId, 0));
@@ -86,12 +82,10 @@ public sealed class AgentRpcActor : UntypedActor
                 if (started)
                     parent.Tell(new ProcessExited(_agentId, -1));
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // pi executable not found or crashed — don't report as started
-                if (started)
-                    parent.Tell(new ProcessExited(_agentId, -1));
-                // If never started, parent stays in demo mode (no ProcessStarted sent)
+                self.Tell(new ProcessEvent(_agentId, $"[ERROR] CLI failed: {ex.Message}"));
+                parent.Tell(new ProcessExited(_agentId, -1));
             }
         }, ct);
     }

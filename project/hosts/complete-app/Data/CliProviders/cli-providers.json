@@ -5,7 +5,10 @@
       "displayName": "Pi",
       "executable": "pi",
       "args": ["--mode", "text", "--no-session", "--provider", "{provider}", "--model", "{model}", "-p", "{prompt}"],
-      "env": { "FORCE_COLOR": "1" },
+      "env": {
+        "FORCE_COLOR": "1",
+        "ZAI_API_KEY": "{ZAI_API_KEY}"
+      },
       "defaults": {
         "provider": "zai",
         "model": "glm-4.7"
@@ -15,7 +18,7 @@
       "id": "kilo",
       "displayName": "Kilo",
       "executable": "kilo",
-      "args": ["-p", "{prompt}"],
+      "args": ["run", "{prompt}"],
       "env": {},
       "defaults": {}
     },
@@ -23,7 +26,7 @@
       "id": "codex",
       "displayName": "Codex",
       "executable": "codex",
-      "args": ["--quiet", "{prompt}"],
+      "args": ["exec", "{prompt}", "--full-auto"],
       "env": {},
       "defaults": {}
     },
@@ -31,7 +34,7 @@
       "id": "kimi",
       "displayName": "Kimi",
       "executable": "kimi",
-      "args": ["{prompt}"],
+      "args": ["--print", "-p", "{prompt}"],
       "env": {},
       "defaults": {}
     }
