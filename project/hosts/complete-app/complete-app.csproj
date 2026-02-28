@@ -18,4 +18,8 @@
     <ProjectReference Include="..\..\contracts\Contracts.ECS\Contracts.ECS.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Markdig" Version="1.0.1" />
+  </ItemGroup>
+
 </Project>
