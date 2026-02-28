@@ -82,4 +82,4 @@ tasks:
   skills:install:
     desc: Install all external skills from .agent/skills.json
     cmds:
-      - python .agent/install_skills.py
+      - python .agent/skills/install_skills.py

@@ -1,0 +1,7 @@
+# Ignore everything (installed external skills)
+*
+
+# Except these files
+!.gitignore
+!skills.json
+!install_skills.py

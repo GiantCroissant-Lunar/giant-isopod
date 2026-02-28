@@ -8,7 +8,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
 SKILLS_CONFIG = SCRIPT_DIR / "skills.json"
-SKILLS_DIR = SCRIPT_DIR / "skills"
+SKILLS_DIR = SCRIPT_DIR
 
 
 def install_skills():
