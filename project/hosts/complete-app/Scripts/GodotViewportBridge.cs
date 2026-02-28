@@ -42,6 +42,11 @@ public sealed class GodotViewportBridge : IViewportBridge
         _eventQueue.Enqueue(new ProcessExitedEvent(agentId, exitCode));
     }
 
+    public void PublishProcessOutput(string agentId, string line)
+    {
+        _eventQueue.Enqueue(new ProcessOutputEvent(agentId, line));
+    }
+
     /// <summary>
     /// Called from Godot _Process to drain events on the main thread.
     /// </summary>
@@ -59,3 +64,4 @@ public record AgentDespawnedEvent(string AgentId) : ViewportEvent(AgentId);
 public record GenUIRequestEvent(string AgentId, string A2UIJson) : ViewportEvent(AgentId);
 public record ProcessStartedEvent(string AgentId, int ProcessId) : ViewportEvent(AgentId);
 public record ProcessExitedEvent(string AgentId, int ExitCode) : ViewportEvent(AgentId);
+public record ProcessOutputEvent(string AgentId, string Line) : ViewportEvent(AgentId);

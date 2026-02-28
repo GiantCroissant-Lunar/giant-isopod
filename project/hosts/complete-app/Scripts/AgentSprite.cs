@@ -10,6 +10,9 @@ namespace GiantIsopod.Hosts.CompleteApp;
 /// </summary>
 public partial class AgentSprite : Node2D
 {
+    [Signal]
+    public delegate void AgentClickedEventHandler(string agentId);
+
     private readonly string _agentId;
     private readonly AgentVisualInfo _info;
     private AgentActivityState _state = AgentActivityState.Idle;
@@ -81,6 +84,19 @@ public partial class AgentSprite : Node2D
         _bobPhase += (float)delta * 2.0f;
         _pulsePhase += (float)delta * 3.0f;
         QueueRedraw();
+    }
+
+    public override void _Input(InputEvent @event)
+    {
+        if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } mb)
+        {
+            var local = ToLocal(mb.GlobalPosition);
+            if (local.LengthSquared() < 24f * 24f)
+            {
+                EmitSignal(SignalName.AgentClicked, _agentId);
+                GetViewport().SetInputAsHandled();
+            }
+        }
     }
 
     private void UpdateStateLabel()

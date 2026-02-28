@@ -63,7 +63,6 @@ public partial class Main : Node2D
 
         QueueRedraw();
         CacheAgentProfiles();
-        SpawnInitialAgents();
 
         _logger.LogInformation("Giant Isopod ready (ECS)");
     }
@@ -113,6 +112,7 @@ public partial class Main : Node2D
                 _ecsWorld.RemoveAgent(despawned.AgentId);
                 if (_sprites.TryGetValue(despawned.AgentId, out var spr))
                 {
+                    spr.AgentClicked -= OnAgentClicked;
                     spr.QueueFree();
                     _sprites.Remove(despawned.AgentId);
                 }
@@ -145,6 +145,7 @@ public partial class Main : Node2D
                 // Create Godot node for new ECS entity
                 sprite = new AgentSprite(agentId, new AgentVisualInfo(agentId, identity.DisplayName));
                 _agentsNode.AddChild(sprite);
+                sprite.AgentClicked += OnAgentClicked;
                 _sprites[agentId] = sprite;
             }
 
@@ -165,6 +166,12 @@ public partial class Main : Node2D
             sprite.SyncFromEcs(godotState, vis.AnimationFrame, vis.Facing);
         });
     }
+
+    private void OnAgentClicked(string agentId)
+    {
+        _hud?.SelectAgent(agentId);
+    }
+
 
     private void HandleSpawnRequest()
     {
@@ -245,6 +252,8 @@ public partial class Main : Node2D
             _hud.OnSpawnRequested -= HandleSpawnRequest;
             _hud.OnRemoveRequested -= HandleRemoveRequest;
         }
+        foreach (var sprite in _sprites.Values)
+            sprite.AgentClicked -= OnAgentClicked;
         _agentWorld?.Dispose();
         _services?.Dispose();
         _logger?.LogInformation("Giant Isopod shutdown");

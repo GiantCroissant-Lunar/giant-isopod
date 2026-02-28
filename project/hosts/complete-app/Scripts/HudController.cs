@@ -20,6 +20,14 @@ public partial class HudController : Control
     private readonly Dictionary<string, AgentHudEntry> _entries = new();
     private readonly HashSet<string> _activeProcesses = new();
 
+    // Console view
+    private PanelContainer? _consolePanel;
+    private RichTextLabel? _consoleOutput;
+    private Label? _consoleTitle;
+    private string? _selectedAgentId;
+    private readonly Dictionary<string, List<string>> _consoleBuffers = new();
+    private const int MaxConsoleLines = 200;
+
     public override void _Ready()
     {
         _agentCountLabel = GetNode<Label>("%AgentCount");
@@ -41,6 +49,7 @@ public partial class HudController : Control
 
         ApplyTheme();
         CreateButtons();
+        CreateConsolePanel();
     }
 
     private void CreateButtons()
@@ -144,6 +153,10 @@ public partial class HudController : Control
                 if (_entries.TryGetValue(exited.AgentId, out var ee))
                     ee.SetConnected(false);
                 break;
+
+            case ProcessOutputEvent output:
+                AppendConsoleOutput(output.AgentId, output.Line);
+                break;
         }
     }
 
@@ -188,6 +201,111 @@ public partial class HudController : Control
     {
         if (_processCountLabel != null)
             _processCountLabel.Text = $"CLI: {_activeProcesses.Count}";
+    }
+
+    private void CreateConsolePanel()
+    {
+        _consolePanel = new PanelContainer();
+        _consolePanel.Visible = false;
+        _consolePanel.SetAnchorsPreset(Control.LayoutPreset.BottomWide);
+        _consolePanel.OffsetTop = -220;
+        _consolePanel.OffsetBottom = 0;
+        _consolePanel.OffsetLeft = 0;
+        _consolePanel.OffsetRight = 0;
+
+        var bg = new StyleBoxFlat();
+        bg.BgColor = new Color(0.06f, 0.07f, 0.1f, 0.95f);
+        bg.BorderWidthTop = 1;
+        bg.BorderColor = new Color(0.2f, 0.22f, 0.28f);
+        bg.ContentMarginLeft = 10;
+        bg.ContentMarginRight = 10;
+        bg.ContentMarginTop = 6;
+        bg.ContentMarginBottom = 6;
+        _consolePanel.AddThemeStyleboxOverride("panel", bg);
+
+        var vbox = new VBoxContainer();
+        vbox.AddThemeConstantOverride("separation", 4);
+        _consolePanel.AddChild(vbox);
+
+        // Header row with title and close button
+        var header = new HBoxContainer();
+        header.AddThemeConstantOverride("separation", 8);
+        vbox.AddChild(header);
+
+        _consoleTitle = new Label { Text = "Console" };
+        _consoleTitle.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        _consoleTitle.AddThemeColorOverride("font_color", new Color(0.7f, 0.75f, 0.85f));
+        _consoleTitle.AddThemeFontSizeOverride("font_size", 13);
+        header.AddChild(_consoleTitle);
+
+        var closeBtn = new Button { Text = "✕" };
+        closeBtn.AddThemeFontSizeOverride("font_size", 11);
+        closeBtn.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.65f));
+        var closeBg = new StyleBoxFlat();
+        closeBg.BgColor = new Color(0.15f, 0.15f, 0.2f, 0.6f);
+        closeBg.CornerRadiusTopLeft = 3;
+        closeBg.CornerRadiusTopRight = 3;
+        closeBg.CornerRadiusBottomLeft = 3;
+        closeBg.CornerRadiusBottomRight = 3;
+        closeBg.ContentMarginLeft = 4;
+        closeBg.ContentMarginRight = 4;
+        closeBg.ContentMarginTop = 2;
+        closeBg.ContentMarginBottom = 2;
+        closeBtn.AddThemeStyleboxOverride("normal", closeBg);
+        closeBtn.Pressed += () => { _consolePanel.Visible = false; _selectedAgentId = null; };
+        header.AddChild(closeBtn);
+
+        // Output area
+        _consoleOutput = new RichTextLabel();
+        _consoleOutput.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _consoleOutput.BbcodeEnabled = true;
+        _consoleOutput.ScrollFollowing = true;
+        _consoleOutput.AddThemeColorOverride("default_color", new Color(0.75f, 0.8f, 0.7f));
+        _consoleOutput.AddThemeFontSizeOverride("normal_font_size", 12);
+        vbox.AddChild(_consoleOutput);
+
+        AddChild(_consolePanel);
+    }
+
+    public void SelectAgent(string agentId)
+    {
+        _selectedAgentId = agentId;
+        if (_consolePanel == null || _consoleOutput == null || _consoleTitle == null) return;
+
+        var displayName = _entries.TryGetValue(agentId, out var entry) ? agentId : agentId;
+        _consoleTitle.Text = $"Console — {agentId}";
+        _consolePanel.Visible = true;
+
+        // Render buffered lines
+        _consoleOutput.Clear();
+        if (_consoleBuffers.TryGetValue(agentId, out var lines))
+        {
+            foreach (var line in lines)
+                _consoleOutput.AppendText(line + "\n");
+        }
+        else
+        {
+            _consoleOutput.AppendText("[color=#666]No output yet[/color]\n");
+        }
+    }
+
+    public void AppendConsoleOutput(string agentId, string line)
+    {
+        if (!_consoleBuffers.TryGetValue(agentId, out var buffer))
+        {
+            buffer = new List<string>();
+            _consoleBuffers[agentId] = buffer;
+        }
+
+        buffer.Add(line);
+        if (buffer.Count > MaxConsoleLines)
+            buffer.RemoveAt(0);
+
+        // If this agent's console is currently visible, append live
+        if (_selectedAgentId == agentId && _consoleOutput != null)
+        {
+            _consoleOutput.AppendText(line + "\n");
+        }
     }
 }
 

@@ -58,6 +58,10 @@ public sealed class ViewportActor : UntypedActor
             case ProcessExited exited:
                 _bridge?.PublishProcessExited(exited.AgentId, exited.ExitCode);
                 break;
+
+            case ProcessOutput output:
+                _bridge?.PublishProcessOutput(output.AgentId, output.Line);
+                break;
         }
     }
 }

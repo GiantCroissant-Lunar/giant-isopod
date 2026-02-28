@@ -112,6 +112,8 @@ public sealed class AgentActor : UntypedActor
             case ProcessEvent evt:
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new AgentStateChanged(_agentId, MapEventToState(evt.RawJson)));
+                Context.System.ActorSelection("/user/viewport")
+                    .Tell(new ProcessOutput(_agentId, evt.RawJson));
                 if (_memoryFilePath != null)
                     _memorySupervisor.Tell(new StoreMemory(_agentId, evt.RawJson, "process_event"));
                 break;
