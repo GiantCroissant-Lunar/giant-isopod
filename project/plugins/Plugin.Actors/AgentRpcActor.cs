@@ -12,14 +12,14 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class AgentRpcActor : UntypedActor
 {
     private readonly string _agentId;
-    private readonly string _piExecutable;
+    private readonly AgentWorldConfig _config;
     private IAgentProcess? _process;
     private CancellationTokenSource? _cts;
 
-    public AgentRpcActor(string agentId, string piExecutable)
+    public AgentRpcActor(string agentId, AgentWorldConfig config)
     {
         _agentId = agentId;
-        _piExecutable = piExecutable;
+        _config = config;
     }
 
     protected override void OnReceive(object message)
@@ -45,7 +45,8 @@ public sealed class AgentRpcActor : UntypedActor
         _cts = new CancellationTokenSource();
 
         var workDir = System.IO.Directory.GetCurrentDirectory();
-        _process = new PiRpcClient(_agentId, _piExecutable, workDir);
+        _process = new PiRpcClient(_agentId, _config.PiExecutable, workDir,
+            _config.PiProvider, _config.PiModel, _config.PiEnvironment);
 
         var self = Self;
         var parent = Context.Parent;

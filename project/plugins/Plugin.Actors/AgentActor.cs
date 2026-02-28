@@ -57,7 +57,7 @@ public sealed class AgentActor : UntypedActor
     protected override void PreStart()
     {
         _rpcActor = Context.ActorOf(
-            Props.Create(() => new AgentRpcActor(_agentId, _config.PiExecutable)),
+            Props.Create(() => new AgentRpcActor(_agentId, _config)),
             "rpc");
 
         Context.ActorOf(

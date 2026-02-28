@@ -13,6 +13,9 @@ public sealed class PiRpcClient : IAgentProcess
 {
     private readonly string _piExecutable;
     private readonly string _workingDirectory;
+    private readonly string _provider;
+    private readonly string _model;
+    private readonly Dictionary<string, string> _environment;
     private CommandTask<CommandResult>? _task;
     private PipeSource? _stdinPipe;
     private StreamWriter? _stdinWriter;
@@ -21,11 +24,15 @@ public sealed class PiRpcClient : IAgentProcess
     public string AgentId { get; }
     public bool IsRunning => _task is { Task.IsCompleted: false };
 
-    public PiRpcClient(string agentId, string piExecutable, string workingDirectory)
+    public PiRpcClient(string agentId, string piExecutable, string workingDirectory,
+        string provider = "zai", string model = "glm-4.7", Dictionary<string, string>? environment = null)
     {
         AgentId = agentId;
         _piExecutable = piExecutable;
         _workingDirectory = workingDirectory;
+        _provider = provider;
+        _model = model;
+        _environment = environment ?? new();
     }
 
     public Task StartAsync(CancellationToken ct = default)
@@ -60,8 +67,13 @@ public sealed class PiRpcClient : IAgentProcess
         var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _cts?.Token ?? CancellationToken.None);
 
         var cmd = Cli.Wrap(_piExecutable)
-            .WithArguments(["--mode", "rpc", "--no-session"])
+            .WithArguments(["--mode", "rpc", "--no-session", "--provider", _provider, "--model", _model])
             .WithWorkingDirectory(_workingDirectory)
+            .WithEnvironmentVariables(env =>
+            {
+                foreach (var (key, value) in _environment)
+                    env.Set(key, value);
+            })
             .WithValidation(CommandResultValidation.None);
 
         await foreach (var cmdEvent in cmd.ListenAsync(linkedCts.Token))
