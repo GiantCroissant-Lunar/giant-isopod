@@ -50,6 +50,14 @@ public sealed class ViewportActor : UntypedActor
             case AgentMemoryActivity memory:
                 // Could extend IViewportBridge for memory indicators
                 break;
+
+            case ProcessStarted started:
+                _bridge?.PublishProcessStarted(started.AgentId, started.ProcessId);
+                break;
+
+            case ProcessExited exited:
+                _bridge?.PublishProcessExited(exited.AgentId, exited.ExitCode);
+                break;
         }
     }
 }

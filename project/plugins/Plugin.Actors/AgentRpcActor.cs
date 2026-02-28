@@ -1,11 +1,13 @@
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
+using GiantIsopod.Plugin.Process;
 
 namespace GiantIsopod.Plugin.Actors;
 
 /// <summary>
 /// /user/agents/{name}/rpc — manages the CliWrap pipe to pi --mode rpc.
 /// Reads stdout events and forwards them to the parent AgentActor.
+/// Reports ProcessStarted only after the child process is confirmed running.
 /// </summary>
 public sealed class AgentRpcActor : UntypedActor
 {
@@ -33,7 +35,6 @@ public sealed class AgentRpcActor : UntypedActor
                 break;
 
             case ProcessEvent evt:
-                // Forward to parent (AgentActor)
                 Context.Parent.Tell(evt);
                 break;
         }
@@ -42,11 +43,51 @@ public sealed class AgentRpcActor : UntypedActor
     private void StartPiProcess()
     {
         _cts = new CancellationTokenSource();
-        // Process creation delegated to Plugin.Process.PiRpcClient
-        // The actual CliWrap integration happens there
-        // For now, signal that we're ready
-        Context.Parent.Tell(new ProcessStarted(_agentId, 0));
-        // TODO: Inject IAgentProcess via DI or factory, start reading events
+
+        var workDir = System.IO.Directory.GetCurrentDirectory();
+        _process = new PiRpcClient(_agentId, _piExecutable, workDir);
+
+        var self = Self;
+        var parent = Context.Parent;
+        var ct = _cts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            bool started = false;
+            try
+            {
+                await _process.StartAsync(ct);
+
+                await foreach (var line in _process.ReadEventsAsync(ct))
+                {
+                    if (!started)
+                    {
+                        // First output confirms the process is actually running
+                        started = true;
+                        parent.Tell(new ProcessStarted(_agentId, System.Environment.ProcessId));
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(line))
+                    {
+                        self.Tell(new ProcessEvent(_agentId, line));
+                    }
+                }
+
+                parent.Tell(new ProcessExited(_agentId, 0));
+            }
+            catch (OperationCanceledException)
+            {
+                if (started)
+                    parent.Tell(new ProcessExited(_agentId, -1));
+            }
+            catch (Exception)
+            {
+                // pi executable not found or crashed — don't report as started
+                if (started)
+                    parent.Tell(new ProcessExited(_agentId, -1));
+                // If never started, parent stays in demo mode (no ProcessStarted sent)
+            }
+        }, ct);
     }
 
     private async Task SendToPiAsync(string message)

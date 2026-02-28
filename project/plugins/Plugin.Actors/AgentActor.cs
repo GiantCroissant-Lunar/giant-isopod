@@ -104,6 +104,8 @@ public sealed class AgentActor : UntypedActor
             case ProcessStarted started when started.ProcessId > 0:
                 _piConnected = true;
                 _demoTimer?.Cancel();
+                Context.System.ActorSelection("/user/viewport")
+                    .Tell(new ProcessStarted(_agentId, started.ProcessId));
                 _logger.LogInformation("Agent {AgentId} pi connected (pid: {Pid})", _agentId, started.ProcessId);
                 break;
 
@@ -119,6 +121,8 @@ public sealed class AgentActor : UntypedActor
                 _logger.LogWarning("Agent {AgentId} process exited (code: {Code})", _agentId, exited.ExitCode);
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new AgentStateChanged(_agentId, AgentActivityState.Idle));
+                Context.System.ActorSelection("/user/viewport")
+                    .Tell(new ProcessExited(_agentId, exited.ExitCode));
                 StartDemoTimer();
                 break;
 

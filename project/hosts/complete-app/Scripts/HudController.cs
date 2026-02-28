@@ -12,10 +12,12 @@ public partial class HudController : Control
 {
     private Label? _agentCountLabel;
     private Label? _versionLabel;
+    private Label? _processCountLabel;
     private VBoxContainer? _agentList;
     private Control? _genUIHost;
 
     private readonly Dictionary<string, AgentHudEntry> _entries = new();
+    private readonly HashSet<string> _activeProcesses = new();
 
     public override void _Ready()
     {
@@ -23,6 +25,16 @@ public partial class HudController : Control
         _versionLabel = GetNode<Label>("%VersionLabel");
         _agentList = GetNode<VBoxContainer>("%AgentList");
         _genUIHost = GetNode<Control>("%GenUIHost");
+
+        // Add process count label next to agent count
+        var topBar = GetNodeOrNull<HBoxContainer>("TopBar");
+        if (topBar != null && _agentCountLabel != null)
+        {
+            _processCountLabel = new Label { Text = "CLI: 0" };
+            _processCountLabel.AddThemeColorOverride("font_color", new Color(0.5f, 0.55f, 0.65f));
+            topBar.AddChild(_processCountLabel);
+            topBar.MoveChild(_processCountLabel, _agentCountLabel.GetIndex() + 1);
+        }
 
         // Set version from assembly info or project setting
         var version = ProjectSettings.GetSetting("application/config/version", "dev").AsString();
@@ -93,6 +105,20 @@ public partial class HudController : Control
             case GenUIRequestEvent genui:
                 ForwardGenUI(genui.AgentId, genui.A2UIJson);
                 break;
+
+            case ProcessStartedEvent started:
+                _activeProcesses.Add(started.AgentId);
+                UpdateProcessCount();
+                if (_entries.TryGetValue(started.AgentId, out var startedEntry))
+                    startedEntry.SetConnected(true);
+                break;
+
+            case ProcessExitedEvent exited:
+                _activeProcesses.Remove(exited.AgentId);
+                UpdateProcessCount();
+                if (_entries.TryGetValue(exited.AgentId, out var exitedEntry))
+                    exitedEntry.SetConnected(false);
+                break;
         }
     }
 
@@ -151,6 +177,12 @@ public partial class HudController : Control
         if (_agentCountLabel != null)
             _agentCountLabel.Text = $"Agents: {_entries.Count}";
     }
+
+    private void UpdateProcessCount()
+    {
+        if (_processCountLabel != null)
+            _processCountLabel.Text = $"CLI: {_activeProcesses.Count}";
+    }
 }
 
 /// <summary>
@@ -161,6 +193,7 @@ public sealed class AgentHudEntry
     public HBoxContainer Root { get; }
     private readonly Label _nameLabel;
     private readonly Label _stateLabel;
+    private readonly ColorRect _dot;
 
     public AgentHudEntry(string agentId, string displayName)
     {
@@ -168,11 +201,11 @@ public sealed class AgentHudEntry
         Root.AddThemeConstantOverride("separation", 8);
 
         // Colored dot indicator
-        var dot = new ColorRect();
-        dot.CustomMinimumSize = new Vector2(8, 8);
-        dot.Color = new Color(0.4f, 0.45f, 0.5f);
-        dot.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
-        Root.AddChild(dot);
+        _dot = new ColorRect();
+        _dot.CustomMinimumSize = new Vector2(8, 8);
+        _dot.Color = new Color(0.4f, 0.45f, 0.5f);
+        _dot.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
+        Root.AddChild(_dot);
 
         _nameLabel = new Label { Text = displayName };
         _nameLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
@@ -185,6 +218,13 @@ public sealed class AgentHudEntry
 
         Root.AddChild(_nameLabel);
         Root.AddChild(_stateLabel);
+    }
+
+    public void SetConnected(bool connected)
+    {
+        _dot.Color = connected
+            ? new Color(0.2f, 0.8f, 0.4f)   // green = CLI running
+            : new Color(0.4f, 0.45f, 0.5f);  // grey = disconnected
     }
 
     public void SetState(AgentActivityState state)

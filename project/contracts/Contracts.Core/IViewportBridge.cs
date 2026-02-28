@@ -10,6 +10,8 @@ public interface IViewportBridge
     void PublishAgentSpawned(string agentId, AgentVisualInfo visualInfo);
     void PublishAgentDespawned(string agentId);
     void PublishGenUIRequest(string agentId, string a2uiJson);
+    void PublishProcessStarted(string agentId, int processId);
+    void PublishProcessExited(string agentId, int exitCode);
 }
 
 public enum AgentActivityState
