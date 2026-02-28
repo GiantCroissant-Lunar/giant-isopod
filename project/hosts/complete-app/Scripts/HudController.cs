@@ -375,11 +375,8 @@ public partial class HudController : Control
     {
         if (!_agentTerminals.TryGetValue(agentId, out var term)) return;
 
-        // Fix line endings: Terminal node expects \r\n
-        var text = line.Replace("\r\n", "\n").Replace("\n", "\r\n");
-
-        // Add ANSI colors for key patterns since pi doesn't output colors without a real TTY
-        text = ColorizeOutput(text);
+        // ListenAsync gives lines without newlines, Terminal needs \r\n
+        var text = ColorizeOutput(line) + "\r\n";
 
         term.Call("write_text", text);
 

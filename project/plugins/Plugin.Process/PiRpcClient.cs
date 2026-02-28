@@ -1,15 +1,14 @@
 using System.Runtime.CompilerServices;
-using System.Text;
-using System.Threading.Channels;
 using CliWrap;
+using CliWrap.EventStream;
 using GiantIsopod.Contracts.Core;
 
 namespace GiantIsopod.Plugin.Process;
 
 /// <summary>
 /// CliWrap-based pi --mode text process manager.
-/// Runs pi in text mode, streams raw terminal output preserving ANSI escape sequences.
-/// Uses raw byte streaming to preserve ANSI color codes that line-based APIs strip.
+/// Runs pi in text mode, streams stdout line-by-line.
+/// Lines are forwarded to the GodotXterm Terminal node for rendering.
 /// </summary>
 public sealed class PiRpcClient : IAgentProcess
 {
@@ -57,17 +56,6 @@ public sealed class PiRpcClient : IAgentProcess
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _cts?.Token ?? CancellationToken.None);
-        var token = linkedCts.Token;
-
-        var chunks = Channel.CreateUnbounded<string>();
-
-        // Custom stream that captures raw bytes and converts to string chunks
-        var captureStream = new CallbackStream(async (buffer, offset, count) =>
-        {
-            var text = Encoding.UTF8.GetString(buffer, offset, count);
-            if (!string.IsNullOrEmpty(text))
-                await chunks.Writer.WriteAsync(text, token);
-        });
 
         var cmd = Cli.Wrap(_piExecutable)
             .WithArguments([
@@ -82,28 +70,25 @@ public sealed class PiRpcClient : IAgentProcess
             {
                 foreach (var (key, value) in _environment)
                     env.Set(key, value);
-                env.Set("COLORTERM", "truecolor");
-                env.Set("TERM", "xterm-256color");
                 env.Set("FORCE_COLOR", "1");
             })
-            .WithValidation(CommandResultValidation.None)
-            .WithStandardOutputPipe(PipeTarget.ToStream(captureStream))
-            .WithStandardErrorPipe(PipeTarget.ToStream(captureStream));
+            .WithValidation(CommandResultValidation.None);
 
         IsRunning = true;
 
-        // Run command in background
-        _ = Task.Run(async () =>
+        await foreach (var cmdEvent in cmd.ListenAsync(linkedCts.Token))
         {
-            try { await cmd.ExecuteAsync(token); }
-            catch (OperationCanceledException) { }
-            finally { chunks.Writer.TryComplete(); }
-        }, token);
-
-        // Yield raw chunks preserving ANSI sequences
-        await foreach (var chunk in chunks.Reader.ReadAllAsync(token))
-        {
-            yield return chunk;
+            switch (cmdEvent)
+            {
+                case StandardOutputCommandEvent stdOut:
+                    if (!string.IsNullOrEmpty(stdOut.Text))
+                        yield return stdOut.Text;
+                    break;
+                case StandardErrorCommandEvent stdErr:
+                    if (!string.IsNullOrEmpty(stdErr.Text))
+                        yield return stdErr.Text;
+                    break;
+            }
         }
 
         IsRunning = false;
@@ -114,38 +99,4 @@ public sealed class PiRpcClient : IAgentProcess
         await StopAsync();
         _cts?.Dispose();
     }
-}
-
-/// <summary>
-/// Stream that invokes a callback on every Write, used to capture raw process output bytes.
-/// </summary>
-internal sealed class CallbackStream : Stream
-{
-    private readonly Func<byte[], int, int, Task> _onWrite;
-
-    public CallbackStream(Func<byte[], int, int, Task> onWrite) => _onWrite = onWrite;
-
-    public override bool CanRead => false;
-    public override bool CanSeek => false;
-    public override bool CanWrite => true;
-    public override long Length => throw new NotSupportedException();
-    public override long Position
-    {
-        get => throw new NotSupportedException();
-        set => throw new NotSupportedException();
-    }
-
-    public override void Write(byte[] buffer, int offset, int count) =>
-        _onWrite(buffer, offset, count).GetAwaiter().GetResult();
-
-    public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken ct) =>
-        await _onWrite(buffer, offset, count);
-
-    public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken ct = default) =>
-        await _onWrite(buffer.ToArray(), 0, buffer.Length);
-
-    public override void Flush() { }
-    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-    public override void SetLength(long value) => throw new NotSupportedException();
 }
