@@ -43,3 +43,7 @@ public record MemorySearchResult(string AgentId, IReadOnlyList<MemoryHit> Hits);
 // ── GenUI (A2UI render requests) ──
 
 public record RenderGenUI(string AgentId, string A2UIJson);
+
+// ── Viewport bridge ──
+
+public record SetViewportBridge(IViewportBridge Bridge);
