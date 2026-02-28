@@ -11,12 +11,14 @@ public sealed class ViewportActor : UntypedActor
 {
     private IViewportBridge? _bridge;
 
-    public void SetBridge(IViewportBridge bridge) => _bridge = bridge;
-
     protected override void OnReceive(object message)
     {
         switch (message)
         {
+            case SetViewportBridge setBridge:
+                _bridge = setBridge.Bridge;
+                break;
+
             case AgentStateChanged stateChanged:
                 _bridge?.PublishAgentStateChanged(stateChanged.AgentId, stateChanged.State);
                 break;
