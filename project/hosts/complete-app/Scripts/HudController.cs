@@ -26,9 +26,13 @@ public partial class HudController : Control
     private string? _selectedAgentId;
     private Control? _terminalContainer; // holds the currently visible Terminal
     private readonly Dictionary<string, GodotObject> _agentTerminals = new(); // agentId → AgentTerminal instance
+    private readonly Dictionary<string, GiantIsopod.Plugin.Process.AsciicastRecorder> _agentRecorders = new();
     private static readonly string ConsoleLogPath = System.IO.Path.Combine(
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
         "giant-isopod-console.log");
+    private static readonly string RecordingsDir = System.IO.Path.Combine(
+        System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
+        "giant-isopod-recordings");
 
     public override void _Ready()
     {
@@ -307,9 +311,23 @@ public partial class HudController : Control
         Callable.From(() =>
         {
             instance.Visible = true;
-            // Write a welcome line so we know the terminal is working
             instance.Call("write_text", $"\u001b[32m● Agent {agentId} connected\u001b[0m\r\n");
             DebugLog($"Terminal created for {agentId}: container={_terminalContainer!.Size}, instance={instance.Size}");
+
+            // Start asciicast recording
+            try
+            {
+                var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                var castPath = System.IO.Path.Combine(RecordingsDir, $"{agentId}-{timestamp}.cast");
+                var recorder = new GiantIsopod.Plugin.Process.AsciicastRecorder(castPath, 120, 24);
+                _agentRecorders[agentId] = recorder;
+                recorder.WriteOutput($"\u001b[32m● Agent {agentId} connected\u001b[0m\r\n");
+                DebugLog($"Recording to {castPath}");
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"Failed to start recording for {agentId}: {ex.Message}");
+            }
         }).CallDeferred();
     }
 
@@ -322,6 +340,13 @@ public partial class HudController : Control
         {
             termControl.QueueFree();
             _agentTerminals.Remove(agentId);
+        }
+
+        // Stop asciicast recording
+        if (_agentRecorders.TryGetValue(agentId, out var recorder))
+        {
+            _ = recorder.DisposeAsync();
+            _agentRecorders.Remove(agentId);
         }
     }
 
@@ -357,6 +382,10 @@ public partial class HudController : Control
         text = ColorizeOutput(text);
 
         term.Call("write_text", text);
+
+        // Record to asciicast
+        if (_agentRecorders.TryGetValue(agentId, out var recorder))
+            recorder.WriteOutput(text);
     }
 
     /// <summary>
