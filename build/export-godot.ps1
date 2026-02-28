@@ -1,21 +1,46 @@
 <#
 .SYNOPSIS
-    Exports the Godot app to build/_artifacts/{version}
+    Exports the Godot app to build/_artifacts/{version}/{rid}
 .DESCRIPTION
     Uses GitVersion for semantic versioning. Pre-publishes the .NET project,
-    then runs Godot --headless --export-release for the PCK/exe, and finally
-    copies the published .NET assemblies alongside the exported executable.
+    then runs Godot --headless --export-release for each platform, and copies
+    the published .NET assemblies alongside the exported binaries.
 .PARAMETER GodotPath
     Path to the Godot console executable.
+.PARAMETER Platforms
+    Comma-separated list of platforms to export. Valid: win-x64, linux-x64, osx-universal, all.
+    Defaults to "all".
 #>
 param(
-    [string]$GodotPath = "C:\lunar-horse\tools\Godot_v4.6.1-stable_mono_win64\Godot_v4.6.1-stable_mono_win64_console.exe"
+    [string]$GodotPath = "C:\lunar-horse\tools\Godot_v4.6.1-stable_mono_win64\Godot_v4.6.1-stable_mono_win64_console.exe",
+    [string]$Platforms = "all"
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (git rev-parse --show-toplevel).Trim()
 $projectDir = Join-Path $repoRoot "project\hosts\complete-app"
 $csproj = Join-Path $projectDir "complete-app.csproj"
+
+# Platform definitions: RID -> (preset name, binary name, dotnet RID)
+$platformMap = @{
+    "win-x64"       = @{ Preset = "Windows Desktop"; Binary = "GiantIsopod.exe"; Rid = "win-x64" }
+    "linux-x64"     = @{ Preset = "Linux";           Binary = "GiantIsopod.x86_64"; Rid = "linux-x64" }
+    "osx-universal" = @{ Preset = "macOS";           Binary = "GiantIsopod.zip"; Rid = "osx-x64" }
+}
+
+# Resolve platforms
+$targetPlatforms = if ($Platforms -eq "all") {
+    $platformMap.Keys
+} else {
+    $Platforms -split "," | ForEach-Object { $_.Trim() }
+}
+
+foreach ($p in $targetPlatforms) {
+    if (-not $platformMap.ContainsKey($p)) {
+        Write-Error "Unknown platform: $p. Valid: $($platformMap.Keys -join ', '), all"
+        exit 1
+    }
+}
 
 # --- GitVersion ---
 Write-Host ":: Resolving version with GitVersion..." -ForegroundColor Cyan
@@ -28,63 +53,88 @@ if ([string]::IsNullOrWhiteSpace($semver)) {
     exit 1
 }
 
-Write-Host "   SemVer:  $semver" -ForegroundColor Green
-Write-Host "   Full:    $fullSemver" -ForegroundColor Green
-Write-Host "   Info:    $informationalVersion" -ForegroundColor Green
-
-# --- Output path ---
-$artifactDir = Join-Path $repoRoot "build\_artifacts\$semver"
-if (Test-Path $artifactDir) {
-    Write-Host ":: Cleaning existing artifact directory..." -ForegroundColor Yellow
-    Remove-Item -Recurse -Force $artifactDir
-}
-New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null
-
-$exportPath = Join-Path $artifactDir "GiantIsopod.exe"
+Write-Host "   SemVer:    $semver" -ForegroundColor Green
+Write-Host "   Platforms: $($targetPlatforms -join ', ')" -ForegroundColor Green
 
 # --- Pre-publish .NET ---
 Write-Host ":: Publishing .NET project..." -ForegroundColor Cyan
-$publishDir = Join-Path $projectDir ".godot\mono\temp\bin\Release\publish"
 dotnet publish $csproj -c Release --nologo -v quiet
 if ($LASTEXITCODE -ne 0) {
     Write-Error "dotnet publish failed with exit code $LASTEXITCODE"
     exit $LASTEXITCODE
 }
 
-# --- Godot export (PCK + exe) ---
-Write-Host ":: Exporting Godot project to $exportPath ..." -ForegroundColor Cyan
+$publishDir = Join-Path $projectDir ".godot\mono\temp\bin\Release\publish"
 
 if (-not (Test-Path $GodotPath)) {
     Write-Error "Godot executable not found at: $GodotPath"
     exit 1
 }
 
-& $GodotPath --headless --path $projectDir --export-release "Windows Desktop" $exportPath
+# --- Export each platform ---
+$failed = @()
 
-# Godot may return warnings (exit code 0 with WARNING output) — check exe exists
-if (-not (Test-Path $exportPath)) {
-    Write-Error "Godot export failed — no exe produced at $exportPath"
-    exit 1
+foreach ($rid in $targetPlatforms) {
+    $info = $platformMap[$rid]
+    $outDir = Join-Path $repoRoot "build\_artifacts\$semver\$rid"
+
+    if (Test-Path $outDir) {
+        Remove-Item -Recurse -Force $outDir
+    }
+    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+
+    $exportPath = Join-Path $outDir $info.Binary
+
+    Write-Host ""
+    Write-Host ":: Exporting [$rid] -> $($info.Preset)..." -ForegroundColor Cyan
+
+    # Godot's internal dotnet publish may fail (known issue with external solution_directory)
+    # but the PCK/exe export still succeeds. We pre-published .NET ourselves, so ignore Godot's build error.
+    $prevPref = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $godotOutput = & $GodotPath --headless --path $projectDir --export-release $info.Preset $exportPath 2>&1
+    $ErrorActionPreference = $prevPref
+
+    # Check if the binary was produced
+    $binaryExists = if ($rid -eq "osx-universal") {
+        Test-Path $exportPath  # .zip file
+    } else {
+        Test-Path $exportPath
+    }
+
+    if (-not $binaryExists) {
+        Write-Warning "  Export failed for $rid — no binary at $exportPath"
+        $failed += $rid
+        continue
+    }
+
+    # Copy .NET assemblies alongside the binary
+    if (Test-Path $publishDir) {
+        Copy-Item "$publishDir\*" $outDir -Recurse -Force
+        $dllCount = (Get-ChildItem $outDir -Filter "*.dll").Count
+        Write-Host "   Copied $dllCount DLLs" -ForegroundColor Green
+    }
+
+    # Write version.json
+    @{
+        SemVer               = $semver
+        FullSemVer           = $fullSemver
+        InformationalVersion = $informationalVersion
+        Platform             = $rid
+        Preset               = $info.Preset
+        ExportedAt           = (Get-Date -Format "o")
+    } | ConvertTo-Json | Set-Content (Join-Path $outDir "version.json") -Encoding UTF8
+
+    Write-Host "   Done: $outDir" -ForegroundColor Green
 }
 
-# --- Copy .NET assemblies alongside exe ---
-Write-Host ":: Copying .NET assemblies..." -ForegroundColor Cyan
-if (Test-Path $publishDir) {
-    Copy-Item "$publishDir\*" $artifactDir -Recurse -Force
-    Write-Host "   Copied $(( Get-ChildItem $artifactDir -Filter '*.dll' ).Count) DLLs" -ForegroundColor Green
-} else {
-    Write-Warning "Publish directory not found at $publishDir — .NET assemblies may be missing"
-}
-
-# --- Write version file ---
-@{
-    SemVer               = $semver
-    FullSemVer           = $fullSemver
-    InformationalVersion = $informationalVersion
-    ExportedAt           = (Get-Date -Format "o")
-} | ConvertTo-Json | Set-Content (Join-Path $artifactDir "version.json") -Encoding UTF8
-
+# --- Summary ---
 Write-Host ""
-Write-Host ":: Export complete!" -ForegroundColor Green
-Write-Host "   Artifact: $artifactDir" -ForegroundColor Green
-Write-Host "   Version:  $semver" -ForegroundColor Green
+if ($failed.Count -gt 0) {
+    Write-Warning ":: Export completed with failures: $($failed -join ', ')"
+    exit 1
+} else {
+    Write-Host ":: All exports complete!" -ForegroundColor Green
+    Write-Host "   Artifact root: build\_artifacts\$semver" -ForegroundColor Green
+    Write-Host "   Version:       $semver" -ForegroundColor Green
+}
