@@ -1,0 +1,77 @@
+version: "3"
+
+vars:
+  GIT_CLIFF: '{{.APPDATA}}\Python\Python313\Scripts\git-cliff.exe'
+
+tasks:
+  default:
+    desc: List all available tasks
+    cmds:
+      - task --list
+
+  version:
+    desc: Show the current version from GitVersion
+    cmds:
+      - dotnet-gitversion /showvariable SemVer
+
+  changelog:
+    desc: Generate CHANGELOG.md using version from GitVersion
+    vars:
+      VERSION:
+        sh: dotnet-gitversion /showvariable SemVer
+    cmds:
+      - '"{{.GIT_CLIFF}}" --tag v{{.VERSION}} -o CHANGELOG.md'
+
+  changelog:preview:
+    desc: Preview changelog without writing to file
+    vars:
+      VERSION:
+        sh: dotnet-gitversion /showvariable SemVer
+    cmds:
+      - '"{{.GIT_CLIFF}}" --tag v{{.VERSION}}'
+
+  changelog:unreleased:
+    desc: Show only unreleased changes
+    cmds:
+      - '"{{.GIT_CLIFF}}" --unreleased'
+
+  lint:
+    desc: Run ruff linter
+    cmds:
+      - ruff check --config ruff/ruff.toml .
+
+  lint:fix:
+    desc: Run ruff linter with auto-fix
+    cmds:
+      - ruff check --config ruff/ruff.toml --fix .
+
+  format:
+    desc: Run ruff formatter
+    cmds:
+      - ruff format --config ruff/ruff.toml .
+
+  pre-commit:
+    desc: Run all pre-commit hooks on all files
+    cmds:
+      - pre-commit run --all-files
+
+  pre-commit:install:
+    desc: Install pre-commit hooks
+    cmds:
+      - pre-commit install
+
+  secrets:scan:
+    desc: Scan for secrets and update baseline
+    cmds:
+      - detect-secrets scan --baseline .secrets.baseline
+
+  release:
+    desc: Tag and release using GitVersion's calculated version
+    vars:
+      VERSION:
+        sh: dotnet-gitversion /showvariable SemVer
+    cmds:
+      - git tag v{{.VERSION}}
+      - '"{{.GIT_CLIFF}}" --tag v{{.VERSION}} -o CHANGELOG.md'
+      - git add CHANGELOG.md
+      - 'git commit -m "chore(release): v{{.VERSION}}"'
