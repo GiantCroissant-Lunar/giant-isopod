@@ -135,35 +135,10 @@ public sealed class AgentActor : UntypedActor
             case DemoTick tick:
                 if (!_piConnected)
                 {
+                    // Visual state cycling only — no fake console output
                     var state = DemoStates[tick.Index % DemoStates.Length];
                     Context.System.ActorSelection("/user/viewport")
                         .Tell(new AgentStateChanged(_agentId, state));
-                    // Emit demo console output
-                    var ts = DateTime.Now.ToString("HH:mm:ss");
-                    var viewport = Context.System.ActorSelection("/user/viewport");
-                    switch (state)
-                    {
-                        case AgentActivityState.Thinking:
-                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] Analyzing task requirements..."));
-                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] Evaluating approach: refactor vs patch"));
-                            break;
-                        case AgentActivityState.Typing:
-                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] tool_use: edit_file src/main.cs"));
-                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}]   +  public void Initialize() {{"));
-                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}]   +      _logger.LogInfo(\"Starting\");"));
-                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}]   +  }}"));
-                            break;
-                        case AgentActivityState.Reading:
-                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] tool_use: read_file docs/architecture.md"));
-                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] Read 142 lines, 3.2KB"));
-                            break;
-                        case AgentActivityState.Waiting:
-                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] Waiting for tool result..."));
-                            break;
-                        default:
-                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] idle"));
-                            break;
-                    }
                     ScheduleNextDemoTick(tick.Index + 1);
                 }
                 break;
