@@ -4,7 +4,8 @@
 .DESCRIPTION
     Uses GitVersion for semantic versioning. Pre-publishes the .NET project,
     then runs Godot --headless --export-release for each platform, and copies
-    the published .NET assemblies alongside the exported binaries.
+    the published .NET assemblies into the Godot data directory
+    (data_<appname>_<arch>) alongside the exported binaries.
 .PARAMETER GodotPath
     Path to the Godot console executable.
 .PARAMETER Platforms
@@ -21,11 +22,15 @@ $repoRoot = (git rev-parse --show-toplevel).Trim()
 $projectDir = Join-Path $repoRoot "project\hosts\complete-app"
 $csproj = Join-Path $projectDir "complete-app.csproj"
 
-# Platform definitions: RID -> (preset name, binary name, dotnet RID)
+# Application name from project.godot config/name (used for data directory naming)
+$appName = "complete-app"
+
+# Platform definitions: RID -> (preset name, binary name, Godot data dir suffix)
+# Godot expects .NET assemblies in: data_<appname>_<arch>/ next to the binary
 $platformMap = @{
-    "win-x64"       = @{ Preset = "Windows Desktop"; Binary = "GiantIsopod.exe"; Rid = "win-x64" }
-    "linux-x64"     = @{ Preset = "Linux";           Binary = "GiantIsopod.x86_64"; Rid = "linux-x64" }
-    "osx-universal" = @{ Preset = "macOS";           Binary = "GiantIsopod.zip"; Rid = "osx-x64" }
+    "win-x64"       = @{ Preset = "Windows Desktop"; Binary = "GiantIsopod.exe"; DataDir = "data_${appName}_x86_64" }
+    "linux-x64"     = @{ Preset = "Linux";           Binary = "GiantIsopod.x86_64"; DataDir = "data_${appName}_linuxbsd_x86_64" }
+    "osx-universal" = @{ Preset = "macOS";           Binary = "GiantIsopod.zip"; DataDir = "data_${appName}_universal" }
 }
 
 # Resolve platforms
@@ -108,11 +113,13 @@ foreach ($rid in $targetPlatforms) {
         continue
     }
 
-    # Copy .NET assemblies alongside the binary
+    # Copy .NET assemblies into the Godot data directory
     if (Test-Path $publishDir) {
-        Copy-Item "$publishDir\*" $outDir -Recurse -Force
-        $dllCount = (Get-ChildItem $outDir -Filter "*.dll").Count
-        Write-Host "   Copied $dllCount DLLs" -ForegroundColor Green
+        $dataDir = Join-Path $outDir $info.DataDir
+        New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+        Copy-Item "$publishDir\*" $dataDir -Recurse -Force
+        $dllCount = (Get-ChildItem $dataDir -Filter "*.dll").Count
+        Write-Host "   Copied $dllCount DLLs -> $($info.DataDir)/" -ForegroundColor Green
     }
 
     # Write version.json
