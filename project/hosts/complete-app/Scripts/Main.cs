@@ -1,17 +1,21 @@
 using Godot;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using GiantIsopod.Plugin.Actors;
 
 namespace GiantIsopod.Hosts.CompleteApp;
 
 /// <summary>
-/// Main scene entry point. Bootstraps the Akka.NET actor system
+/// Main scene entry point. Bootstraps the DI container, Akka.NET actor system,
 /// and connects it to the Godot viewport via the ECS bridge.
 /// </summary>
 public partial class Main : Node2D
 {
+    private ServiceProvider? _services;
     private AgentWorldSystem? _agentWorld;
     private GodotViewportBridge? _viewportBridge;
     private HudController? _hud;
+    private ILogger<Main>? _logger;
 
     public override void _Ready()
     {
@@ -24,37 +28,38 @@ public partial class Main : Node2D
             MemvidExecutable = "memvid"
         };
 
-        _agentWorld = new AgentWorldSystem(config);
+        _services = new ServiceCollection()
+            .AddLogging(builder => builder
+                .SetMinimumLevel(LogLevel.Debug)
+                .AddProvider(new GodotLoggerProvider()))
+            .AddGiantIsopodPlugins(config)
+            .BuildServiceProvider();
+
+        _logger = _services.GetRequiredService<ILogger<Main>>();
+        _agentWorld = _services.GetRequiredService<AgentWorldSystem>();
         _viewportBridge = new GodotViewportBridge();
 
-        // Wire the viewport bridge into the actor system
         _agentWorld.SetViewportBridge(_viewportBridge);
 
-        // Grab HUD controller from scene tree
         _hud = GetNode<HudController>("HUD/HUDRoot");
 
-        GD.Print("[AgentWorld] Actor system started");
+        _logger.LogInformation("Giant Isopod ready");
     }
 
     public override void _Process(double delta)
     {
         if (_viewportBridge == null || _hud == null) return;
 
-        // Drain actor system events and apply to HUD + ECS
         foreach (var evt in _viewportBridge.DrainEvents())
         {
             _hud.ApplyEvent(evt);
         }
-
-        // ECS systems would tick here
-        // ViewportSyncSystem drains the actor message queue
-        // MovementSystem updates positions
-        // AnimationSystem updates sprite frames
     }
 
     public override void _ExitTree()
     {
         _agentWorld?.Dispose();
-        GD.Print("[AgentWorld] Actor system stopped");
+        _services?.Dispose();
+        _logger?.LogInformation("Giant Isopod shutdown");
     }
 }
