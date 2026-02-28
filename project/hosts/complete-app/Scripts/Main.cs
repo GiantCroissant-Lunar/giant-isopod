@@ -11,6 +11,7 @@ public partial class Main : Node2D
 {
     private AgentWorldSystem? _agentWorld;
     private GodotViewportBridge? _viewportBridge;
+    private HudController? _hud;
 
     public override void _Ready()
     {
@@ -26,13 +27,25 @@ public partial class Main : Node2D
         _agentWorld = new AgentWorldSystem(config);
         _viewportBridge = new GodotViewportBridge();
 
-        // Connect the viewport bridge to the actor system
-        // The ViewportActor is an observer — it never commands agents
+        // Wire the viewport bridge into the actor system
+        _agentWorld.SetViewportBridge(_viewportBridge);
+
+        // Grab HUD controller from scene tree
+        _hud = GetNode<HudController>("HUD/HUDRoot");
+
         GD.Print("[AgentWorld] Actor system started");
     }
 
     public override void _Process(double delta)
     {
+        if (_viewportBridge == null || _hud == null) return;
+
+        // Drain actor system events and apply to HUD + ECS
+        foreach (var evt in _viewportBridge.DrainEvents())
+        {
+            _hud.ApplyEvent(evt);
+        }
+
         // ECS systems would tick here
         // ViewportSyncSystem drains the actor message queue
         // MovementSystem updates positions
