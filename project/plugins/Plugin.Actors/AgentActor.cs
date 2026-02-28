@@ -138,17 +138,32 @@ public sealed class AgentActor : UntypedActor
                     var state = DemoStates[tick.Index % DemoStates.Length];
                     Context.System.ActorSelection("/user/viewport")
                         .Tell(new AgentStateChanged(_agentId, state));
-                    // Emit demo console output so the CLI panel isn't empty
-                    var demoLine = state switch
+                    // Emit demo console output
+                    var ts = DateTime.Now.ToString("HH:mm:ss");
+                    var viewport = Context.System.ActorSelection("/user/viewport");
+                    switch (state)
                     {
-                        AgentActivityState.Thinking => $"[{DateTime.Now:HH:mm:ss}] thinking...",
-                        AgentActivityState.Typing => $"[{DateTime.Now:HH:mm:ss}] writing code in src/main.cs",
-                        AgentActivityState.Reading => $"[{DateTime.Now:HH:mm:ss}] reading docs/architecture.md",
-                        AgentActivityState.Waiting => $"[{DateTime.Now:HH:mm:ss}] waiting for response...",
-                        _ => $"[{DateTime.Now:HH:mm:ss}] idle"
-                    };
-                    Context.System.ActorSelection("/user/viewport")
-                        .Tell(new ProcessOutput(_agentId, demoLine));
+                        case AgentActivityState.Thinking:
+                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] Analyzing task requirements..."));
+                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] Evaluating approach: refactor vs patch"));
+                            break;
+                        case AgentActivityState.Typing:
+                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] tool_use: edit_file src/main.cs"));
+                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}]   +  public void Initialize() {{"));
+                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}]   +      _logger.LogInfo(\"Starting\");"));
+                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}]   +  }}"));
+                            break;
+                        case AgentActivityState.Reading:
+                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] tool_use: read_file docs/architecture.md"));
+                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] Read 142 lines, 3.2KB"));
+                            break;
+                        case AgentActivityState.Waiting:
+                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] Waiting for tool result..."));
+                            break;
+                        default:
+                            viewport.Tell(new ProcessOutput(_agentId, $"[{ts}] idle"));
+                            break;
+                    }
                     ScheduleNextDemoTick(tick.Index + 1);
                 }
                 break;
@@ -164,7 +179,7 @@ public sealed class AgentActor : UntypedActor
     private void ScheduleNextDemoTick(int nextIndex)
     {
         var rng = new Random(_agentId.GetHashCode() + nextIndex);
-        var delay = TimeSpan.FromSeconds(2.0 + rng.NextDouble() * 4.0);
+        var delay = TimeSpan.FromSeconds(0.8 + rng.NextDouble() * 1.5);
         _demoTimer = Context.System.Scheduler.ScheduleTellOnceCancelable(
             delay, Self, new DemoTick(nextIndex), Self);
     }
