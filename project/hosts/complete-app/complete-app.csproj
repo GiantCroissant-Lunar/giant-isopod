@@ -1,0 +1,19 @@
+<Project Sdk="Godot.NET.Sdk/4.4.0">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>GiantIsopod.Hosts.CompleteApp</RootNamespace>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\plugins\Plugin.Actors\Plugin.Actors.csproj" />
+    <ProjectReference Include="..\..\plugins\Plugin.Process\Plugin.Process.csproj" />
+    <ProjectReference Include="..\..\plugins\Plugin.Protocol\Plugin.Protocol.csproj" />
+    <ProjectReference Include="..\..\plugins\Plugin.ECS\Plugin.ECS.csproj" />
+    <ProjectReference Include="..\..\plugins\Plugin.Mapping\Plugin.Mapping.csproj" />
+  </ItemGroup>
+
+</Project>
