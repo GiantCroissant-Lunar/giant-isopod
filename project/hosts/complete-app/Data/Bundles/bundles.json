@@ -1,0 +1,19 @@
+{
+  "bundles": [
+    {
+      "name": "builder",
+      "skills": ["code-edit", "shell-run"],
+      "description": "Skills for building and editing code"
+    },
+    {
+      "name": "reviewer",
+      "skills": ["code-edit"],
+      "description": "Skills for reviewing code changes"
+    },
+    {
+      "name": "planner",
+      "skills": [],
+      "description": "Skills for planning and decomposing tasks"
+    }
+  ]
+}
