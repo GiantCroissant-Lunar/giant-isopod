@@ -303,12 +303,16 @@ public partial class HudController : Control
 
         _agentTerminals[agentId] = instance;
 
-        // Fork pi via the GDScript method
+        // Defer fork_pi until after _ready() runs (so @onready vars are set)
         var cwd = @"C:\lunar-horse\yokan-projects\giant-isopod";
         var apiKey = "08bbb0b6b8d649fbbafa5c11091e5ac3.4dzlUajBX9I8oE0F";
-        var result = instance.Call("fork_pi", cwd, apiKey);
-        GD.Print($"PTY fork for {agentId}: {result}");
-        GD.Print($"Terminal container size: {_terminalContainer.Size}, instance size: {instance.Size}");
+        Callable.From(() =>
+        {
+            instance.Visible = true;
+            var result = instance.Call("fork_pi", cwd, apiKey);
+            GD.Print($"PTY fork for {agentId}: {result}");
+            GD.Print($"Terminal container size: {_terminalContainer!.Size}, instance size: {instance.Size}");
+        }).CallDeferred();
     }
 
     /// <summary>
