@@ -8,3 +8,6 @@ repomix-output.txt
 # .NET
 bin/
 obj/
+
+# Build artifacts
+build/_artifacts/
