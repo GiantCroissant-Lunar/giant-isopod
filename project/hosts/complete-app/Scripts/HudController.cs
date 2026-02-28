@@ -348,11 +348,47 @@ public partial class HudController : Control
 
     public void AppendConsoleOutput(string agentId, string line)
     {
-        // Write raw text (with ANSI sequences) to the GodotXterm Terminal
-        if (_agentTerminals.TryGetValue(agentId, out var term))
-        {
-            term.Call("write_text", line);
-        }
+        if (!_agentTerminals.TryGetValue(agentId, out var term)) return;
+
+        // Fix line endings: Terminal node expects \r\n
+        var text = line.Replace("\r\n", "\n").Replace("\n", "\r\n");
+
+        // Add ANSI colors for key patterns since pi doesn't output colors without a real TTY
+        text = ColorizeOutput(text);
+
+        term.Call("write_text", text);
+    }
+
+    /// <summary>
+    /// Adds ANSI color codes to pi text output for better readability.
+    /// </summary>
+    private static string ColorizeOutput(string text)
+    {
+        // Tool use lines
+        if (text.Contains("🔧") || text.Contains("tool_use"))
+            return $"\u001b[33m{text}\u001b[0m"; // yellow
+
+        // Thinking lines
+        if (text.Contains("💭"))
+            return $"\u001b[36m{text}\u001b[0m"; // cyan
+
+        // Headings (markdown ##)
+        if (text.TrimStart().StartsWith("##"))
+            return $"\u001b[1;32m{text}\u001b[0m"; // bold green
+
+        // Code blocks
+        if (text.TrimStart().StartsWith("```"))
+            return $"\u001b[90m{text}\u001b[0m"; // dim gray
+
+        // Bullet points
+        if (text.TrimStart().StartsWith("- ") || text.TrimStart().StartsWith("* "))
+            return $"\u001b[37m{text}\u001b[0m"; // bright white
+
+        // Error/warning
+        if (text.Contains("error") || text.Contains("Error"))
+            return $"\u001b[31m{text}\u001b[0m"; // red
+
+        return text;
     }
 
     private void DebugLog(string message)
