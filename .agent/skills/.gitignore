@@ -5,3 +5,10 @@
 !.gitignore
 !skills.json
 !install_skills.py
+
+# Track agent-browser skill config (npm install restores node_modules)
+!agent-browser/
+agent-browser/*
+!agent-browser/package.json
+!agent-browser/package-lock.json
+!agent-browser/SKILL.md

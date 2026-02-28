@@ -1,0 +1,9 @@
+{
+  "name": "agent-browser-skill",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local agent-browser installation for AI agent skill",
+  "dependencies": {
+    "agent-browser": "latest"
+  }
+}

@@ -83,3 +83,5 @@ tasks:
     desc: Install all external skills from .agent/skills.json
     cmds:
       - python .agent/skills/install_skills.py
+      - cmd: npm install
+        dir: .agent/skills/agent-browser
