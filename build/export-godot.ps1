@@ -115,11 +115,28 @@ foreach ($rid in $targetPlatforms) {
 
     # Copy .NET assemblies into the Godot data directory
     if (Test-Path $publishDir) {
-        $dataDir = Join-Path $outDir $info.DataDir
-        New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
-        Copy-Item "$publishDir\*" $dataDir -Recurse -Force
-        $dllCount = (Get-ChildItem $dataDir -Filter "*.dll").Count
-        Write-Host "   Copied $dllCount DLLs -> $($info.DataDir)/" -ForegroundColor Green
+        if ($rid -eq "osx-universal") {
+            # macOS: inject data dir into .app bundle inside the zip
+            $tempExtract = Join-Path $env:TEMP "godot-mac-inject-$([guid]::NewGuid().ToString('N'))"
+            Expand-Archive -Path $exportPath -DestinationPath $tempExtract -Force
+            $appBundle = Get-ChildItem $tempExtract -Filter "*.app" -Directory | Select-Object -First 1
+            $resourcesDir = Join-Path $appBundle.FullName "Contents\Resources\$($info.DataDir)"
+            New-Item -ItemType Directory -Path $resourcesDir -Force | Out-Null
+            Copy-Item "$publishDir\*" $resourcesDir -Recurse -Force
+            $dllCount = (Get-ChildItem $resourcesDir -Filter "*.dll").Count
+            # Re-zip the .app bundle
+            Remove-Item $exportPath -Force
+            Compress-Archive -Path "$tempExtract\*" -DestinationPath $exportPath -CompressionLevel Optimal
+            Remove-Item -Recurse -Force $tempExtract
+            Write-Host "   Injected $dllCount DLLs -> $($appBundle.Name)/Contents/Resources/$($info.DataDir)/" -ForegroundColor Green
+        } else {
+            # Windows/Linux: data dir sits next to the binary
+            $dataDir = Join-Path $outDir $info.DataDir
+            New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+            Copy-Item "$publishDir\*" $dataDir -Recurse -Force
+            $dllCount = (Get-ChildItem $dataDir -Filter "*.dll").Count
+            Write-Host "   Copied $dllCount DLLs -> $($info.DataDir)/" -ForegroundColor Green
+        }
     }
 
     # Write version.json
