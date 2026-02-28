@@ -1,0 +1,22 @@
+{
+  "output": {
+    "filePath": "repomix-output.txt",
+    "style": "markdown",
+    "removeComments": false,
+    "removeEmptyLines": false,
+    "showLineNumbers": true
+  },
+  "include": [],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      ".godot/**",
+      "build/**",
+      "ref-projects/**",
+      "*.cache",
+      "*.ctex",
+      "*.res"
+    ]
+  }
+}
