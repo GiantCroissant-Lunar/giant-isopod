@@ -222,7 +222,7 @@ public partial class HudController : Control
         _consolePanel.AnchorRight = 1;
         _consolePanel.AnchorTop = 1;
         _consolePanel.AnchorBottom = 1;
-        _consolePanel.OffsetTop = -220;
+        _consolePanel.OffsetTop = -350;
         _consolePanel.OffsetBottom = 0;
         _consolePanel.OffsetLeft = 0;
         _consolePanel.OffsetRight = 0;
@@ -272,10 +272,10 @@ public partial class HudController : Control
         header.AddChild(closeBtn);
 
         // Container for Terminal nodes — one per agent, only the selected one is visible
-        _terminalContainer = new Control();
+        _terminalContainer = new MarginContainer();
         _terminalContainer.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         _terminalContainer.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        _terminalContainer.CustomMinimumSize = new Vector2(0, 180);
+        _terminalContainer.CustomMinimumSize = new Vector2(0, 300);
         vbox.AddChild(_terminalContainer);
 
         AddChild(_consolePanel);
@@ -297,7 +297,8 @@ public partial class HudController : Control
 
         var instance = scene.Instantiate<Control>();
         instance.Visible = false;
-        instance.SetAnchorsPreset(LayoutPreset.FullRect);
+        instance.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        instance.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         _terminalContainer.AddChild(instance);
 
         _agentTerminals[agentId] = instance;
@@ -307,6 +308,7 @@ public partial class HudController : Control
         var apiKey = "08bbb0b6b8d649fbbafa5c11091e5ac3.4dzlUajBX9I8oE0F";
         var result = instance.Call("fork_pi", cwd, apiKey);
         GD.Print($"PTY fork for {agentId}: {result}");
+        GD.Print($"Terminal container size: {_terminalContainer.Size}, instance size: {instance.Size}");
     }
 
     /// <summary>
