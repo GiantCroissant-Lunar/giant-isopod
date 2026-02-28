@@ -29,6 +29,10 @@ window/stretch/mode="canvas_items"
 project/assembly_name="GiantIsopod"
 project/solution_directory="../../"
 
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godot_xterm/plugin.cfg")
+
 [physics]
 
 3d/physics_engine="Jolt Physics"

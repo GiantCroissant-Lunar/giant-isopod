@@ -20,13 +20,13 @@ public partial class HudController : Control
     private readonly Dictionary<string, AgentHudEntry> _entries = new();
     private readonly HashSet<string> _activeProcesses = new();
 
-    // Console view
+    // Console view — GodotXterm Terminal + PTY per agent
     private PanelContainer? _consolePanel;
-    private RichTextLabel? _consoleOutput;
     private Label? _consoleTitle;
     private string? _selectedAgentId;
-    private readonly Dictionary<string, List<string>> _consoleBuffers = new();
-    private const int MaxConsoleLines = 200;
+    private Control? _terminalContainer; // holds the currently visible Terminal
+    private readonly Dictionary<string, GodotObject> _agentTerminals = new(); // agentId → Terminal node
+    private readonly Dictionary<string, GodotObject> _agentPtys = new(); // agentId → PTY node
     private static readonly string ConsoleLogPath = System.IO.Path.Combine(
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
         "giant-isopod-console.log");
@@ -180,10 +180,6 @@ public partial class HudController : Control
         _agentList.AddChild(entry.Root);
         _entries[agentId] = entry;
         UpdateCount();
-
-        // Seed console buffer so it's never empty when clicked
-        AppendConsoleOutput(agentId, $"[{DateTime.Now:HH:mm:ss}] Agent {info.DisplayName} spawned");
-        AppendConsoleOutput(agentId, $"[{DateTime.Now:HH:mm:ss}] Connecting to CLI...");
     }
 
     private void RemoveAgent(string agentId)
@@ -191,6 +187,7 @@ public partial class HudController : Control
         if (!_entries.TryGetValue(agentId, out var entry)) return;
         entry.Root.QueueFree();
         _entries.Remove(agentId);
+        CleanupTerminalForAgent(agentId);
         UpdateCount();
     }
 
@@ -222,12 +219,11 @@ public partial class HudController : Control
     {
         _consolePanel = new PanelContainer();
         _consolePanel.Visible = false;
-        // Position at bottom of screen, 180px tall
         _consolePanel.AnchorLeft = 0;
         _consolePanel.AnchorRight = 1;
         _consolePanel.AnchorTop = 1;
         _consolePanel.AnchorBottom = 1;
-        _consolePanel.OffsetTop = -180;
+        _consolePanel.OffsetTop = -220;
         _consolePanel.OffsetBottom = 0;
         _consolePanel.OffsetLeft = 0;
         _consolePanel.OffsetRight = 0;
@@ -238,8 +234,8 @@ public partial class HudController : Control
         bg.BgColor = new Color(0.06f, 0.07f, 0.1f, 0.95f);
         bg.BorderWidthTop = 2;
         bg.BorderColor = new Color(0.25f, 0.5f, 0.3f, 0.8f);
-        bg.ContentMarginLeft = 8;
-        bg.ContentMarginRight = 8;
+        bg.ContentMarginLeft = 4;
+        bg.ContentMarginRight = 4;
         bg.ContentMarginTop = 4;
         bg.ContentMarginBottom = 4;
         _consolePanel.AddThemeStyleboxOverride("panel", bg);
@@ -276,66 +272,117 @@ public partial class HudController : Control
         closeBtn.Pressed += () => { _consolePanel.Visible = false; _selectedAgentId = null; };
         header.AddChild(closeBtn);
 
-        // Output area — use plain RichTextLabel with minimum size
-        _consoleOutput = new RichTextLabel();
-        _consoleOutput.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        _consoleOutput.CustomMinimumSize = new Vector2(0, 120);
-        _consoleOutput.BbcodeEnabled = false; // plain text, no BBCode parsing issues
-        _consoleOutput.ScrollFollowing = true;
-        _consoleOutput.AddThemeColorOverride("default_color", new Color(0.75f, 0.82f, 0.7f));
-        _consoleOutput.AddThemeFontSizeOverride("normal_font_size", 10);
-        vbox.AddChild(_consoleOutput);
+        // Container for Terminal nodes — one per agent, only the selected one is visible
+        _terminalContainer = new Control();
+        _terminalContainer.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _terminalContainer.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        _terminalContainer.CustomMinimumSize = new Vector2(0, 180);
+        vbox.AddChild(_terminalContainer);
 
         AddChild(_consolePanel);
+    }
+
+    /// <summary>
+    /// Creates a GodotXterm Terminal + PTY pair for an agent and forks pi.
+    /// </summary>
+    private void CreateTerminalForAgent(string agentId)
+    {
+        if (_agentTerminals.ContainsKey(agentId) || _terminalContainer == null) return;
+
+        // Create Terminal node (GDExtension class)
+        var terminal = ClassDB.Instantiate("Terminal").AsGodotObject();
+        if (terminal is not Control termControl)
+        {
+            GD.PrintErr($"Failed to create Terminal node for {agentId}");
+            return;
+        }
+
+        termControl.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        termControl.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        termControl.SetAnchorsPreset(LayoutPreset.FullRect);
+        termControl.Visible = false;
+        _terminalContainer.AddChild(termControl);
+
+        // Create PTY node
+        var pty = ClassDB.Instantiate("PTY").AsGodotObject();
+        if (pty is not Node ptyNode)
+        {
+            GD.PrintErr($"Failed to create PTY node for {agentId}");
+            return;
+        }
+
+        // Set PTY terminal_path to point to the Terminal node
+        ptyNode.Set("terminal_path", termControl.GetPath());
+        // Set environment variables for pi
+        var env = new Godot.Collections.Dictionary();
+        env["COLORTERM"] = "truecolor";
+        env["TERM"] = "xterm-256color";
+        env["ZAI_API_KEY"] = "08bbb0b6b8d649fbbafa5c11091e5ac3.4dzlUajBX9I8oE0F";
+        ptyNode.Set("env", env);
+        ptyNode.Set("use_os_env", true);
+
+        termControl.AddChild(ptyNode);
+
+        _agentTerminals[agentId] = terminal;
+        _agentPtys[agentId] = pty;
+
+        // Fork pi in text mode
+        var args = new string[] { "--mode", "text", "--no-session", "--provider", "zai", "--model", "glm-4.7",
+            "-p", "Explore the current directory, read key files, and suggest improvements." };
+        var cwd = @"C:\lunar-horse\yokan-projects\giant-isopod";
+        var result = ptyNode.Call("fork", "pi", args, cwd, 120, 24);
+
+        GD.Print($"PTY fork for {agentId}: {result}");
+    }
+
+    /// <summary>
+    /// Cleans up Terminal + PTY for a removed agent.
+    /// </summary>
+    private void CleanupTerminalForAgent(string agentId)
+    {
+        if (_agentPtys.TryGetValue(agentId, out var pty) && pty is Node ptyNode)
+        {
+            ptyNode.Call("kill", 9); // SIGKILL
+            ptyNode.QueueFree();
+            _agentPtys.Remove(agentId);
+        }
+        if (_agentTerminals.TryGetValue(agentId, out var term) && term is Control termControl)
+        {
+            termControl.QueueFree();
+            _agentTerminals.Remove(agentId);
+        }
     }
 
     public void SelectAgent(string agentId)
     {
         _selectedAgentId = agentId;
-        if (_consolePanel == null || _consoleOutput == null || _consoleTitle == null) return;
+        if (_consolePanel == null || _consoleTitle == null) return;
 
-        var displayName = _entries.TryGetValue(agentId, out var entry) ? agentId : agentId;
         _consoleTitle.Text = $"Console — {agentId}";
         _consolePanel.Visible = true;
 
-        // Render buffered lines
-        _consoleOutput.Clear();
-        if (_consoleBuffers.TryGetValue(agentId, out var lines))
+        // Create terminal on first click
+        if (!_agentTerminals.ContainsKey(agentId))
+            CreateTerminalForAgent(agentId);
+
+        // Hide all terminals, show the selected one
+        foreach (var (id, term) in _agentTerminals)
         {
-            foreach (var line in lines)
-                _consoleOutput.AppendText(line + "\n");
-        }
-        else
-        {
-            _consoleOutput.AppendText("[color=#666]No output yet[/color]\n");
+            if (term is Control c)
+                c.Visible = id == agentId;
         }
     }
 
     public void AppendConsoleOutput(string agentId, string line)
     {
-        if (!_consoleBuffers.TryGetValue(agentId, out var buffer))
-        {
-            buffer = new List<string>();
-            _consoleBuffers[agentId] = buffer;
-        }
-
-        buffer.Add(line);
-        if (buffer.Count > MaxConsoleLines)
-            buffer.RemoveAt(0);
-
-        // Log to file for debugging
+        // With GodotXterm, console output goes through PTY directly.
+        // This method is kept for compatibility but only logs to file now.
         try
         {
             System.IO.File.AppendAllText(ConsoleLogPath,
                 $"[{DateTime.Now:HH:mm:ss.fff}] [{agentId}] {line}\n");
         }
         catch { /* ignore file errors */ }
-
-        // If this agent's console is currently visible, append live
-        if (_selectedAgentId == agentId && _consoleOutput != null)
-        {
-            _consoleOutput.AppendText(line + "\n");
-        }
     }
 }
 
