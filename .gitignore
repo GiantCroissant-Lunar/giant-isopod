@@ -4,3 +4,6 @@ ref-projects/
 
 # Repomix
 repomix-output.txt
+
+# External agent skills (restored via task skills:install)
+.agent/skills/

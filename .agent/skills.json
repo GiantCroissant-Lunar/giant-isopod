@@ -1,0 +1,10 @@
+{
+  "skills": [
+    {
+      "name": "skill-creator",
+      "repo": "https://github.com/anthropics/skills.git",
+      "path": "skills/skill-creator",
+      "ref": "main"
+    }
+  ]
+}

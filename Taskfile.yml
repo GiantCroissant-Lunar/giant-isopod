@@ -2,6 +2,9 @@ version: "3"
 
 vars:
   GIT_CLIFF: '{{.APPDATA}}\Python\Python313\Scripts\git-cliff.exe'
+  SKILLS_CONFIG: .agent/skills.json
+  SKILLS_DIR: .agent/skills
+  SKILLS_TEMP: .agent/.skills-temp
 
 tasks:
   default:
@@ -75,3 +78,8 @@ tasks:
       - '"{{.GIT_CLIFF}}" --tag v{{.VERSION}} -o CHANGELOG.md'
       - git add CHANGELOG.md
       - 'git commit -m "chore(release): v{{.VERSION}}"'
+
+  skills:install:
+    desc: Install all external skills from .agent/skills.json
+    cmds:
+      - python .agent/install_skills.py
