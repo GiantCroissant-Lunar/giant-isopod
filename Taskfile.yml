@@ -2,6 +2,9 @@ version: "3"
 
 vars:
   GIT_CLIFF: '{{.APPDATA}}\Python\Python313\Scripts\git-cliff.exe'
+  GODOT: 'C:\lunar-horse\tools\Godot_v4.6.1-stable_mono_win64\Godot_v4.6.1-stable_mono_win64_console.exe'
+  SLN: project/GiantIsopod.sln
+  GODOT_PROJECT: project/hosts/complete-app
   SKILLS_CONFIG: .agent/skills.json
   SKILLS_DIR: .agent/skills
   SKILLS_TEMP: .agent/.skills-temp
@@ -85,3 +88,61 @@ tasks:
       - python .agent/skills/install_skills.py
       - cmd: npm install
         dir: .agent/skills/agent-browser
+
+  # ── .NET / Godot ──
+
+  build:
+    desc: Build the .NET solution (Debug)
+    cmds:
+      - dotnet build {{.SLN}} --nologo -v quiet
+
+  build:release:
+    desc: Build the .NET solution (Release)
+    cmds:
+      - dotnet build {{.SLN}} -c Release --nologo -v quiet
+
+  publish:
+    desc: Publish the Godot host project (.NET assemblies)
+    cmds:
+      - dotnet publish {{.GODOT_PROJECT}}/complete-app.csproj -c Release --nologo -v quiet
+
+  export:
+    desc: Export Godot app to build/_artifacts/{version}
+    vars:
+      VERSION:
+        sh: dotnet-gitversion /showvariable SemVer
+    cmds:
+      - task: publish
+      - cmd: >-
+          "{{.GODOT}}" --headless
+          --path {{.GODOT_PROJECT}}
+          --export-release "Windows Desktop"
+          build/_artifacts/{{.VERSION}}/GiantIsopod.exe
+      - cmd: >-
+          powershell -NoProfile -Command
+          "Copy-Item '{{.GODOT_PROJECT}}/.godot/mono/temp/bin/Release/publish/*'
+          'build/_artifacts/{{.VERSION}}/' -Recurse -Force"
+      - cmd: >-
+          powershell -NoProfile -Command
+          "@{ SemVer='{{.VERSION}}'; ExportedAt=(Get-Date -Format 'o') }
+          | ConvertTo-Json
+          | Set-Content 'build/_artifacts/{{.VERSION}}/version.json' -Encoding UTF8"
+    status:
+      - test -f build/_artifacts/{{.VERSION}}/GiantIsopod.exe
+
+  export:clean:
+    desc: Clean build artifacts and re-export
+    cmds:
+      - cmd: powershell -NoProfile -Command "Remove-Item -Recurse -Force build/_artifacts -ErrorAction SilentlyContinue"
+      - task: export
+
+  godot:editor:
+    desc: Open the Godot editor for the complete-app project
+    cmds:
+      - cmd: '"{{.GODOT}}" --path {{.GODOT_PROJECT}} --editor'
+
+  clean:
+    desc: Clean all build outputs
+    cmds:
+      - dotnet clean {{.SLN}} --nologo -v quiet
+      - cmd: powershell -NoProfile -Command "Remove-Item -Recurse -Force build/_artifacts -ErrorAction SilentlyContinue"
