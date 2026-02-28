@@ -177,6 +177,10 @@ public partial class HudController : Control
         _agentList.AddChild(entry.Root);
         _entries[agentId] = entry;
         UpdateCount();
+
+        // Seed console buffer so it's never empty when clicked
+        AppendConsoleOutput(agentId, $"[{DateTime.Now:HH:mm:ss}] Agent {info.DisplayName} spawned");
+        AppendConsoleOutput(agentId, $"[{DateTime.Now:HH:mm:ss}] Connecting to CLI...");
     }
 
     private void RemoveAgent(string agentId)

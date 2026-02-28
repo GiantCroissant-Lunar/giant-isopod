@@ -90,8 +90,10 @@ public partial class AgentSprite : Node2D
     {
         if (@event is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } mb)
         {
-            var local = ToLocal(mb.GlobalPosition);
-            if (local.LengthSquared() < 24f * 24f)
+            // Use GetGlobalMousePosition for correct world-space coords with viewport scaling
+            var worldMouse = GetGlobalMousePosition();
+            var local = worldMouse - GlobalPosition;
+            if (local.LengthSquared() < 28f * 28f)
             {
                 EmitSignal(SignalName.AgentClicked, _agentId);
                 GetViewport().SetInputAsHandled();
