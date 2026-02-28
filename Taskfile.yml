@@ -107,31 +107,27 @@ tasks:
       - dotnet publish {{.GODOT_PROJECT}}/complete-app.csproj -c Release --nologo -v quiet
 
   export:
-    desc: Export Godot app to build/_artifacts/{version}
-    vars:
-      VERSION:
-        sh: dotnet-gitversion /showvariable SemVer
+    desc: Export Godot app for all platforms to build/_artifacts/{version}/{rid}
     cmds:
-      - task: publish
-      - cmd: >-
-          "{{.GODOT}}" --headless
-          --path {{.GODOT_PROJECT}}
-          --export-release "Windows Desktop"
-          build/_artifacts/{{.VERSION}}/GiantIsopod.exe
-      - cmd: >-
-          powershell -NoProfile -Command
-          "Copy-Item '{{.GODOT_PROJECT}}/.godot/mono/temp/bin/Release/publish/*'
-          'build/_artifacts/{{.VERSION}}/' -Recurse -Force"
-      - cmd: >-
-          powershell -NoProfile -Command
-          "@{ SemVer='{{.VERSION}}'; ExportedAt=(Get-Date -Format 'o') }
-          | ConvertTo-Json
-          | Set-Content 'build/_artifacts/{{.VERSION}}/version.json' -Encoding UTF8"
-    status:
-      - test -f build/_artifacts/{{.VERSION}}/GiantIsopod.exe
+      - powershell -ExecutionPolicy Bypass -File build/export-godot.ps1 -Platforms all
+
+  export:win:
+    desc: Export Godot app for Windows only
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File build/export-godot.ps1 -Platforms win-x64
+
+  export:linux:
+    desc: Export Godot app for Linux only
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File build/export-godot.ps1 -Platforms linux-x64
+
+  export:mac:
+    desc: Export Godot app for macOS only
+    cmds:
+      - powershell -ExecutionPolicy Bypass -File build/export-godot.ps1 -Platforms osx-universal
 
   export:clean:
-    desc: Clean build artifacts and re-export
+    desc: Clean build artifacts and re-export all platforms
     cmds:
       - cmd: powershell -NoProfile -Command "Remove-Item -Recurse -Force build/_artifacts -ErrorAction SilentlyContinue"
       - task: export
