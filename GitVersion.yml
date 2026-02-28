@@ -1,36 +1,36 @@
+workflow: GitFlow/v1
 mode: ContinuousDelivery
 next-version: 0.1.0
 branches:
   main:
     regex: ^main$
     mode: ContinuousDelivery
-    tag: ""
+    label: ""
     increment: Patch
-    prevent-increment-of-merged-branch-version: true
   develop:
     regex: ^dev(elop)?(ment)?$
     mode: ContinuousDeployment
-    tag: alpha
+    label: alpha
     increment: Minor
   feature:
     regex: ^features?[/-]
     mode: ContinuousDelivery
-    tag: "{BranchName}"
+    label: "{BranchName}"
     increment: Inherit
   release:
     regex: ^releases?[/-]
     mode: ContinuousDelivery
-    tag: beta
+    label: beta
     increment: None
   hotfix:
     regex: ^hotfix(es)?[/-]
     mode: ContinuousDelivery
-    tag: beta
+    label: beta
     increment: Patch
   pull-request:
     regex: ^(pull|pr)[/-]
     mode: ContinuousDelivery
-    tag: PullRequest
+    label: PullRequest
     increment: Inherit
 ignore:
   sha: []
