@@ -84,10 +84,18 @@ public record AgentWorldConfig
     public required string SkillsBasePath { get; init; }
     public required string MemoryBasePath { get; init; }
     public required string AgentDataPath { get; init; }
-    public string PiExecutable { get; init; } = "pi";
-    public string PiProvider { get; init; } = "zai";
-    public string PiModel { get; init; } = "glm-4.7";
-    public string PiWorkingDirectory { get; init; } = "";
-    public Dictionary<string, string> PiEnvironment { get; init; } = new();
+
+    /// <summary>CLI provider registry loaded from cli-providers.json.</summary>
+    public required GiantIsopod.Plugin.Process.CliProviderRegistry CliProviders { get; init; }
+
+    /// <summary>Default CLI provider id when spawning agents (null = first in list).</summary>
+    public string? DefaultCliProviderId { get; init; }
+
+    /// <summary>Working directory for CLI processes.</summary>
+    public string CliWorkingDirectory { get; init; } = "";
+
+    /// <summary>Extra environment variables merged into all CLI processes (e.g. API keys).</summary>
+    public Dictionary<string, string> CliEnvironment { get; init; } = new();
+
     public string MemvidExecutable { get; init; } = "memvid";
 }

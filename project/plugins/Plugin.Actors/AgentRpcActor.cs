@@ -44,12 +44,12 @@ public sealed class AgentRpcActor : UntypedActor
     {
         _cts = new CancellationTokenSource();
 
-        // Use configured working directory, or fallback to user's home
-        var workDir = !string.IsNullOrEmpty(_config.PiWorkingDirectory)
-            ? _config.PiWorkingDirectory
+        var workDir = !string.IsNullOrEmpty(_config.CliWorkingDirectory)
+            ? _config.CliWorkingDirectory
             : System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
-        _process = new PiRpcClient(_agentId, _config.PiExecutable, workDir,
-            _config.PiProvider, _config.PiModel, _config.PiEnvironment);
+
+        var provider = _config.CliProviders.ResolveOrDefault(_config.DefaultCliProviderId);
+        _process = new CliAgentProcess(_agentId, provider, workDir, _config.CliEnvironment);
 
         var self = Self;
         var parent = Context.Parent;

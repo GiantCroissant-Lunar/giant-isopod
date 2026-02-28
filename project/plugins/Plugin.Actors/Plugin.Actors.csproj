@@ -18,6 +18,7 @@
     <ProjectReference Include="..\..\contracts\Contracts.Skills\Contracts.Skills.csproj" />
     <ProjectReference Include="..\..\contracts\Contracts.Protocol\Contracts.Protocol.csproj" />
     <ProjectReference Include="..\Plugin.Process\Plugin.Process.csproj" />
+    <ProjectReference Include="..\Plugin.Mapping\Plugin.Mapping.csproj" />
   </ItemGroup>
 
 </Project>

@@ -31,16 +31,25 @@ public partial class Main : Node2D
 
     public override void _Ready()
     {
+        // Load CLI providers from JSON config
+        var cliProvidersJson = "{}";
+        const string cliProvidersResPath = "res://Data/CliProviders/cli-providers.json";
+        using (var file = Godot.FileAccess.Open(cliProvidersResPath, Godot.FileAccess.ModeFlags.Read))
+        {
+            if (file != null)
+                cliProvidersJson = file.GetAsText();
+        }
+        var cliProviders = GiantIsopod.Plugin.Process.CliProviderRegistry.LoadFromJson(cliProvidersJson);
+
         var config = new AgentWorldConfig
         {
             SkillsBasePath = ProjectSettings.GlobalizePath("res://Data/Skills"),
             MemoryBasePath = ProjectSettings.GlobalizePath("user://memory"),
             AgentDataPath = ProjectSettings.GlobalizePath("res://Data/Agents"),
-            PiExecutable = "pi",
-            PiProvider = "zai",
-            PiModel = "glm-4.7",
-            PiWorkingDirectory = @"C:\lunar-horse\yokan-projects\giant-isopod",
-            PiEnvironment = new Dictionary<string, string>
+            CliProviders = cliProviders,
+            DefaultCliProviderId = "pi",
+            CliWorkingDirectory = @"C:\lunar-horse\yokan-projects\giant-isopod",
+            CliEnvironment = new Dictionary<string, string>
             {
                 ["ZAI_API_KEY"] = "08bbb0b6b8d649fbbafa5c11091e5ac3.4dzlUajBX9I8oE0F"
             },

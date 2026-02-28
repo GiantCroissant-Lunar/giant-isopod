@@ -19,6 +19,7 @@ public sealed class AgentActor : UntypedActor
     private readonly IActorRef _memorySupervisor;
     private readonly AgentWorldConfig _config;
     private readonly ILogger<AgentActor> _logger;
+    private readonly GiantIsopod.Plugin.Mapping.ProtocolMapper _mapper = new();
 
     private IActorRef? _rpcActor;
     private bool _piConnected;
@@ -169,24 +170,11 @@ public sealed class AgentActor : UntypedActor
         {
             if (!string.IsNullOrEmpty(_aieosProfilePath))
             {
-                // _aieosProfilePath contains the JSON content (read by Godot from PCK)
                 var entity = System.Text.Json.JsonSerializer.Deserialize<
                     GiantIsopod.Contracts.Protocol.Aieos.AieosEntity>(_aieosProfilePath);
 
                 if (entity != null)
-                {
-                    var displayName = entity.Identity?.Names?.First
-                        ?? entity.Metadata?.Alias
-                        ?? _agentId;
-
-                    return new AgentVisualInfo(
-                        _agentId,
-                        displayName,
-                        SkinTone: entity.Physicality?.Face?.Skin?.Tone,
-                        HairStyle: entity.Physicality?.Face?.Hair?.Style,
-                        HairColor: entity.Physicality?.Face?.Hair?.Color,
-                        AestheticArchetype: entity.Physicality?.Style?.AestheticArchetype);
-                }
+                    return _mapper.MapAieosToVisualInfo(_agentId, entity);
             }
         }
         catch (Exception ex)
@@ -206,13 +194,8 @@ public sealed class AgentActor : UntypedActor
                 var entity = System.Text.Json.JsonSerializer.Deserialize<
                     GiantIsopod.Contracts.Protocol.Aieos.AieosEntity>(_aieosProfilePath);
 
-                if (entity?.Capabilities?.Skills != null)
-                {
-                    return entity.Capabilities.Skills
-                        .Where(s => s.Name != null)
-                        .Select(s => s.Name!)
-                        .ToHashSet();
-                }
+                if (entity != null)
+                    return _mapper.MapAieosToCapabilities(entity);
             }
         }
         catch (Exception ex)
