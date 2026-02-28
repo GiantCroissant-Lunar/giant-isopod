@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>GiantIsopod.Plugin.Mapping</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Riok.Mapperly" Version="4.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\contracts\Contracts.Core\Contracts.Core.csproj" />
+    <ProjectReference Include="..\..\contracts\Contracts.Protocol\Contracts.Protocol.csproj" />
+    <ProjectReference Include="..\..\contracts\Contracts.Skills\Contracts.Skills.csproj" />
+    <ProjectReference Include="..\..\contracts\Contracts.ECS\Contracts.ECS.csproj" />
+  </ItemGroup>
+
+</Project>
