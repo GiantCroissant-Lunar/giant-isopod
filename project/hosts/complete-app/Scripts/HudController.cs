@@ -27,6 +27,9 @@ public partial class HudController : Control
     private string? _selectedAgentId;
     private readonly Dictionary<string, List<string>> _consoleBuffers = new();
     private const int MaxConsoleLines = 200;
+    private static readonly string ConsoleLogPath = System.IO.Path.Combine(
+        System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
+        "giant-isopod-console.log");
 
     public override void _Ready()
     {
@@ -319,6 +322,14 @@ public partial class HudController : Control
         buffer.Add(line);
         if (buffer.Count > MaxConsoleLines)
             buffer.RemoveAt(0);
+
+        // Log to file for debugging
+        try
+        {
+            System.IO.File.AppendAllText(ConsoleLogPath,
+                $"[{DateTime.Now:HH:mm:ss.fff}] [{agentId}] {line}\n");
+        }
+        catch { /* ignore file errors */ }
 
         // If this agent's console is currently visible, append live
         if (_selectedAgentId == agentId && _consoleOutput != null)

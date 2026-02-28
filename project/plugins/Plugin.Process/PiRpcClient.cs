@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using CliWrap;
 using CliWrap.EventStream;
@@ -9,6 +10,7 @@ namespace GiantIsopod.Plugin.Process;
 /// <summary>
 /// CliWrap-based pi --mode json -p process manager.
 /// Runs pi in one-shot JSON mode with a prompt, streams JSONL events.
+/// Accumulates word-level deltas into readable lines before emitting.
 /// </summary>
 public sealed class PiRpcClient : IAgentProcess
 {
@@ -48,7 +50,6 @@ public sealed class PiRpcClient : IAgentProcess
 
     public Task SendAsync(string message, CancellationToken ct = default)
     {
-        // Store prompt for next ReadEventsAsync call
         _prompt = message;
         return Task.CompletedTask;
     }
@@ -76,25 +77,90 @@ public sealed class PiRpcClient : IAgentProcess
 
         IsRunning = true;
 
+        // Accumulate deltas into readable chunks
+        var thinkBuf = new StringBuilder();
+        var textBuf = new StringBuilder();
+
         await foreach (var cmdEvent in cmd.ListenAsync(linkedCts.Token))
         {
-            if (cmdEvent is StandardOutputCommandEvent stdOut && !string.IsNullOrWhiteSpace(stdOut.Text))
+            if (cmdEvent is not StandardOutputCommandEvent stdOut || string.IsNullOrWhiteSpace(stdOut.Text))
+                continue;
+
+            var (eventType, content) = ParseJsonlEvent(stdOut.Text);
+
+            switch (eventType)
             {
-                // Parse JSONL and extract meaningful content
-                var parsed = ParseJsonlEvent(stdOut.Text);
-                if (parsed != null)
-                    yield return parsed;
+                case EventKind.Lifecycle:
+                    // Flush any pending buffers first
+                    if (thinkBuf.Length > 0) { yield return $"💭 {thinkBuf}"; thinkBuf.Clear(); }
+                    if (textBuf.Length > 0) { yield return textBuf.ToString(); textBuf.Clear(); }
+                    if (content != null) yield return content;
+                    break;
+
+                case EventKind.ThinkingDelta:
+                    thinkBuf.Append(content);
+                    // Flush on sentence boundaries or when buffer gets long
+                    if (ShouldFlush(thinkBuf))
+                    {
+                        yield return $"💭 {thinkBuf}";
+                        thinkBuf.Clear();
+                    }
+                    break;
+
+                case EventKind.ThinkingEnd:
+                    if (thinkBuf.Length > 0) { yield return $"💭 {thinkBuf}"; thinkBuf.Clear(); }
+                    yield return "[thinking complete]";
+                    break;
+
+                case EventKind.TextDelta:
+                    textBuf.Append(content);
+                    if (ShouldFlush(textBuf))
+                    {
+                        yield return textBuf.ToString();
+                        textBuf.Clear();
+                    }
+                    break;
+
+                case EventKind.TextEnd:
+                    if (textBuf.Length > 0) { yield return textBuf.ToString(); textBuf.Clear(); }
+                    break;
+
+                case EventKind.Skip:
+                    break;
             }
         }
+
+        // Flush remaining
+        if (thinkBuf.Length > 0) yield return $"💭 {thinkBuf}";
+        if (textBuf.Length > 0) yield return textBuf.ToString();
 
         IsRunning = false;
     }
 
     /// <summary>
-    /// Parses a pi JSONL event line and extracts human-readable content.
-    /// Returns null for events that don't produce visible output.
+    /// Flush buffer when we hit a sentence end, newline, or 120+ chars.
     /// </summary>
-    private static string? ParseJsonlEvent(string jsonLine)
+    private static bool ShouldFlush(StringBuilder buf)
+    {
+        if (buf.Length == 0) return false;
+        if (buf.Length >= 120) return true;
+
+        var last = buf[^1];
+        // Flush on sentence-ending punctuation or newlines
+        if (last is '.' or '!' or '?' or '\n' or ':') return true;
+
+        // Also flush if buffer contains a newline anywhere
+        for (int i = buf.Length - 1; i >= 0; i--)
+        {
+            if (buf[i] == '\n') return true;
+        }
+
+        return false;
+    }
+
+    private enum EventKind { Skip, Lifecycle, ThinkingDelta, ThinkingEnd, TextDelta, TextEnd }
+
+    private static (EventKind kind, string? content) ParseJsonlEvent(string jsonLine)
     {
         try
         {
@@ -102,99 +168,67 @@ public sealed class PiRpcClient : IAgentProcess
             var root = doc.RootElement;
 
             if (!root.TryGetProperty("type", out var typeProp))
-                return null;
+                return (EventKind.Skip, null);
 
             var type = typeProp.GetString();
 
             return type switch
             {
-                "session" => "[session started]",
-                "agent_start" => "[agent started]",
-                "turn_start" => "[turn started]",
-
-                "message_update" => ExtractMessageUpdate(root),
-
-                "message_end" => null, // redundant with deltas
-                "turn_end" => "[turn complete]",
-                "agent_end" => "[agent finished]",
-
-                "message_start" => ExtractMessageStart(root),
-
-                _ => null
+                "session" => (EventKind.Lifecycle, "[session started]"),
+                "agent_start" => (EventKind.Lifecycle, "[agent started]"),
+                "turn_start" => (EventKind.Lifecycle, "[turn started]"),
+                "turn_end" => (EventKind.Lifecycle, "[turn complete]"),
+                "agent_end" => (EventKind.Lifecycle, "[agent finished]"),
+                "message_start" => ParseMessageStart(root),
+                "message_end" => (EventKind.Skip, null),
+                "message_update" => ParseMessageUpdate(root),
+                _ => (EventKind.Skip, null)
             };
         }
         catch
         {
-            // Not valid JSON, return raw
-            return jsonLine.Length > 120 ? jsonLine[..120] + "..." : jsonLine;
+            return (EventKind.Lifecycle, jsonLine.Length > 120 ? jsonLine[..120] + "..." : jsonLine);
         }
     }
 
-    private static string? ExtractMessageStart(JsonElement root)
+    private static (EventKind, string?) ParseMessageStart(JsonElement root)
     {
         if (root.TryGetProperty("message", out var msg) &&
-            msg.TryGetProperty("role", out var role))
+            msg.TryGetProperty("role", out var role) &&
+            role.GetString() == "assistant")
         {
-            var r = role.GetString();
-            if (r == "user") return null; // we already know the prompt
-            if (r == "assistant") return "[assistant responding...]";
+            return (EventKind.Lifecycle, "[assistant responding...]");
         }
-        return null;
+        return (EventKind.Skip, null);
     }
 
-    private static string? ExtractMessageUpdate(JsonElement root)
+    private static (EventKind, string?) ParseMessageUpdate(JsonElement root)
     {
-        if (!root.TryGetProperty("assistantMessageEvent", out var evt))
-            return null;
-
-        if (!evt.TryGetProperty("type", out var evtType))
-            return null;
+        if (!root.TryGetProperty("assistantMessageEvent", out var evt) ||
+            !evt.TryGetProperty("type", out var evtType))
+            return (EventKind.Skip, null);
 
         var t = evtType.GetString();
 
-        switch (t)
+        return t switch
         {
-            case "thinking_start":
-                return "[thinking...]";
-
-            case "thinking_delta":
-                if (evt.TryGetProperty("delta", out var td))
-                    return $"  💭 {td.GetString()}";
-                return null;
-
-            case "thinking_end":
-                return "[thinking complete]";
-
-            case "text_start":
-                return null; // text_delta will follow
-
-            case "text_delta":
-                if (evt.TryGetProperty("delta", out var txtD))
-                    return txtD.GetString();
-                return null;
-
-            case "text_end":
-                return null;
-
-            case "tool_use_start":
-                return ExtractToolUse(evt);
-
-            case "tool_result":
-                return "[tool result received]";
-
-            default:
-                return null;
-        }
+            "thinking_start" => (EventKind.Lifecycle, "[thinking...]"),
+            "thinking_delta" => (EventKind.ThinkingDelta, evt.TryGetProperty("delta", out var td) ? td.GetString() : null),
+            "thinking_end" => (EventKind.ThinkingEnd, null),
+            "text_start" => (EventKind.Skip, null),
+            "text_delta" => (EventKind.TextDelta, evt.TryGetProperty("delta", out var txtD) ? txtD.GetString() : null),
+            "text_end" => (EventKind.TextEnd, null),
+            "tool_use_start" => (EventKind.Lifecycle, ExtractToolUse(evt)),
+            "tool_result" => (EventKind.Lifecycle, "[tool result received]"),
+            _ => (EventKind.Skip, null)
+        };
     }
 
-    private static string? ExtractToolUse(JsonElement evt)
+    private static string ExtractToolUse(JsonElement evt)
     {
-        // Try to extract tool name from the event
         if (evt.TryGetProperty("toolUse", out var tu) &&
             tu.TryGetProperty("name", out var name))
-        {
             return $"🔧 tool_use: {name.GetString()}";
-        }
         return "🔧 [tool use]";
     }
 

@@ -44,7 +44,8 @@ public sealed class AgentRpcActor : UntypedActor
     {
         _cts = new CancellationTokenSource();
 
-        var workDir = System.IO.Directory.GetCurrentDirectory();
+        // Use a temp directory as working dir so pi doesn't explore build artifacts
+        var workDir = System.IO.Path.GetTempPath();
         _process = new PiRpcClient(_agentId, _config.PiExecutable, workDir,
             _config.PiProvider, _config.PiModel, _config.PiEnvironment);
 
