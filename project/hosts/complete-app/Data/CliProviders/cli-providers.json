@@ -1,0 +1,39 @@
+{
+  "providers": [
+    {
+      "id": "pi",
+      "displayName": "Pi",
+      "executable": "pi",
+      "args": ["--mode", "text", "--no-session", "--provider", "{provider}", "--model", "{model}", "-p", "{prompt}"],
+      "env": { "FORCE_COLOR": "1" },
+      "defaults": {
+        "provider": "zai",
+        "model": "glm-4.7"
+      }
+    },
+    {
+      "id": "kilo",
+      "displayName": "Kilo",
+      "executable": "kilo",
+      "args": ["-p", "{prompt}"],
+      "env": {},
+      "defaults": {}
+    },
+    {
+      "id": "codex",
+      "displayName": "Codex",
+      "executable": "codex",
+      "args": ["--quiet", "{prompt}"],
+      "env": {},
+      "defaults": {}
+    },
+    {
+      "id": "kimi",
+      "displayName": "Kimi",
+      "executable": "kimi",
+      "args": ["{prompt}"],
+      "env": {},
+      "defaults": {}
+    }
+  ]
+}
