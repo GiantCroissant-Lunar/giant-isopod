@@ -4,3 +4,7 @@ ref-projects/
 
 # Repomix
 repomix-output.txt
+
+# .NET
+bin/
+obj/
