@@ -5,7 +5,7 @@
     Uses GitVersion for semantic versioning. Pre-publishes the .NET project,
     then runs Godot --headless --export-release for each platform, and copies
     the published .NET assemblies into the Godot data directory
-    (data_<appname>_<arch>) alongside the exported binaries.
+    (data_<AssemblyName>_<platform>_<arch>) alongside the exported binaries.
 .PARAMETER GodotPath
     Path to the Godot console executable.
 .PARAMETER Platforms
@@ -22,15 +22,16 @@ $repoRoot = (git rev-parse --show-toplevel).Trim()
 $projectDir = Join-Path $repoRoot "project\hosts\complete-app"
 $csproj = Join-Path $projectDir "complete-app.csproj"
 
-# Application name from project.godot config/name (used for data directory naming)
-$appName = "complete-app"
+# Assembly name from csproj (Godot uses this for data directory, not config/name)
+$assemblyName = "GiantIsopod"
 
 # Platform definitions: RID -> (preset name, binary name, Godot data dir suffix)
-# Godot expects .NET assemblies in: data_<appname>_<arch>/ next to the binary
+# Godot looks for assemblies in: data_<AssemblyName>_<platform>_<arch>/ next to the binary
+# Platform names from godotsharp_dirs.cpp: windows, linuxbsd, macos
 $platformMap = @{
-    "win-x64"       = @{ Preset = "Windows Desktop"; Binary = "GiantIsopod.exe"; DataDir = "data_${appName}_x86_64" }
-    "linux-x64"     = @{ Preset = "Linux";           Binary = "GiantIsopod.x86_64"; DataDir = "data_${appName}_linuxbsd_x86_64" }
-    "osx-universal" = @{ Preset = "macOS";           Binary = "GiantIsopod.zip"; DataDir = "data_${appName}_universal" }
+    "win-x64"       = @{ Preset = "Windows Desktop"; Binary = "GiantIsopod.exe"; DataDir = "data_${assemblyName}_windows_x86_64"; Rid = "win-x64" }
+    "linux-x64"     = @{ Preset = "Linux";           Binary = "GiantIsopod.x86_64"; DataDir = "data_${assemblyName}_linuxbsd_x86_64"; Rid = "linux-x64" }
+    "osx-universal" = @{ Preset = "macOS";           Binary = "GiantIsopod.zip"; DataDir = "data_${assemblyName}_macos_universal"; Rid = "osx-x64" }
 }
 
 # Resolve platforms
@@ -61,15 +62,22 @@ if ([string]::IsNullOrWhiteSpace($semver)) {
 Write-Host "   SemVer:    $semver" -ForegroundColor Green
 Write-Host "   Platforms: $($targetPlatforms -join ', ')" -ForegroundColor Green
 
-# --- Pre-publish .NET ---
-Write-Host ":: Publishing .NET project..." -ForegroundColor Cyan
-dotnet publish $csproj -c Release --nologo -v quiet
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "dotnet publish failed with exit code $LASTEXITCODE"
-    exit $LASTEXITCODE
-}
+# --- Pre-publish .NET (per-platform, self-contained) ---
+# Godot exported binaries require hostfxr/coreclr in the data directory.
+# Self-contained publish bundles the .NET runtime alongside the assemblies.
+$publishDirs = @{}
 
-$publishDir = Join-Path $projectDir ".godot\mono\temp\bin\Release\publish"
+foreach ($rid in $targetPlatforms) {
+    $info = $platformMap[$rid]
+    $publishOut = Join-Path $projectDir ".godot\mono\temp\bin\Release\publish-$rid"
+    Write-Host ":: Publishing .NET for $rid (self-contained)..." -ForegroundColor Cyan
+    dotnet publish $csproj -c Release -r $info.Rid --self-contained --nologo -v quiet -o $publishOut
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "dotnet publish failed for $rid with exit code $LASTEXITCODE"
+        exit $LASTEXITCODE
+    }
+    $publishDirs[$rid] = $publishOut
+}
 
 if (-not (Test-Path $GodotPath)) {
     Write-Error "Godot executable not found at: $GodotPath"
@@ -114,7 +122,8 @@ foreach ($rid in $targetPlatforms) {
     }
 
     # Copy .NET assemblies into the Godot data directory
-    if (Test-Path $publishDir) {
+    $publishDir = $publishDirs[$rid]
+    if ($publishDir -and (Test-Path $publishDir)) {
         if ($rid -eq "osx-universal") {
             # macOS: inject data dir into .app bundle inside the zip
             $tempExtract = Join-Path $env:TEMP "godot-mac-inject-$([guid]::NewGuid().ToString('N'))"
