@@ -1,6 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Text;
-using System.Text.Json;
 using CliWrap;
 using CliWrap.EventStream;
 using GiantIsopod.Contracts.Core;
@@ -8,9 +6,9 @@ using GiantIsopod.Contracts.Core;
 namespace GiantIsopod.Plugin.Process;
 
 /// <summary>
-/// CliWrap-based pi --mode json -p process manager.
-/// Runs pi in one-shot JSON mode with a prompt, streams JSONL events.
-/// Accumulates word-level deltas into readable lines before emitting.
+/// CliWrap-based pi --mode text process manager.
+/// Runs pi in text mode, streams raw terminal output (with ANSI escape sequences).
+/// Output is forwarded directly to the GodotXterm Terminal node for rendering.
 /// </summary>
 public sealed class PiRpcClient : IAgentProcess
 {
@@ -61,7 +59,7 @@ public sealed class PiRpcClient : IAgentProcess
 
         var cmd = Cli.Wrap(_piExecutable)
             .WithArguments([
-                "--mode", "json",
+                "--mode", "text",
                 "--no-session",
                 "--provider", _provider,
                 "--model", _model,
@@ -72,150 +70,30 @@ public sealed class PiRpcClient : IAgentProcess
             {
                 foreach (var (key, value) in _environment)
                     env.Set(key, value);
+                // Tell pi it's in a color terminal
+                env.Set("COLORTERM", "truecolor");
+                env.Set("TERM", "xterm-256color");
             })
             .WithValidation(CommandResultValidation.None);
 
         IsRunning = true;
 
-        // Accumulate deltas into readable chunks
-        var thinkBuf = new StringBuilder();
-        var textBuf = new StringBuilder();
-
         await foreach (var cmdEvent in cmd.ListenAsync(linkedCts.Token))
         {
-            if (cmdEvent is not StandardOutputCommandEvent stdOut || string.IsNullOrWhiteSpace(stdOut.Text))
-                continue;
-
-            var (eventType, content) = ParseJsonlEvent(stdOut.Text);
-
-            switch (eventType)
+            switch (cmdEvent)
             {
-                case EventKind.Lifecycle:
-                    // Flush any pending buffers first
-                    if (thinkBuf.Length > 0) { yield return $"💭 {thinkBuf}"; thinkBuf.Clear(); }
-                    if (textBuf.Length > 0) { yield return textBuf.ToString(); textBuf.Clear(); }
-                    if (content != null) yield return content;
+                case StandardOutputCommandEvent stdOut:
+                    if (!string.IsNullOrEmpty(stdOut.Text))
+                        yield return stdOut.Text;
                     break;
-
-                case EventKind.ThinkingDelta:
-                    thinkBuf.Append(content);
-                    // Flush on sentence boundaries or when buffer gets long
-                    if (ShouldFlush(thinkBuf))
-                    {
-                        yield return $"💭 {thinkBuf}";
-                        thinkBuf.Clear();
-                    }
-                    break;
-
-                case EventKind.ThinkingEnd:
-                    if (thinkBuf.Length > 0) { yield return $"💭 {thinkBuf}"; thinkBuf.Clear(); }
-                    break;
-
-                case EventKind.TextDelta:
-                    textBuf.Append(content);
-                    if (ShouldFlush(textBuf))
-                    {
-                        yield return textBuf.ToString();
-                        textBuf.Clear();
-                    }
-                    break;
-
-                case EventKind.TextEnd:
-                    if (textBuf.Length > 0) { yield return textBuf.ToString(); textBuf.Clear(); }
-                    break;
-
-                case EventKind.Skip:
+                case StandardErrorCommandEvent stdErr:
+                    if (!string.IsNullOrEmpty(stdErr.Text))
+                        yield return stdErr.Text;
                     break;
             }
         }
 
-        // Flush remaining
-        if (thinkBuf.Length > 0) yield return $"💭 {thinkBuf}";
-        if (textBuf.Length > 0) yield return textBuf.ToString();
-
         IsRunning = false;
-    }
-
-    /// <summary>
-    /// Flush buffer on newlines or when buffer exceeds ~100 chars.
-    /// Avoids splitting on periods mid-sentence (e.g. "Godot 4.6").
-    /// </summary>
-    private static bool ShouldFlush(StringBuilder buf)
-    {
-        if (buf.Length == 0) return false;
-        if (buf.Length >= 100) return true;
-
-        // Flush on newlines
-        for (int i = buf.Length - 1; i >= 0; i--)
-        {
-            if (buf[i] == '\n') return true;
-        }
-
-        return false;
-    }
-
-    private enum EventKind { Skip, Lifecycle, ThinkingDelta, ThinkingEnd, TextDelta, TextEnd }
-
-    private static (EventKind kind, string? content) ParseJsonlEvent(string jsonLine)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(jsonLine);
-            var root = doc.RootElement;
-
-            if (!root.TryGetProperty("type", out var typeProp))
-                return (EventKind.Skip, null);
-
-            var type = typeProp.GetString();
-
-            return type switch
-            {
-                "session" => (EventKind.Lifecycle, "[session started]"),
-                "agent_start" => (EventKind.Skip, null),
-                "turn_start" => (EventKind.Skip, null),
-                "turn_end" => (EventKind.Skip, null),
-                "agent_end" => (EventKind.Lifecycle, "[finished]"),
-                "message_start" => (EventKind.Skip, null),
-                "message_end" => (EventKind.Skip, null),
-                "message_update" => ParseMessageUpdate(root),
-                _ => (EventKind.Skip, null)
-            };
-        }
-        catch
-        {
-            return (EventKind.Lifecycle, jsonLine.Length > 120 ? jsonLine[..120] + "..." : jsonLine);
-        }
-    }
-
-
-    private static (EventKind, string?) ParseMessageUpdate(JsonElement root)
-    {
-        if (!root.TryGetProperty("assistantMessageEvent", out var evt) ||
-            !evt.TryGetProperty("type", out var evtType))
-            return (EventKind.Skip, null);
-
-        var t = evtType.GetString();
-
-        return t switch
-        {
-            "thinking_start" => (EventKind.Skip, null),
-            "thinking_delta" => (EventKind.ThinkingDelta, evt.TryGetProperty("delta", out var td) ? td.GetString() : null),
-            "thinking_end" => (EventKind.ThinkingEnd, null),
-            "text_start" => (EventKind.Skip, null),
-            "text_delta" => (EventKind.TextDelta, evt.TryGetProperty("delta", out var txtD) ? txtD.GetString() : null),
-            "text_end" => (EventKind.TextEnd, null),
-            "tool_use_start" => (EventKind.Lifecycle, ExtractToolUse(evt)),
-            "tool_result" => (EventKind.Lifecycle, "[tool result received]"),
-            _ => (EventKind.Skip, null)
-        };
-    }
-
-    private static string ExtractToolUse(JsonElement evt)
-    {
-        if (evt.TryGetProperty("toolUse", out var tu) &&
-            tu.TryGetProperty("name", out var name))
-            return $"🔧 tool_use: {name.GetString()}";
-        return "🔧 [tool use]";
     }
 
     public async ValueTask DisposeAsync()

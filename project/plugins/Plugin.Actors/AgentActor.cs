@@ -110,12 +110,16 @@ public sealed class AgentActor : UntypedActor
                 break;
 
             case ProcessEvent evt:
-                Context.System.ActorSelection("/user/viewport")
-                    .Tell(new AgentStateChanged(_agentId, MapEventToState(evt.RawJson)));
+                // Forward raw text to terminal renderer
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new ProcessOutput(_agentId, evt.RawJson));
-                if (_memoryFilePath != null)
-                    _memorySupervisor.Tell(new StoreMemory(_agentId, evt.RawJson, "process_event"));
+                // Simple heuristic for activity state from text output
+                var activityState = MapTextToState(evt.RawJson);
+                if (activityState != AgentActivityState.Idle)
+                {
+                    Context.System.ActorSelection("/user/viewport")
+                        .Tell(new AgentStateChanged(_agentId, activityState));
+                }
                 break;
 
             case ProcessExited exited:
@@ -219,11 +223,15 @@ public sealed class AgentActor : UntypedActor
         return new HashSet<string>();
     }
 
-    private static AgentActivityState MapEventToState(string rawJson)
+    private static AgentActivityState MapTextToState(string text)
     {
-        if (rawJson.Contains("\"tool_use\"")) return AgentActivityState.Typing;
-        if (rawJson.Contains("\"tool_result\"")) return AgentActivityState.Reading;
-        if (rawJson.Contains("\"thinking\"")) return AgentActivityState.Thinking;
+        // Heuristic: detect activity from pi's text-mode output patterns
+        if (text.Contains("tool_use") || text.Contains("Writing") || text.Contains("Creating"))
+            return AgentActivityState.Typing;
+        if (text.Contains("Reading") || text.Contains("read_file") || text.Contains("list_dir"))
+            return AgentActivityState.Reading;
+        if (text.Contains("Thinking") || text.Contains("thinking"))
+            return AgentActivityState.Thinking;
         return AgentActivityState.Idle;
     }
 
