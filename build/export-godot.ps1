@@ -172,7 +172,8 @@ if ($failed.Count -gt 0) {
     Write-Host "   Version:       $semver" -ForegroundColor Green
 
     # Write latest pointer for easy launching
-    $latestFile = Join-Path $repoRoot "build" "_artifacts" "latest.txt"
+    $artifactsRoot = Join-Path $repoRoot "build\_artifacts"
+    $latestFile = Join-Path $artifactsRoot "latest.txt"
     $semver | Set-Content $latestFile -Encoding UTF8 -NoNewline
-    Write-Host "   Latest:        build\_artifacts\latest.txt -> $semver" -ForegroundColor Green
+    Write-Host "   Latest:        $latestFile -> $semver" -ForegroundColor Green
 }
