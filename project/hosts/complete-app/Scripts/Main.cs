@@ -39,6 +39,7 @@ public partial class Main : Node2D
             PiExecutable = "pi",
             PiProvider = "zai",
             PiModel = "glm-4.7",
+            PiWorkingDirectory = @"C:\lunar-horse\yokan-projects\giant-isopod",
             PiEnvironment = new Dictionary<string, string>
             {
                 ["ZAI_API_KEY"] = "08bbb0b6b8d649fbbafa5c11091e5ac3.4dzlUajBX9I8oE0F"

@@ -87,6 +87,7 @@ public record AgentWorldConfig
     public string PiExecutable { get; init; } = "pi";
     public string PiProvider { get; init; } = "zai";
     public string PiModel { get; init; } = "glm-4.7";
+    public string PiWorkingDirectory { get; init; } = "";
     public Dictionary<string, string> PiEnvironment { get; init; } = new();
     public string MemvidExecutable { get; init; } = "memvid";
 }

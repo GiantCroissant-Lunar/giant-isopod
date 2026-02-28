@@ -44,8 +44,10 @@ public sealed class AgentRpcActor : UntypedActor
     {
         _cts = new CancellationTokenSource();
 
-        // Use a temp directory as working dir so pi doesn't explore build artifacts
-        var workDir = System.IO.Path.GetTempPath();
+        // Use configured working directory, or fallback to user's home
+        var workDir = !string.IsNullOrEmpty(_config.PiWorkingDirectory)
+            ? _config.PiWorkingDirectory
+            : System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
         _process = new PiRpcClient(_agentId, _config.PiExecutable, workDir,
             _config.PiProvider, _config.PiModel, _config.PiEnvironment);
 
