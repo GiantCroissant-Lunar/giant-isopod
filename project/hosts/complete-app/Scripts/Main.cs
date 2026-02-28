@@ -2,14 +2,15 @@ using Godot;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using GiantIsopod.Contracts.Core;
+using GiantIsopod.Contracts.ECS;
 using GiantIsopod.Plugin.Actors;
+using GiantIsopod.Plugin.ECS;
 
 namespace GiantIsopod.Hosts.CompleteApp;
 
 /// <summary>
-/// Main scene entry point. Bootstraps the DI container, Akka.NET actor system,
-/// and connects it to the Godot viewport via the ECS bridge.
-/// Auto-discovers agent profiles from Data/Agents and spawns them.
+/// Main scene entry point. Bootstraps DI, Akka.NET actor system, and Friflo ECS.
+/// Viewport events → ECS entities. ECS systems tick each frame. ECS state → Godot nodes.
 /// </summary>
 public partial class Main : Node2D
 {
@@ -19,8 +20,14 @@ public partial class Main : Node2D
     private HudController? _hud;
     private ILogger<Main>? _logger;
     private Node2D? _agentsNode;
+    private AgentEcsWorld? _ecsWorld;
 
-    private readonly Dictionary<string, AgentSprite> _agentSprites = new();
+    // ECS entity → Godot sprite mapping
+    private readonly Dictionary<string, AgentSprite> _sprites = new();
+
+    // Loaded AIEOS profiles for spawning new agents
+    private readonly Dictionary<string, string> _profileJsonCache = new();
+    private int _nextAgentIndex;
 
     public override void _Ready()
     {
@@ -43,39 +50,47 @@ public partial class Main : Node2D
         _logger = _services.GetRequiredService<ILogger<Main>>();
         _agentWorld = _services.GetRequiredService<AgentWorldSystem>();
         _viewportBridge = new GodotViewportBridge();
+        _ecsWorld = new AgentEcsWorld();
 
         _agentWorld.SetViewportBridge(_viewportBridge);
 
         _hud = GetNode<HudController>("HUD/HUDRoot");
         _agentsNode = GetNode<Node2D>("World/Agents");
 
-        // Draw a subtle grid background
+        // Wire HUD buttons
+        _hud.OnSpawnRequested += HandleSpawnRequest;
+        _hud.OnRemoveRequested += HandleRemoveRequest;
+
         QueueRedraw();
+        CacheAgentProfiles();
+        SpawnInitialAgents();
 
-        // Auto-discover and spawn agents from Data/Agents
-        SpawnAgentsFromData(config);
-
-        _logger.LogInformation("Giant Isopod ready");
+        _logger.LogInformation("Giant Isopod ready (ECS)");
     }
 
     public override void _Process(double delta)
     {
-        if (_viewportBridge == null || _hud == null) return;
+        if (_viewportBridge == null || _hud == null || _ecsWorld == null) return;
 
+        // 1. Drain actor events → update ECS + HUD
         foreach (var evt in _viewportBridge.DrainEvents())
         {
             _hud.ApplyEvent(evt);
-            HandleWorldEvent(evt);
+            ApplyEventToEcs(evt);
         }
+
+        // 2. Tick ECS systems (movement, animation, wander)
+        _ecsWorld.Tick((float)delta);
+
+        // 3. Sync ECS state → Godot sprites
+        SyncSprites();
     }
 
     public override void _Draw()
     {
-        // Dark background
         var viewport = GetViewportRect();
         DrawRect(viewport, new Color(0.08f, 0.09f, 0.12f));
 
-        // Subtle grid
         var gridColor = new Color(0.14f, 0.15f, 0.19f);
         float step = 64f;
         for (float x = 0; x < viewport.Size.X; x += step)
@@ -84,68 +99,111 @@ public partial class Main : Node2D
             DrawLine(new Vector2(0, y), new Vector2(viewport.Size.X, y), gridColor);
     }
 
-    private void HandleWorldEvent(ViewportEvent evt)
+    private void ApplyEventToEcs(ViewportEvent evt)
     {
+        if (_ecsWorld == null) return;
+
         switch (evt)
         {
             case AgentSpawnedEvent spawned:
-                CreateAgentSprite(spawned.AgentId, spawned.VisualInfo);
+                _ecsWorld.SpawnAgent(spawned.AgentId, spawned.VisualInfo);
                 break;
+
             case AgentDespawnedEvent despawned:
-                RemoveAgentSprite(despawned.AgentId);
+                _ecsWorld.RemoveAgent(despawned.AgentId);
+                if (_sprites.TryGetValue(despawned.AgentId, out var spr))
+                {
+                    spr.QueueFree();
+                    _sprites.Remove(despawned.AgentId);
+                }
                 break;
+
             case StateChangedEvent stateChanged:
-                if (_agentSprites.TryGetValue(stateChanged.AgentId, out var sprite))
-                    sprite.SetActivityState(stateChanged.State);
+                var activity = stateChanged.State switch
+                {
+                    AgentActivityState.Idle => Activity.Idle,
+                    AgentActivityState.Walking => Activity.Walking,
+                    AgentActivityState.Typing => Activity.Typing,
+                    AgentActivityState.Reading => Activity.Reading,
+                    AgentActivityState.Waiting => Activity.Waiting,
+                    AgentActivityState.Thinking => Activity.Thinking,
+                    _ => Activity.Idle
+                };
+                _ecsWorld.SetAgentActivity(stateChanged.AgentId, activity);
                 break;
         }
     }
 
-    private void CreateAgentSprite(string agentId, AgentVisualInfo info)
+    private void SyncSprites()
     {
-        if (_agentsNode == null || _agentSprites.ContainsKey(agentId)) return;
+        if (_ecsWorld == null || _agentsNode == null) return;
 
-        var sprite = new AgentSprite(agentId, info);
-        var viewport = GetViewportRect();
-        // Place agents in the center area with some spread
-        var rng = new RandomNumberGenerator();
-        rng.Seed = (ulong)agentId.GetHashCode();
-        sprite.Position = new Vector2(
-            rng.RandfRange(200, viewport.Size.X - 440),
-            rng.RandfRange(150, viewport.Size.Y - 250));
-
-        _agentsNode.AddChild(sprite);
-        _agentSprites[agentId] = sprite;
-    }
-
-    private void RemoveAgentSprite(string agentId)
-    {
-        if (_agentSprites.TryGetValue(agentId, out var sprite))
+        _ecsWorld.ForEachAgent((agentId, pos, vis, act, identity) =>
         {
-            sprite.QueueFree();
-            _agentSprites.Remove(agentId);
-        }
+            if (!_sprites.TryGetValue(agentId, out var sprite))
+            {
+                // Create Godot node for new ECS entity
+                sprite = new AgentSprite(agentId, new AgentVisualInfo(agentId, identity.DisplayName));
+                _agentsNode.AddChild(sprite);
+                _sprites[agentId] = sprite;
+            }
+
+            // Sync ECS position → Godot position
+            sprite.Position = new Vector2(pos.X, pos.Y);
+
+            // Sync activity state
+            var godotState = act.Current switch
+            {
+                Activity.Idle => AgentActivityState.Idle,
+                Activity.Walking => AgentActivityState.Walking,
+                Activity.Typing => AgentActivityState.Typing,
+                Activity.Reading => AgentActivityState.Reading,
+                Activity.Waiting => AgentActivityState.Waiting,
+                Activity.Thinking => AgentActivityState.Thinking,
+                _ => AgentActivityState.Idle
+            };
+            sprite.SyncFromEcs(godotState, vis.AnimationFrame, vis.Facing);
+        });
     }
 
-    private void SpawnAgentsFromData(AgentWorldConfig config)
+    private void HandleSpawnRequest()
     {
         if (_agentWorld == null) return;
 
-        // Use res:// path for Godot's virtual filesystem (works in both editor and export)
-        const string agentResDir = "res://Data/Agents";
+        _nextAgentIndex++;
+        var agentId = $"agent-{_nextAgentIndex}";
 
-        if (!DirAccess.DirExistsAbsolute(agentResDir))
+        // Pick a random cached profile or use a minimal default
+        string profileJson = "{}";
+        if (_profileJsonCache.Count > 0)
         {
-            _logger?.LogWarning("Agent data directory not found: {Path}", agentResDir);
-            return;
+            var profiles = _profileJsonCache.Values.ToArray();
+            profileJson = profiles[_nextAgentIndex % profiles.Length];
         }
+
+        _logger?.LogInformation("Spawning agent: {AgentId}", agentId);
+        _agentWorld.AgentSupervisor.Tell(
+            new SpawnAgent(agentId, profileJson, "builder"),
+            Akka.Actor.ActorRefs.NoSender);
+    }
+
+    private void HandleRemoveRequest(string agentId)
+    {
+        if (_agentWorld == null) return;
+
+        _logger?.LogInformation("Removing agent: {AgentId}", agentId);
+        _agentWorld.AgentSupervisor.Tell(
+            new StopAgent(agentId),
+            Akka.Actor.ActorRefs.NoSender);
+    }
+
+    private void CacheAgentProfiles()
+    {
+        const string agentResDir = "res://Data/Agents";
+        if (!DirAccess.DirExistsAbsolute(agentResDir)) return;
 
         using var dir = DirAccess.Open(agentResDir);
-        if (dir == null)
-        {
-            _logger?.LogWarning("Could not open agent data directory: {Path}", agentResDir);
-            return;
-        }
+        if (dir == null) return;
 
         dir.ListDirBegin();
         var fileName = dir.GetNext();
@@ -153,30 +211,40 @@ public partial class Main : Node2D
         {
             if (fileName.EndsWith(".aieos.json"))
             {
-                var agentId = fileName.Replace(".aieos.json", "");
                 var resPath = $"{agentResDir}/{fileName}";
-
-                // Read the JSON from Godot's virtual filesystem (works inside PCK)
-                string? profileJson = null;
                 using var file = Godot.FileAccess.Open(resPath, Godot.FileAccess.ModeFlags.Read);
                 if (file != null)
                 {
-                    profileJson = file.GetAsText();
+                    var agentId = fileName.Replace(".aieos.json", "");
+                    _profileJsonCache[agentId] = file.GetAsText();
                 }
-
-                _logger?.LogInformation("Auto-spawning agent: {AgentId}", agentId);
-
-                _agentWorld.AgentSupervisor.Tell(
-                    new SpawnAgent(agentId, profileJson ?? "", "builder"),
-                    Akka.Actor.ActorRefs.NoSender);
             }
             fileName = dir.GetNext();
         }
         dir.ListDirEnd();
     }
 
+    private void SpawnInitialAgents()
+    {
+        if (_agentWorld == null) return;
+
+        foreach (var (agentId, json) in _profileJsonCache)
+        {
+            _logger?.LogInformation("Auto-spawning agent: {AgentId}", agentId);
+            _agentWorld.AgentSupervisor.Tell(
+                new SpawnAgent(agentId, json, "builder"),
+                Akka.Actor.ActorRefs.NoSender);
+            _nextAgentIndex++;
+        }
+    }
+
     public override void _ExitTree()
     {
+        if (_hud != null)
+        {
+            _hud.OnSpawnRequested -= HandleSpawnRequest;
+            _hud.OnRemoveRequested -= HandleRemoveRequest;
+        }
         _agentWorld?.Dispose();
         _services?.Dispose();
         _logger?.LogInformation("Giant Isopod shutdown");

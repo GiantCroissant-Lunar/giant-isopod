@@ -72,6 +72,15 @@ public struct AgentLink : IComponent
 }
 
 /// <summary>
+/// String-based agent identity for lookup by agent ID.
+/// </summary>
+public struct AgentIdentity : IComponent
+{
+    public string AgentId;
+    public string DisplayName;
+}
+
+/// <summary>
 /// Seat/desk assignment for the agent character.
 /// </summary>
 public struct SeatAssignment : IComponent

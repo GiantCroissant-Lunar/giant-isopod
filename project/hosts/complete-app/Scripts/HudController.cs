@@ -4,12 +4,13 @@ using GiantIsopod.Contracts.Core;
 namespace GiantIsopod.Hosts.CompleteApp;
 
 /// <summary>
-/// Thin glue between viewport bridge events and HUD Control nodes.
-/// Updates agent count, agent list panel, and version label.
-/// GenUI rendering is delegated to PCK-loaded GDScript.
+/// HUD controller with agent list, spawn/remove buttons, and status display.
 /// </summary>
 public partial class HudController : Control
 {
+    public event Action? OnSpawnRequested;
+    public event Action<string>? OnRemoveRequested;
+
     private Label? _agentCountLabel;
     private Label? _versionLabel;
     private Label? _processCountLabel;
@@ -26,7 +27,6 @@ public partial class HudController : Control
         _agentList = GetNode<VBoxContainer>("%AgentList");
         _genUIHost = GetNode<Control>("%GenUIHost");
 
-        // Add process count label next to agent count
         var topBar = GetNodeOrNull<HBoxContainer>("TopBar");
         if (topBar != null && _agentCountLabel != null)
         {
@@ -36,16 +36,51 @@ public partial class HudController : Control
             topBar.MoveChild(_processCountLabel, _agentCountLabel.GetIndex() + 1);
         }
 
-        // Set version from assembly info or project setting
         var version = ProjectSettings.GetSetting("application/config/version", "dev").AsString();
         if (_versionLabel != null) _versionLabel.Text = $"v{version}";
 
         ApplyTheme();
+        CreateButtons();
+    }
+
+    private void CreateButtons()
+    {
+        if (_agentList == null) return;
+
+        // Header
+        var header = new Label { Text = "Agents" };
+        header.AddThemeColorOverride("font_color", new Color(0.55f, 0.58f, 0.65f));
+        header.AddThemeFontSizeOverride("font_size", 12);
+        _agentList.AddChild(header);
+
+        // Spawn button
+        var spawnBtn = new Button { Text = "+ Spawn Agent" };
+        spawnBtn.AddThemeColorOverride("font_color", new Color(0.3f, 0.85f, 0.4f));
+        spawnBtn.AddThemeFontSizeOverride("font_size", 12);
+        var spawnStyle = new StyleBoxFlat();
+        spawnStyle.BgColor = new Color(0.15f, 0.25f, 0.18f, 0.8f);
+        spawnStyle.CornerRadiusTopLeft = 4;
+        spawnStyle.CornerRadiusTopRight = 4;
+        spawnStyle.CornerRadiusBottomLeft = 4;
+        spawnStyle.CornerRadiusBottomRight = 4;
+        spawnStyle.ContentMarginLeft = 8;
+        spawnStyle.ContentMarginRight = 8;
+        spawnStyle.ContentMarginTop = 4;
+        spawnStyle.ContentMarginBottom = 4;
+        spawnBtn.AddThemeStyleboxOverride("normal", spawnStyle);
+        var spawnHover = (StyleBoxFlat)spawnStyle.Duplicate();
+        spawnHover.BgColor = new Color(0.18f, 0.32f, 0.22f, 0.9f);
+        spawnBtn.AddThemeStyleboxOverride("hover", spawnHover);
+        spawnBtn.Pressed += () => OnSpawnRequested?.Invoke();
+        _agentList.AddChild(spawnBtn);
+
+        var sep = new HSeparator();
+        sep.AddThemeConstantOverride("separation", 6);
+        _agentList.AddChild(sep);
     }
 
     private void ApplyTheme()
     {
-        // Style the top bar
         var topBar = GetNodeOrNull<HBoxContainer>("TopBar");
         if (topBar != null)
         {
@@ -60,7 +95,6 @@ public partial class HudController : Control
             topBar.AddThemeStyleboxOverride("panel", topBg);
         }
 
-        // Style the agent panel
         var agentPanel = GetNodeOrNull<PanelContainer>("AgentPanel");
         if (agentPanel != null)
         {
@@ -77,15 +111,11 @@ public partial class HudController : Control
             agentPanel.AddThemeStyleboxOverride("panel", panelBg);
         }
 
-        // Style labels
         _agentCountLabel?.AddThemeColorOverride("font_color", new Color(0.7f, 0.75f, 0.85f));
         _versionLabel?.AddThemeColorOverride("font_color", new Color(0.45f, 0.48f, 0.55f));
         _versionLabel?.AddThemeFontSizeOverride("font_size", 12);
     }
 
-    /// <summary>
-    /// Called from Main._Process to apply viewport events to HUD.
-    /// </summary>
     public void ApplyEvent(ViewportEvent evt)
     {
         switch (evt)
@@ -93,31 +123,26 @@ public partial class HudController : Control
             case AgentSpawnedEvent spawned:
                 AddAgent(spawned.AgentId, spawned.VisualInfo);
                 break;
-
             case AgentDespawnedEvent despawned:
                 RemoveAgent(despawned.AgentId);
                 break;
-
             case StateChangedEvent stateChanged:
                 UpdateAgentState(stateChanged.AgentId, stateChanged.State);
                 break;
-
             case GenUIRequestEvent genui:
                 ForwardGenUI(genui.AgentId, genui.A2UIJson);
                 break;
-
             case ProcessStartedEvent started:
                 _activeProcesses.Add(started.AgentId);
                 UpdateProcessCount();
-                if (_entries.TryGetValue(started.AgentId, out var startedEntry))
-                    startedEntry.SetConnected(true);
+                if (_entries.TryGetValue(started.AgentId, out var se))
+                    se.SetConnected(true);
                 break;
-
             case ProcessExitedEvent exited:
                 _activeProcesses.Remove(exited.AgentId);
                 UpdateProcessCount();
-                if (_entries.TryGetValue(exited.AgentId, out var exitedEntry))
-                    exitedEntry.SetConnected(false);
+                if (_entries.TryGetValue(exited.AgentId, out var ee))
+                    ee.SetConnected(false);
                 break;
         }
     }
@@ -126,20 +151,8 @@ public partial class HudController : Control
     {
         if (_entries.ContainsKey(agentId) || _agentList == null) return;
 
-        // Add header on first agent
-        if (_entries.Count == 0)
-        {
-            var header = new Label { Text = "Active Agents" };
-            header.AddThemeColorOverride("font_color", new Color(0.55f, 0.58f, 0.65f));
-            header.AddThemeFontSizeOverride("font_size", 12);
-            _agentList.AddChild(header);
-
-            var sep = new HSeparator();
-            sep.AddThemeConstantOverride("separation", 6);
-            _agentList.AddChild(sep);
-        }
-
         var entry = new AgentHudEntry(agentId, info.DisplayName);
+        entry.OnRemoveClicked += () => OnRemoveRequested?.Invoke(agentId);
         _agentList.AddChild(entry.Root);
         _entries[agentId] = entry;
         UpdateCount();
@@ -148,7 +161,6 @@ public partial class HudController : Control
     private void RemoveAgent(string agentId)
     {
         if (!_entries.TryGetValue(agentId, out var entry)) return;
-
         entry.Root.QueueFree();
         _entries.Remove(agentId);
         UpdateCount();
@@ -157,19 +169,13 @@ public partial class HudController : Control
     private void UpdateAgentState(string agentId, AgentActivityState state)
     {
         if (_entries.TryGetValue(agentId, out var entry))
-        {
             entry.SetState(state);
-        }
     }
 
     private void ForwardGenUI(string agentId, string a2uiJson)
     {
-        // Delegate to PCK-loaded GDScript via signal or method call
-        // The GenUIHost node will have a GDScript from the PCK that handles rendering
         if (_genUIHost?.HasMethod("render_a2ui") == true)
-        {
             _genUIHost.Call("render_a2ui", agentId, a2uiJson);
-        }
     }
 
     private void UpdateCount()
@@ -186,45 +192,64 @@ public partial class HudController : Control
 }
 
 /// <summary>
-/// Lightweight HUD entry for a single agent in the side panel.
+/// HUD entry for a single agent with status dot, name, state, and remove button.
 /// </summary>
 public sealed class AgentHudEntry
 {
     public HBoxContainer Root { get; }
-    private readonly Label _nameLabel;
+    public event Action? OnRemoveClicked;
+
     private readonly Label _stateLabel;
     private readonly ColorRect _dot;
 
     public AgentHudEntry(string agentId, string displayName)
     {
         Root = new HBoxContainer();
-        Root.AddThemeConstantOverride("separation", 8);
+        Root.AddThemeConstantOverride("separation", 6);
 
-        // Colored dot indicator
         _dot = new ColorRect();
         _dot.CustomMinimumSize = new Vector2(8, 8);
         _dot.Color = new Color(0.4f, 0.45f, 0.5f);
         _dot.SizeFlagsVertical = Control.SizeFlags.ShrinkCenter;
         Root.AddChild(_dot);
 
-        _nameLabel = new Label { Text = displayName };
-        _nameLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        _nameLabel.AddThemeColorOverride("font_color", new Color(0.8f, 0.82f, 0.88f));
-        _nameLabel.AddThemeFontSizeOverride("font_size", 13);
+        var nameLabel = new Label { Text = displayName };
+        nameLabel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        nameLabel.AddThemeColorOverride("font_color", new Color(0.8f, 0.82f, 0.88f));
+        nameLabel.AddThemeFontSizeOverride("font_size", 13);
+        Root.AddChild(nameLabel);
 
         _stateLabel = new Label { Text = "idle" };
         _stateLabel.AddThemeColorOverride("font_color", new Color(0.5f, 0.5f, 0.55f));
         _stateLabel.AddThemeFontSizeOverride("font_size", 11);
-
-        Root.AddChild(_nameLabel);
         Root.AddChild(_stateLabel);
+
+        var removeBtn = new Button { Text = "✕" };
+        removeBtn.AddThemeFontSizeOverride("font_size", 11);
+        removeBtn.AddThemeColorOverride("font_color", new Color(0.7f, 0.3f, 0.3f));
+        var btnStyle = new StyleBoxFlat();
+        btnStyle.BgColor = new Color(0.2f, 0.12f, 0.12f, 0.6f);
+        btnStyle.CornerRadiusTopLeft = 3;
+        btnStyle.CornerRadiusTopRight = 3;
+        btnStyle.CornerRadiusBottomLeft = 3;
+        btnStyle.CornerRadiusBottomRight = 3;
+        btnStyle.ContentMarginLeft = 4;
+        btnStyle.ContentMarginRight = 4;
+        btnStyle.ContentMarginTop = 2;
+        btnStyle.ContentMarginBottom = 2;
+        removeBtn.AddThemeStyleboxOverride("normal", btnStyle);
+        var hoverStyle = (StyleBoxFlat)btnStyle.Duplicate();
+        hoverStyle.BgColor = new Color(0.35f, 0.15f, 0.15f, 0.8f);
+        removeBtn.AddThemeStyleboxOverride("hover", hoverStyle);
+        removeBtn.Pressed += () => OnRemoveClicked?.Invoke();
+        Root.AddChild(removeBtn);
     }
 
     public void SetConnected(bool connected)
     {
         _dot.Color = connected
-            ? new Color(0.2f, 0.8f, 0.4f)   // green = CLI running
-            : new Color(0.4f, 0.45f, 0.5f);  // grey = disconnected
+            ? new Color(0.2f, 0.8f, 0.4f)
+            : new Color(0.4f, 0.45f, 0.5f);
     }
 
     public void SetState(AgentActivityState state)
@@ -237,9 +262,8 @@ public sealed class AgentHudEntry
             AgentActivityState.Reading => "reading",
             AgentActivityState.Waiting => "waiting",
             AgentActivityState.Thinking => "thinking",
-            _ => "unknown"
+            _ => "?"
         };
-
         _stateLabel.RemoveThemeColorOverride("font_color");
         _stateLabel.AddThemeColorOverride("font_color", state switch
         {
