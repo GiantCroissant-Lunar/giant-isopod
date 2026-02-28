@@ -27,6 +27,15 @@ public partial class HudController : Control
     private Control? _terminalContainer; // holds the currently visible Terminal
     private readonly Dictionary<string, GodotObject> _agentTerminals = new(); // agentId → AgentTerminal instance
     private readonly Dictionary<string, GiantIsopod.Plugin.Process.AsciicastRecorder> _agentRecorders = new();
+
+    // Markdown rendered view — RichTextLabel per agent
+    private Control? _markdownContainer;
+    private readonly Dictionary<string, RichTextLabel> _agentMarkdownLabels = new();
+    private readonly Dictionary<string, System.Text.StringBuilder> _agentMarkdownBuffers = new();
+    private Button? _tabTerminalBtn;
+    private Button? _tabRenderedBtn;
+    private bool _showingTerminal = true;
+
     private static readonly string ConsoleLogPath = System.IO.Path.Combine(
         System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
         "giant-isopod-console.log");
@@ -258,6 +267,14 @@ public partial class HudController : Control
         _consoleTitle.AddThemeFontSizeOverride("font_size", 11);
         header.AddChild(_consoleTitle);
 
+        // Tab buttons: Terminal | Rendered
+        _tabTerminalBtn = CreateTabButton("Terminal", true);
+        _tabRenderedBtn = CreateTabButton("Rendered", false);
+        _tabTerminalBtn.Pressed += () => SwitchTab(terminal: true);
+        _tabRenderedBtn.Pressed += () => SwitchTab(terminal: false);
+        header.AddChild(_tabTerminalBtn);
+        header.AddChild(_tabRenderedBtn);
+
         var closeBtn = new Button { Text = "✕" };
         closeBtn.AddThemeFontSizeOverride("font_size", 10);
         closeBtn.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.65f));
@@ -282,7 +299,96 @@ public partial class HudController : Control
         _terminalContainer.CustomMinimumSize = new Vector2(0, 300);
         vbox.AddChild(_terminalContainer);
 
+        // Container for Markdown rendered views — one RichTextLabel per agent
+        _markdownContainer = new MarginContainer();
+        _markdownContainer.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        _markdownContainer.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        _markdownContainer.CustomMinimumSize = new Vector2(0, 300);
+        _markdownContainer.Visible = false;
+        vbox.AddChild(_markdownContainer);
+
         AddChild(_consolePanel);
+    }
+
+    private Button CreateTabButton(string text, bool active)
+    {
+        var btn = new Button { Text = text };
+        btn.AddThemeFontSizeOverride("font_size", 10);
+        var style = new StyleBoxFlat();
+        style.CornerRadiusTopLeft = 3;
+        style.CornerRadiusTopRight = 3;
+        style.CornerRadiusBottomLeft = 3;
+        style.CornerRadiusBottomRight = 3;
+        style.ContentMarginLeft = 8;
+        style.ContentMarginRight = 8;
+        style.ContentMarginTop = 2;
+        style.ContentMarginBottom = 2;
+        style.BgColor = active ? new Color(0.2f, 0.4f, 0.25f, 0.8f) : new Color(0.15f, 0.15f, 0.2f, 0.6f);
+        btn.AddThemeStyleboxOverride("normal", style);
+        btn.AddThemeColorOverride("font_color", active ? new Color(0.85f, 1f, 0.85f) : new Color(0.5f, 0.55f, 0.6f));
+        return btn;
+    }
+
+    private void UpdateTabStyles()
+    {
+        if (_tabTerminalBtn == null || _tabRenderedBtn == null) return;
+        var activeColor = new Color(0.2f, 0.4f, 0.25f, 0.8f);
+        var inactiveColor = new Color(0.15f, 0.15f, 0.2f, 0.6f);
+
+        var termStyle = (StyleBoxFlat)_tabTerminalBtn.GetThemeStylebox("normal").Duplicate();
+        termStyle.BgColor = _showingTerminal ? activeColor : inactiveColor;
+        _tabTerminalBtn.AddThemeStyleboxOverride("normal", termStyle);
+        _tabTerminalBtn.RemoveThemeColorOverride("font_color");
+        _tabTerminalBtn.AddThemeColorOverride("font_color", _showingTerminal ? new Color(0.85f, 1f, 0.85f) : new Color(0.5f, 0.55f, 0.6f));
+
+        var rendStyle = (StyleBoxFlat)_tabRenderedBtn.GetThemeStylebox("normal").Duplicate();
+        rendStyle.BgColor = !_showingTerminal ? activeColor : inactiveColor;
+        _tabRenderedBtn.AddThemeStyleboxOverride("normal", rendStyle);
+        _tabRenderedBtn.RemoveThemeColorOverride("font_color");
+        _tabRenderedBtn.AddThemeColorOverride("font_color", !_showingTerminal ? new Color(0.85f, 1f, 0.85f) : new Color(0.5f, 0.55f, 0.6f));
+    }
+
+    private void SwitchTab(bool terminal)
+    {
+        _showingTerminal = terminal;
+        if (_terminalContainer != null) _terminalContainer.Visible = terminal;
+        if (_markdownContainer != null) _markdownContainer.Visible = !terminal;
+        UpdateTabStyles();
+
+        // When switching to rendered, refresh the current agent's markdown
+        if (!terminal && _selectedAgentId != null)
+            RefreshMarkdown(_selectedAgentId);
+    }
+
+    private RichTextLabel CreateMarkdownLabelForAgent(string agentId)
+    {
+        if (_agentMarkdownLabels.TryGetValue(agentId, out var existing))
+            return existing;
+
+        var rtl = new RichTextLabel();
+        rtl.BbcodeEnabled = true;
+        rtl.FitContent = false;
+        rtl.ScrollFollowing = true;
+        rtl.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        rtl.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        rtl.AddThemeColorOverride("default_color", new Color(0.82f, 0.84f, 0.9f));
+        rtl.AddThemeFontSizeOverride("normal_font_size", 13);
+        rtl.Visible = false;
+        _markdownContainer?.AddChild(rtl);
+        _agentMarkdownLabels[agentId] = rtl;
+        return rtl;
+    }
+
+    private void RefreshMarkdown(string agentId)
+    {
+        if (!_agentMarkdownBuffers.TryGetValue(agentId, out var buffer)) return;
+        if (!_agentMarkdownLabels.TryGetValue(agentId, out var label))
+            label = CreateMarkdownLabelForAgent(agentId);
+
+        var bbcode = MarkdownBBCode.Convert(buffer.ToString());
+        label.Clear();
+        label.AppendText(""); // reset
+        label.ParseBbcode(bbcode);
     }
 
     /// <summary>
@@ -342,6 +448,14 @@ public partial class HudController : Control
             _agentTerminals.Remove(agentId);
         }
 
+        // Clean up markdown label
+        if (_agentMarkdownLabels.TryGetValue(agentId, out var label))
+        {
+            label.QueueFree();
+            _agentMarkdownLabels.Remove(agentId);
+        }
+        _agentMarkdownBuffers.Remove(agentId);
+
         // Stop asciicast recording
         if (_agentRecorders.TryGetValue(agentId, out var recorder))
         {
@@ -363,12 +477,28 @@ public partial class HudController : Control
         if (!_agentTerminals.ContainsKey(agentId))
             CreateTerminalForAgent(agentId);
 
+        // Ensure markdown label exists
+        if (!_agentMarkdownLabels.ContainsKey(agentId))
+            CreateMarkdownLabelForAgent(agentId);
+
         // Hide all terminals, show the selected one
         foreach (var (id, term) in _agentTerminals)
         {
             if (term is Control c)
                 c.Visible = id == agentId;
         }
+
+        // Hide all markdown labels, show the selected one
+        foreach (var (id, label) in _agentMarkdownLabels)
+            label.Visible = id == agentId;
+
+        // Respect current tab
+        if (_terminalContainer != null) _terminalContainer.Visible = _showingTerminal;
+        if (_markdownContainer != null) _markdownContainer.Visible = !_showingTerminal;
+
+        // Refresh markdown for selected agent
+        if (!_showingTerminal)
+            RefreshMarkdown(agentId);
     }
 
     public void AppendConsoleOutput(string agentId, string line)
@@ -383,6 +513,18 @@ public partial class HudController : Control
         // Record to asciicast
         if (_agentRecorders.TryGetValue(agentId, out var recorder))
             recorder.WriteOutput(text);
+
+        // Accumulate raw text for markdown rendering
+        if (!_agentMarkdownBuffers.TryGetValue(agentId, out var buffer))
+        {
+            buffer = new System.Text.StringBuilder();
+            _agentMarkdownBuffers[agentId] = buffer;
+        }
+        buffer.AppendLine(line);
+
+        // Live-refresh markdown if currently viewing rendered tab for this agent
+        if (!_showingTerminal && _selectedAgentId == agentId)
+            RefreshMarkdown(agentId);
     }
 
     /// <summary>
