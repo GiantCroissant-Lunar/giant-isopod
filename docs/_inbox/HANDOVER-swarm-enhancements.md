@@ -93,28 +93,24 @@ ActorSystem "agent-world"
 
 ## What's NOT Done Yet (Future Work)
 
-### Near-term
+### Near-term (completed in this branch)
 
-1. **Budget flow through assignment** — `TaskRequestWithBudget` is defined but
-   `AgentTaskActor.GetBudgetForTask()` returns null. Need to flow the budget from
-   `TaskGraphActor` → `DispatchActor` → `AgentSupervisor` → `AgentActor` → `AgentTaskActor`.
-   The `TaskAssigned` message should carry the budget or it should be cached in a lookup.
+1. ~~**Budget flow through assignment**~~ — DONE. `TaskAssigned` now carries optional
+   `Budget`. Flows from `TaskGraphActor` → `DispatchActor` → `AgentActor` → `AgentTaskActor`.
 
-2. **Token budget wiring** — `SetTokenBudget` message exists on `AgentRpcActor` but
-   nothing sends it yet. `AgentActor` should send `SetTokenBudget` to `/rpc` when it
-   receives a `TaskAssigned` that has a token budget.
+2. ~~**Token budget wiring**~~ — DONE. `AgentActor` sends `SetTokenBudget` to `/rpc`
+   when `TaskAssigned` has `MaxTokens`. Per-task tracking via dictionary.
 
-3. **Risk approval gate** — `RiskApprovalRequired`/`RiskApproved`/`RiskDenied` messages
-   are defined but not enforced. `DispatchActor` should check risk level and pause
-   `Critical` tasks until approved via viewport.
+3. **Risk approval gate** — Messages defined. Implementation in `feat/risk-gate-and-memory`
+   branch (PR #2). `DispatchActor` pauses Critical-risk tasks for viewport approval.
 
 4. **Memvid CliWrap integration** — `MemvidActor` is still a stub. Needs actual CliWrap
-   calls to `memvid put` and `memvid search`.
+   calls to `memvid put` and `memvid search`. Note: ADR-003 revised to treat Memvid as
+   episodic (per-task) memory, not long-term storage.
 
-5. **ModernSatsuma integration** — `TaskGraphActor` currently uses an internal adjacency
-   list with manual Kahn's algorithm. Once `Plate.ModernSatsuma` is packed and in the
-   local NuGet feed, replace with `CustomGraph` + `TopologicalSort` for richer graph
-   operations (critical path via Dijkstra, subgraph views, etc.).
+5. ~~**ModernSatsuma integration**~~ — DONE. `TaskGraphActor` uses
+   `Plate.ModernSatsuma.TopologicalSort` (RFC-007) for cycle detection. Packed as
+   `Plate.ModernSatsuma 0.2.0-topological` in local NuGet feed.
 
 ### Medium-term
 
@@ -125,8 +121,9 @@ ActorSystem "agent-world"
    with specialization depth (success history per capability), memory relevance, recent
    performance.
 
-8. **Graph-level timeout handling** — `GraphTimedOut` timer is set in `TaskGraphActor`
-   but the handler for it isn't implemented (only the timer setup).
+8. ~~**Graph-level timeout handling**~~ — DONE. `HandleGraphTimedOut` cancels all
+   pending/dispatched nodes and emits `TaskGraphCompleted`. Deadline timer cancelled
+   on normal graph completion.
 
 9. **Persistence** — Task graph state is in-memory only. For session recovery, serialize
    `GraphState` to disk or use ArcadeDB (like swimming-tuna).
@@ -154,10 +151,9 @@ ActorSystem "agent-world"
 - **Blackboard over direct messaging**: Cross-agent coordination uses EventStream pub/sub
   (stigmergy), not direct actor-to-actor messages. This decouples agents. See ADR-003.
 
-- **Internal DAG over ModernSatsuma (for now)**: `TaskGraphActor` uses a simple adjacency
-  list rather than depending on `Plate.ModernSatsuma`. This avoids a NuGet dependency
-  until the package is published. The internal implementation uses the same Kahn's
-  algorithm. Migration path is clear. See ADR-002.
+- **ModernSatsuma for DAG validation**: `TaskGraphActor` uses
+  `Plate.ModernSatsuma.TopologicalSort` (RFC-007) for cycle detection. The adjacency
+  lists are still maintained for runtime dispatch (incoming/outgoing edges). See ADR-002.
 
 - **ILoggerFactory passthrough**: Changed `AgentActor` constructor from `ILogger<AgentActor>`
   to `ILoggerFactory` so child actors (`AgentTaskActor`) can create their own typed loggers.
