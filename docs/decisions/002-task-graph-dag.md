@@ -66,7 +66,7 @@ public record TaskGraphCompleted(string GraphId, IReadOnlyDictionary<string, boo
 
 ### TaskGraphActor (`/user/taskgraph`)
 
-```
+```text
 ActorSystem "agent-world"
 ├── /user/registry
 ├── /user/memory
@@ -92,7 +92,7 @@ Responsibilities:
 
 ### Node State Machine
 
-```
+```text
 Pending → Ready → Dispatched → Completed
                              → Failed → (dependents become Cancelled)
 ```
@@ -116,7 +116,7 @@ internal sealed class GraphState
 dispatch flow is unchanged. `TaskGraphActor` simply controls *when* each request is sent
 based on dependency satisfaction.
 
-```
+```text
 SubmitTaskGraph
     → TaskGraphActor validates DAG
     → computes ready set (roots)
@@ -166,7 +166,7 @@ continue to work exactly as before. `SubmitTaskGraph` is an additive new capabil
 ## References
 
 - ADR-001: Skill-Based Tooling Over Actor-Per-Tool
-- Plate.ModernSatsuma: `C:\lunar-horse\plate-projects\modern-satsuma`
+- Plate.ModernSatsuma: internal repository `modern-satsuma` (see local NuGet feed pipeline docs)
 - Modern-satsuma RFC-007: Topological Sort Enhancement
 - swimming-tuna `TaskCoordinatorActor` + GOAP planner (reference implementation)
 - Overstory `.overstory/state.json` task dependency model

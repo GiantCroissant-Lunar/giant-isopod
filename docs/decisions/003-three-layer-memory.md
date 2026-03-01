@@ -88,7 +88,7 @@ public record SubscribeSignal(string Key);  // subscriber gets SignalValue on up
 - Global keys (e.g., `index:status`) enable swarm-wide signals.
 - No embedding search — pure key-value with optional prefix listing.
 
-```
+```text
 ActorSystem "agent-world"
 ├── /user/registry
 ├── /user/memory            ← Layer 3 (episodic, Memvid per task)
@@ -107,7 +107,7 @@ did, what it found, what worked and what failed. Like a person's handwritten not
 working on a specific assignment.
 
 **Lifetime**: Scoped to a task run. Created when a task is assigned, persists until the
-task completes (or is explicitly discarded). Can optionally be promoted to long-term
+task completes (or is explicitly discarded). It can optionally be promoted to long-term
 memory on task success.
 
 **Implementation**: Existing `MemorySupervisorActor` → `MemvidActor` with `.mv2` files,
@@ -179,7 +179,7 @@ pipeline from episodic → long-term.
 
 ### Data Flow Example
 
-```
+```text
 Agent A working on "build module X":
   1. Stores build artifact path in Working Memory (ephemeral self-reference)
   2. Records "tried approach Y, got error Z" in Episodic Memory (task journal)
