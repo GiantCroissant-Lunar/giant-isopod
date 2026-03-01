@@ -441,15 +441,21 @@ public partial class HudController : Control
         Control? instance = null;
         bool usingFallback = false;
 
-        try
+        // Check if GodotXterm native lib is available by testing if the Terminal class exists
+        bool godotXtermAvailable = ClassDB.ClassExists("Terminal");
+
+        if (godotXtermAvailable)
         {
-            var scene = GD.Load<PackedScene>("res://Scenes/AgentTerminal.tscn");
-            if (scene != null)
-                instance = scene.Instantiate<Control>();
-        }
-        catch (Exception ex)
-        {
-            DebugLog($"GodotXterm terminal failed for {agentId}: {ex.Message}");
+            try
+            {
+                var scene = GD.Load<PackedScene>("res://Scenes/AgentTerminal.tscn");
+                if (scene != null)
+                    instance = scene.Instantiate<Control>();
+            }
+            catch (Exception ex)
+            {
+                DebugLog($"GodotXterm terminal failed for {agentId}: {ex.Message}");
+            }
         }
 
         if (instance == null)
@@ -457,7 +463,7 @@ public partial class HudController : Control
             // Fallback: RichTextLabel-based console (works without GodotXterm native libs)
             instance = CreateFallbackTerminal(agentId);
             usingFallback = true;
-            DebugLog($"Using fallback RichTextLabel terminal for {agentId}");
+            DebugLog($"Using fallback RichTextLabel terminal for {agentId} (GodotXterm available: {godotXtermAvailable})");
         }
 
         instance.Visible = false;
