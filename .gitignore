@@ -11,3 +11,16 @@ obj/
 
 # Build artifacts
 build/_artifacts/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Memory sidecar
+memory-sidecar/.venv/
+data/memory/
+
+# Temp/build logs
+.nuke/temp/
+output.txt
