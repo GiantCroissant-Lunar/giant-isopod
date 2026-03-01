@@ -1,4 +1,4 @@
-# Handover: Swarm Enhancements (Sessions 1–5)
+# Handover: Swarm Enhancements (Sessions 1–6)
 
 Date: 2026-03-01
 
@@ -12,13 +12,14 @@ visualization pipeline, GodotXterm fallback terminal, and TaskGraphView (GraphEd
 
 Session 4 resolved all four session-3 handover priorities: F5 demo graph trigger,
 user:// recording paths, GodotXterm native libs, and MemvidActor CliWrap integration.
-Also addressed two rounds of PR #3 review comments (Dispose→node flags, IsCanceled,
-TaskRunId correlation, graph overlap fix).
 
 Session 5 implemented the Runtime/Model/Profile separation (ADR-006): renamed
-IAgentProcess→IAgentRuntime, CliAgentProcess→CliAgentRuntime, AgentRpcActor→AgentRuntimeActor,
-introduced ModelSpec, RuntimeConfig hierarchy (Cli/Api/Sdk), RuntimeRegistry, RuntimeFactory,
-and runtimes.json with polymorphic type discriminators.
+IAgentProcess→IAgentRuntime, introduced ModelSpec, RuntimeConfig hierarchy, RuntimeRegistry,
+RuntimeFactory, and runtimes.json.
+
+Session 6 implemented the full A2A/A2UI/AG-UI/GenUI vertical slice: protocol contract
+types, enhanced A2UIRenderer, GDScript GenUI renderer with data binding, AG-UI adapter
+and event wiring, and A2AActor for agent-to-agent protocol.
 
 ## Branch & PR State
 
@@ -30,6 +31,7 @@ and runtimes.json with polymorphic type discriminators.
 | `feat/risk-gate-and-memory` | `main` | #2 | 3 | **Merged** |
 | `feat/taskid-collision-and-dag-viz` | `main` | #3 | 16 | **Merged** |
 | `feat/taskid-collision-and-dag-viz` | — | #4 | 3 (session 5) | **Pending** |
+| `feat/taskid-collision-and-dag-viz` | — | — | 6 (session 6) | **Not yet PR'd** |
 
 Worktree path:
 - `C:\lunar-horse\yokan-projects\giant-isopod\.claude\worktrees\swarm-enhancements`
@@ -38,59 +40,66 @@ Worktree path:
 
 Packed as `Plate.ModernSatsuma 0.2.0-topological` in local NuGet feed.
 
-## What Session 5 Contains (3 commits)
+## What Session 6 Contains (6 commits)
 
 | Commit | Type | What |
 |--------|------|------|
-| `a02b041` | refactor | Introduce IAgentRuntime, ModelSpec, RuntimeConfig hierarchy, rename Process→Runtime messages |
-| `03e56fe` | refactor | CliAgentRuntime, RuntimeRegistry, RuntimeFactory, AgentRuntimeActor; delete old files |
-| `75e3a17` | refactor | runtimes.json with polymorphic discriminator, legacy fallback, ADR-006 |
+| `ad3ec72` | feat(contracts) | AG-UI event records, A2A types, A2UI types, new actor messages, extend viewport bridge |
+| `3159f3c` | feat(a2ui) | Enhanced A2UIRenderer: all 4 message types, flat GenUISurfaceSpec, RFC 6901 data model |
+| `c6d9ef5` | feat(genui) | GDScript GenUIRenderer (7 component types, data binding, action signal), F7 demo, HUD wiring |
+| `b2717d0` | feat(agui) | AgUiAdapter: instance-based with per-agent state, full AG-UI event mapping |
+| `85d1f58` | feat(agui) | Wire AG-UI events: AgentActor → ViewportActor → HudController console display |
+| `ab95470` | feat(a2a) | A2AActor at /user/a2a: task submission, status queries, agent card discovery |
 
-### Key changes in session 5
+### Session 6 key changes
 
-- **IAgentRuntime** replaces IAgentProcess (same interface, renamed)
-- **ModelSpec** record: `(Provider?, ModelId?, Parameters?)` — first-class model specification
-- **RuntimeConfig** hierarchy with `[JsonPolymorphic]`:
-  - `CliRuntimeConfig` — CLI subprocess (executable, args, env, defaults)
-  - `ApiRuntimeConfig` — stub (BaseUrl, ApiKeyEnvVar)
-  - `SdkRuntimeConfig` — stub (SdkName, Options)
-- **RuntimeRegistry**: `LoadFromJson` (new format) + `LoadFromLegacyCliProviders` (old format)
-- **RuntimeFactory**: pattern-matches RuntimeConfig → IAgentRuntime; `MergeModel()` for null-coalescing
-- **AgentRuntimeActor** replaces AgentRpcActor (uses RuntimeFactory.Create)
-- **AgentWorldConfig**: `Runtimes`, `DefaultRuntimeId`, `RuntimeWorkingDirectory`, `RuntimeEnvironment`
-- **runtimes.json**: new config format with `"type": "cli"` discriminator and `defaultModel`
-- **SpawnAgent**: `RuntimeId` (was CliProviderId), `Model` (new ModelSpec field)
-- Messages renamed: StartProcess→StartRuntime, ProcessStarted→RuntimeStarted, etc.
-- Viewport events renamed: ProcessStartedEvent→RuntimeStartedEvent, etc.
-- HUD: `SetRuntimes()`, `_activeRuntimes`, counter shows "Runtimes: N"
+**Protocol contracts (Contracts.Protocol):**
+- `AgUi/AgUiEvents.cs` — 17 AG-UI event records: RunStarted/Finished/Error, StepStarted/Finished, TextMessage Start/Content/End, ToolCall Start/Args/End/Result, StateSnapshot/Delta, MessagesSnapshot, Raw, Custom
+- `A2A/A2ATypes.cs` — Google A2A spec: AgentCard, A2ATask, A2AMessage, polymorphic A2APart (Text/File/Data), A2AArtifact
+- `A2UI/A2UITypes.cs` — A2UIComponent (flat with ParentId), A2UIAction, GenUISurfaceSpec
 
-## What Session 4 Contains (5 new commits)
+**Core messages (Contracts.Core/Messages.cs):**
+- `GenUIAction(AgentId, SurfaceId, ActionId, ComponentId, Payload?)` — UI → agent
+- `AgUiEvent(AgentId, Event)` — agent → viewport
+- `A2ASendTask`, `A2AGetTask`, `A2ATaskResult`, `QueryAgentCards`, `AgentCardsResult`, `AgentCardInfo`
 
-| Commit | Type | What |
-|--------|------|------|
-| `8cfbd4a` | feat | F5 keyboard shortcut submits demo 6-node DAG through full pipeline |
-| `20acc56` | fix | Console log + asciicast recordings use Godot `user://` instead of `%USERPROFILE%` |
-| `1619dc6` | feat | MemvidActor wired to MemvidClient via CliWrap (PipeTo async pattern) |
-| `dc13ba7` | chore | Track TaskGraphView.cs.uid |
+**Viewport bridge:**
+- `IViewportBridge.PublishAgUiEvent()` — new default-noop method
+- `GodotViewportBridge` — `AgUiViewportEvent`, `GenUIActionEvent` records, `OnGenUIAction` callback
 
-### GodotXterm native libs (local-only, not committed)
+**A2UIRenderer (Plugin.Protocol):**
+- Parses all 4 A2UI message types: createSurface, updateComponents, updateDataModel, deleteSurface
+- Outputs flat `GenUISurfaceSpec` with per-component `ParentId` adjacency (not nested children)
+- RFC 6901 JSON Pointer data model resolution
+- Backward-compatible `Parse()` method for legacy callers
 
-Downloaded [godot-xterm v4.0.3](https://github.com/lihop/godot-xterm/releases/tag/v4.0.3)
-native binaries into `addons/godot_xterm/lib/`. The `.gitignore` in `lib/` excludes them
-from git. New clones need to re-download — see setup instructions below.
+**AgUiAdapter (Plugin.Protocol):**
+- Converted from static to instance class, tracks run/step/tool state per agent
+- `MapRpcEventToAgUiEvents(line)` → `List<object>` of AG-UI events
+- First event → RunStarted; tool_use → ToolCallStart; tool_result → ToolCallEnd; text → TextMessageContent; exit → RunFinished
+- Static `MapRpcEventToActivity()` kept for backward compatibility
 
-## What Session 3 Contains (8 commits)
+**GenUIRenderer.gd (GDScript):**
+- Component catalog: label→Label, button→Button, text_input→LineEdit, container→VBox/HBoxContainer, progress→ProgressBar, checkbox→CheckBox, separator→HSeparator
+- `render_a2ui(agent_id, a2ui_json)` — called from C#
+- Flat adjacency rendering (components reference ParentId)
+- RFC 6901 JSON Pointer data binding (read + apply)
+- Two-way binding on text_input (text_changed) and checkbox (toggled)
+- `action_triggered` signal → HudController → Main → actor system
 
-| Commit | Type | What |
-|--------|------|------|
-| `926affd` | fix | Add `GraphId` field to TaskRequest, TaskAssigned, TaskCompleted, TaskFailed |
-| `9c3991c` | fix | Route completions to TaskGraphActor with GraphId; TryFindGraph O(1) lookup |
-| `7237df7` | feat | Notify* messages + IViewportBridge task graph methods (default no-op) |
-| `0fead8d` | feat | TaskGraphActor emits viewport notifications; Viewport created before TaskGraph |
-| `fa77c98` | feat | TaskGraphView: GraphEdit DAG with topological layout + status colors |
-| `8e29751` | fix | Move TaskGraphView to HUD CanvasLayer; add RichTextLabel terminal fallback |
-| `c35ad03` | fix | ClassDB-based GodotXterm detection (insufficient — class registered without lib) |
-| `7192fb6` | fix | Probe Terminal.HasMethod("write") for reliable native lib detection |
+**Wiring:**
+- AgentActor: new `AgUiAdapter` field, emits AG-UI events in RuntimeEvent handler
+- ViewportActor: handles `AgUiEvent` → bridge
+- HudController: handles `AgUiViewportEvent` (logs tool names, streaming text to console), connects `action_triggered` signal from GenUIHost, emits `OnGenUIActionTriggered`
+- Main.cs: subscribes `OnGenUIActionTriggered`, forwards `GenUIAction` to agent supervisor; F7 keybind loads `demo-a2ui-form.json` and sends through viewport bridge
+- Plugin.Actors.csproj: added `Plugin.Protocol` project reference
+
+**A2AActor (Plugin.Actors):**
+- Handles `A2ASendTask` → creates internal task, forwards `TaskRequest` to `/user/dispatch`
+- Handles `A2AGetTask` → returns task status JSON
+- Handles `QueryAgentCards` → async `Ask` to registry, `PipeTo` sender
+- Subscribes EventStream for `TaskCompleted`/`TaskFailed` → updates internal task state
+- Wired into AgentWorldSystem at `/user/a2a`
 
 ## Actor Tree
 
@@ -100,12 +109,13 @@ ActorSystem "agent-world"
 ├── /user/memory            ← MemorySupervisorActor → MemvidActor (episodic, per-task)
 ├── /user/blackboard        ← BlackboardActor (shared key-value, EventStream pub/sub)
 ├── /user/agents            ← AgentSupervisorActor (ForwardToAgent routing)
-│   └── /user/agents/{id}   ← AgentActor (bidding, working memory, task count)
+│   └── /user/agents/{id}   ← AgentActor (bidding, working memory, AG-UI adapter, task count)
 │       ├── /rpc            ← AgentRuntimeActor (per-task token tracking, RuntimeFactory dispatch)
 │       └── /tasks          ← AgentTaskActor (deadline enforcement, budget reports, GraphId tracking)
 ├── /user/dispatch          ← DispatchActor (market-first + risk gate, GraphId propagation)
 ├── /user/taskgraph         ← TaskGraphActor (ModernSatsuma DAG, wave dispatch, viewport notifications)
-└── /user/viewport          ← ViewportActor (observer bridge to Godot, task graph events)
+├── /user/viewport          ← ViewportActor (observer bridge to Godot, AG-UI events, task graph events)
+└── /user/a2a               ← A2AActor (A2A task submission, status queries, agent card discovery)
 ```
 
 ## Setup: GodotXterm Native Libs
@@ -124,28 +134,32 @@ Without native libs, the app still runs — HudController falls back to RichText
 
 ## Remaining Work (Prioritized)
 
-### Next session: UI layout and polish
+### Next session: verification and polish
 
-1. **TaskGraphView / Console overlap** — TaskGraphView has fixed offsets (top: 80, bottom: 400)
-   that collide with the console panel (350px, anchored bottom). Need to either constrain the
-   graph view to avoid the console area, or make the console push it up when visible.
+1. **F7 demo manual test** — Run app, press F7, verify form renders in GenUIHost. Type in text input, toggle checkbox, click Submit — verify action logged to console and forwarded to actor system.
 
-2. **TaskGraphView visibility** — graph view is always rendered even when no graph is active;
-   should be hidden by default and shown only when a graph is submitted.
+2. **AG-UI event visibility** — Spawn agent with real runtime, verify tool call names appear in console panel via AG-UI events.
 
-3. **Asciicast recording path** — verify recordings directory creation under `user://recordings`.
+3. **GenUIRenderer.tscn wiring** — The GenUIRenderer scene needs to be instantiated in the HUD layout (currently GenUIHost expects `render_a2ui` method on an existing node). May need to add GenUIRenderer.tscn as child of GenUIHost in SwarmhudView.
+
+4. **TaskGraphView / Console overlap** — TaskGraphView has fixed offsets (top: 80, bottom: 400) that collide with the console panel (350px, anchored bottom).
+
+5. **TaskGraphView visibility** — graph view is always rendered even when no graph is active; should be hidden by default and shown only when a graph is submitted.
 
 ### Later priorities
 
-1. Agent-to-agent communication (via blackboard or direct messaging)
-2. Fitness refinements (specialization depth, performance history)
-3. Persistence (serialize GraphState to disk or embedded DB)
-4. Long-term knowledge store (SQLite/LiteDB, KnowledgeStoreActor)
-5. Per-provider token parsing (replace char-based approximation)
-6. Consensus voting (multi-agent approval)
-7. GOAP planning (planner → DAG → TaskGraphActor)
-8. Task-scoped `.mv2` files (ADR-003 calls for per-task, current is per-agent)
-9. Implement ApiAgentRuntime and SdkAgentRuntime (currently stubs)
+1. A2A integration testing (send task from one agent to another via A2AActor)
+2. AG-UI state events (StateSnapshot/StateDelta — not yet emitted by adapter)
+3. GenUI surface lifecycle (updateComponents, updateDataModel, deleteSurface — renderer supports them but no actor produces them yet)
+4. Agent card enrichment (populate from AIEOS profile skills, not just agentId)
+5. Fitness refinements (specialization depth, performance history)
+6. Persistence (serialize GraphState to disk or embedded DB)
+7. Long-term knowledge store (SQLite/LiteDB, KnowledgeStoreActor)
+8. Per-provider token parsing (replace char-based approximation)
+9. Consensus voting (multi-agent approval)
+10. GOAP planning (planner → DAG → TaskGraphActor)
+11. Task-scoped `.mv2` files (ADR-003 calls for per-task, current is per-agent)
+12. Implement ApiAgentRuntime and SdkAgentRuntime (currently stubs)
 
 ## Key Design Decisions
 
@@ -164,45 +178,46 @@ Without native libs, the app still runs — HudController falls back to RichText
   → Long-term (embedded DB, future). See revised ADR-003.
 - **Budget end-to-end**: TaskAssigned carries Budget. AgentActor wires SetTokenBudget
   to /rpc. Per-task token tracking via dictionary in AgentRuntimeActor.
-- **GraphId threading (session 3)**: All task lifecycle messages carry optional GraphId.
-  TaskGraphActor.TryFindGraph does O(1) direct lookup when GraphId is present, with
-  fallback scan for backward compatibility. Fixes cross-graph TaskId collision.
-- **Viewport DAG pipeline**: TaskGraphActor → NotifyTaskGraphSubmitted/NotifyTaskNodeStatusChanged
-  → ViewportActor → IViewportBridge (default no-op) → GodotViewportBridge event queue →
-  Main._Process() drain → TaskGraphView (GraphEdit with topological layer layout).
-- **GodotXterm fallback**: HudController probes Terminal.HasMethod("write") after scene
-  instantiation. If native lib is missing, falls back to RichTextLabel-based console.
-  ClassDB.ClassExists("Terminal") is unreliable (class registered from .gdextension metadata
-  even when DLL is absent).
-- **MemvidActor CliWrap (session 4)**: MemvidActor delegates to MemvidClient (CliWrap 3.8.2).
-  Uses Akka PipeTo pattern for async bridging. MemvidExecutable config flows from
-  AgentWorldConfig → MemorySupervisorActor → MemvidActor constructor.
+- **AG-UI as intermediate protocol**: AgUiAdapter converts raw RPC output into structured
+  AG-UI events (lifecycle, text, tool call). Events flow AgentActor → ViewportActor →
+  GodotViewportBridge → HudController. Decouples agent output format from UI rendering.
+- **A2UI flat adjacency model**: A2UIRenderer converts nested component trees to flat list
+  with ParentId references. GenUIRenderer.gd rebuilds tree on Godot side. Simpler to
+  serialize and diff than nested trees.
+- **GenUI two-way binding**: text_input and checkbox components write back to data model
+  via signal callbacks. RFC 6901 JSON Pointer for addressing model fields.
+- **A2AActor EventStream subscription**: Subscribes to TaskCompleted/TaskFailed globally
+  to track task state without coupling to individual agent actors. Uses Ask+PipeTo for
+  async registry queries.
 
 ## Key File Paths
 
 | File | Role |
 |------|------|
-| `project/contracts/Contracts.Core/Messages.cs` | Runtime messages, GraphId on task messages, Notify* records |
-| `project/contracts/Contracts.Core/IAgentRuntime.cs` | Agent runtime interface (replaces IAgentProcess) |
+| `project/contracts/Contracts.Core/Messages.cs` | All actor messages incl. GenUIAction, AgUiEvent, A2A messages |
+| `project/contracts/Contracts.Core/IAgentRuntime.cs` | Agent runtime interface |
 | `project/contracts/Contracts.Core/ModelSpec.cs` | Provider-agnostic model specification |
-| `project/contracts/Contracts.Core/IViewportBridge.cs` | PublishRuntime* + task graph methods |
+| `project/contracts/Contracts.Core/IViewportBridge.cs` | PublishAgUiEvent + task graph methods |
 | `project/contracts/Contracts.Core/IMemoryStore.cs` | IMemoryStore interface + MemoryHit record |
-| `project/contracts/Contracts.Protocol/Runtime/` | RuntimeConfig, CliRuntimeConfig, Api/SdkRuntimeConfig, RuntimesRoot |
-| `project/plugins/Plugin.Process/CliAgentRuntime.cs` | CLI runtime via CliWrap (replaces CliAgentProcess) |
-| `project/plugins/Plugin.Process/RuntimeRegistry.cs` | Loads runtimes.json or legacy cli-providers.json |
-| `project/plugins/Plugin.Process/RuntimeFactory.cs` | Creates IAgentRuntime from RuntimeConfig + ModelSpec |
-| `project/plugins/Plugin.Actors/AgentRuntimeActor.cs` | Runtime pipe actor (replaces AgentRpcActor) |
-| `project/plugins/Plugin.Actors/TaskGraphActor.cs` | TryFindGraph, viewport notifications |
-| `project/plugins/Plugin.Actors/AgentTaskActor.cs` | GraphId storage + enrichment |
-| `project/plugins/Plugin.Actors/AgentActor.cs` | Runtime lifecycle, bidding, working memory |
-| `project/plugins/Plugin.Actors/DispatchActor.cs` | GraphId through bid/approval pipeline |
-| `project/plugins/Plugin.Actors/ViewportActor.cs` | Handles Runtime*/Notify*/TaskGraphCompleted |
-| `project/plugins/Plugin.Actors/AgentWorldSystem.cs` | AgentWorldConfig with Runtimes field |
-| `project/plugins/Plugin.Actors/MemvidActor.cs` | CliWrap-backed episodic memory (PipeTo async) |
-| `project/plugins/Plugin.Process/MemvidClient.cs` | CliWrap memvid CLI wrapper |
-| `project/hosts/complete-app/Data/Runtimes/runtimes.json` | New polymorphic runtime config |
-| `project/hosts/complete-app/Scripts/GodotViewportBridge.cs` | Runtime + task graph event records |
+| `project/contracts/Contracts.Protocol/AgUi/AgUiEvents.cs` | 17 AG-UI event records |
+| `project/contracts/Contracts.Protocol/A2A/A2ATypes.cs` | Google A2A spec types |
+| `project/contracts/Contracts.Protocol/A2UI/A2UITypes.cs` | A2UI component/action/surface types |
+| `project/contracts/Contracts.Protocol/Runtime/` | RuntimeConfig hierarchy |
+| `project/plugins/Plugin.Protocol/A2UIRenderer.cs` | A2UI JSON → flat GenUISurfaceSpec |
+| `project/plugins/Plugin.Protocol/AgUiAdapter.cs` | RPC events → AG-UI events (instance, stateful) |
+| `project/plugins/Plugin.Process/RuntimeRegistry.cs` | Loads runtimes.json or legacy |
+| `project/plugins/Plugin.Process/RuntimeFactory.cs` | Creates IAgentRuntime from RuntimeConfig |
+| `project/plugins/Plugin.Actors/AgentActor.cs` | AgUiAdapter field, AG-UI event emission |
+| `project/plugins/Plugin.Actors/ViewportActor.cs` | Handles AgUiEvent → bridge |
+| `project/plugins/Plugin.Actors/A2AActor.cs` | A2A protocol: task submission, status, agent cards |
+| `project/plugins/Plugin.Actors/AgentWorldSystem.cs` | Creates /user/a2a, exposes A2A property |
+| `project/plugins/Plugin.Actors/TaskGraphActor.cs` | DAG validation + wave dispatch |
+| `project/plugins/Plugin.Actors/DispatchActor.cs` | Market bidding + risk gate |
+| `project/hosts/complete-app/Scenes/GenUI/GenUIRenderer.gd` | GDScript component renderer with data binding |
+| `project/hosts/complete-app/Scenes/GenUI/GenUIRenderer.tscn` | GenUI scene |
+| `project/hosts/complete-app/Data/Demo/demo-a2ui-form.json` | Demo A2UI form (F7) |
+| `project/hosts/complete-app/Scripts/GodotViewportBridge.cs` | AgUiViewportEvent, GenUIActionEvent, OnGenUIAction |
+| `project/hosts/complete-app/Scripts/HudController.cs` | AG-UI console display, GenUI action signal wiring |
+| `project/hosts/complete-app/Scripts/Main.cs` | F7 demo, GenUIAction forwarding, runtime loading |
 | `project/hosts/complete-app/Scripts/TaskGraphView.cs` | GraphEdit DAG visualization |
-| `project/hosts/complete-app/Scripts/HudController.cs` | SetRuntimes, fallback terminal, user:// paths |
-| `project/hosts/complete-app/Scripts/Main.cs` | runtimes.json loading, TaskGraphView, F5 demo, drain loop |
-| `docs/decisions/006-runtime-model-profile.md` | ADR-006: Runtime/Model/Profile separation |
+| `docs/decisions/006-runtime-model-profile.md` | ADR-006 |
