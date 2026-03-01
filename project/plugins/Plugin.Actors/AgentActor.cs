@@ -23,6 +23,7 @@ public sealed class AgentActor : UntypedActor
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<AgentActor> _logger;
     private readonly GiantIsopod.Plugin.Mapping.ProtocolMapper _mapper = new();
+    private readonly GiantIsopod.Plugin.Protocol.AgUiAdapter _agUiAdapter;
 
     private IActorRef? _rpcActor;
     private bool _runtimeConnected;
@@ -67,6 +68,7 @@ public sealed class AgentActor : UntypedActor
         _config = config;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<AgentActor>();
+        _agUiAdapter = new GiantIsopod.Plugin.Protocol.AgUiAdapter(agentId);
     }
 
     protected override void PreStart()
@@ -136,6 +138,13 @@ public sealed class AgentActor : UntypedActor
                 {
                     Context.System.ActorSelection("/user/viewport")
                         .Tell(new AgentStateChanged(_agentId, activityState));
+                }
+                // Emit AG-UI events
+                var agUiEvents = _agUiAdapter.MapRpcEventToAgUiEvents(evt.RawJson);
+                foreach (var agUiEvt in agUiEvents)
+                {
+                    Context.System.ActorSelection("/user/viewport")
+                        .Tell(new AgUiEvent(_agentId, agUiEvt));
                 }
                 break;
 

@@ -47,6 +47,10 @@ public sealed class ViewportActor : UntypedActor
                 _bridge?.PublishGenUIRequest(genui.AgentId, genui.A2UIJson);
                 break;
 
+            case AgUiEvent agUiEvent:
+                _bridge?.PublishAgUiEvent(agUiEvent.AgentId, agUiEvent.Event);
+                break;
+
             case AgentMemoryActivity memory:
                 // Could extend IViewportBridge for memory indicators
                 break;
