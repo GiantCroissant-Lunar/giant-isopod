@@ -1,0 +1,36 @@
+{
+    "$schema": "./build.config.schema.json",
+    "solution": "project/GiantIsopod.sln",
+    "projectGroups": {
+        "hosts": {
+            "sourceDir": "project/hosts",
+            "action": "publish"
+        },
+        "plugins": {
+            "sourceDir": "project/plugins",
+            "action": "compile"
+        },
+        "contracts": {
+            "sourceDir": "project/contracts",
+            "action": "compile"
+        }
+    },
+    "godotBuild": {
+        "projectRoot": "project/hosts/complete-app",
+        "assemblyName": "GiantIsopod",
+        "platforms": [
+            {
+                "rid": "win-x64",
+                "presetName": "Windows Desktop",
+                "binaryName": "GiantIsopod.exe",
+                "dataDirName": "data_{AssemblyName}_windows_x86_64"
+            },
+            {
+                "rid": "linux-x64",
+                "presetName": "Linux",
+                "binaryName": "GiantIsopod.x86_64",
+                "dataDirName": "data_{AssemblyName}_linuxbsd_x86_64"
+            }
+        ]
+    }
+}

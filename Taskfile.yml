@@ -134,19 +134,22 @@ tasks:
   # ── .NET / Godot ──
 
   build:
-    desc: Build the .NET solution (Debug)
+    desc: Build the .NET solution (Debug) using UnifyBuild
     cmds:
-      - dotnet build {{.SLN}} --nologo -v quiet
+      - dotnet tool restore
+      - dotnet unify-build Compile --configuration Debug
 
   build:release:
-    desc: Build the .NET solution (Release)
+    desc: Build the .NET solution (Release) using UnifyBuild
     cmds:
-      - dotnet build {{.SLN}} -c Release --nologo -v quiet
+      - dotnet tool restore
+      - dotnet unify-build Compile --configuration Release
 
   publish:
-    desc: Publish the Godot host project (.NET assemblies)
+    desc: Publish the Godot host project and all hosts using UnifyBuild
     cmds:
-      - dotnet publish {{.GODOT_PROJECT}}/complete-app.csproj -c Release --nologo -v quiet
+      - dotnet tool restore
+      - dotnet unify-build PublishHosts --configuration Release
 
   export:
     desc: Export Godot app for all platforms to build/_artifacts/{version}/{rid}

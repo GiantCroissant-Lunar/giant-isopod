@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "unifybuild.tool": {
+      "version": "3.0.2",
+      "commands": [
+        "unify-build"
+      ],
+      "rollForward": false
+    }
+  }
+}
