@@ -17,6 +17,10 @@ public sealed class AgentRpcActor : UntypedActor
     private IAgentProcess? _process;
     private CancellationTokenSource? _cts;
 
+    // Per-task token budget tracking (supports concurrent tasks)
+    private readonly Dictionary<string, TokenBudgetState> _tokenBudgets = new();
+    private string? _activeTaskId; // most recently assigned task gets output attributed
+
     public AgentRpcActor(string agentId, AgentWorldConfig config, string? cliProviderId = null)
     {
         _agentId = agentId;
@@ -37,8 +41,38 @@ public sealed class AgentRpcActor : UntypedActor
                 break;
 
             case ProcessEvent evt:
+                TrackTokenUsage(evt.RawJson);
                 Context.Parent.Tell(evt);
                 break;
+
+            case SetTokenBudget budget:
+                _activeTaskId = budget.TaskId;
+                _tokenBudgets[budget.TaskId] = new TokenBudgetState(budget.MaxTokens);
+                break;
+        }
+    }
+
+    private void TrackTokenUsage(string output)
+    {
+        if (_activeTaskId is null || !_tokenBudgets.TryGetValue(_activeTaskId, out var budgetState))
+            return;
+
+        budgetState.CumulativeChars += output.Length;
+        var estimatedTokens = (int)(budgetState.CumulativeChars / 4);
+
+        // Kill process at 120% of budget
+        if (estimatedTokens > budgetState.MaxTokens * 1.2)
+        {
+            Context.ActorSelection("../tasks")
+                .Tell(new TokenBudgetExceeded(_activeTaskId, estimatedTokens, budgetState.MaxTokens));
+            _cts?.Cancel();
+        }
+        // Warn at 100% of budget
+        else if (!budgetState.Warned && estimatedTokens > budgetState.MaxTokens)
+        {
+            budgetState.Warned = true;
+            Context.ActorSelection("../tasks")
+                .Tell(new TokenBudgetExceeded(_activeTaskId, estimatedTokens, budgetState.MaxTokens));
         }
     }
 
@@ -104,4 +138,14 @@ public sealed class AgentRpcActor : UntypedActor
         _cts?.Dispose();
         _ = _process?.DisposeAsync();
     }
+}
+
+/// <summary>Sets the token budget for the active task on this RPC actor.</summary>
+public record SetTokenBudget(string TaskId, int MaxTokens);
+
+internal sealed class TokenBudgetState(int maxTokens)
+{
+    public int MaxTokens { get; } = maxTokens;
+    public long CumulativeChars { get; set; }
+    public bool Warned { get; set; }
 }
