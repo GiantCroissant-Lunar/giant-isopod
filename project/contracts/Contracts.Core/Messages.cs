@@ -23,13 +23,13 @@ public record AgentMemoryActivity(string AgentId, bool IsStoring, string? Title 
 
 // ── Task dispatch ──
 
-public record TaskRequest(string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities);
+public record TaskRequest(string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities, string? GraphId = null);
 public record TaskRequestWithBudget(
     string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities,
-    TaskBudget Budget) : TaskRequest(TaskId, Description, RequiredCapabilities);
-public record TaskAssigned(string TaskId, string AgentId, TaskBudget? Budget = null);
-public record TaskCompleted(string TaskId, string AgentId, bool Success, string? Summary = null);
-public record TaskFailed(string TaskId, string? Reason = null, IReadOnlySet<string>? UnmetCapabilities = null);
+    TaskBudget Budget, string? GraphId = null) : TaskRequest(TaskId, Description, RequiredCapabilities, GraphId);
+public record TaskAssigned(string TaskId, string AgentId, TaskBudget? Budget = null, string? GraphId = null);
+public record TaskCompleted(string TaskId, string AgentId, bool Success, string? Summary = null, string? GraphId = null);
+public record TaskFailed(string TaskId, string? Reason = null, IReadOnlySet<string>? UnmetCapabilities = null, string? GraphId = null);
 public record TaskTimedOut(string TaskId);
 
 // ── Task budget ──
