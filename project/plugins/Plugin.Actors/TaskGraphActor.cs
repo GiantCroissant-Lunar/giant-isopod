@@ -73,45 +73,68 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
     private void HandleTaskCompleted(TaskCompleted completed)
     {
-        foreach (var (graphId, state) in _graphs)
-        {
-            if (!state.Nodes.ContainsKey(completed.TaskId)) continue;
-
-            if (!completed.Success)
-            {
-                // Treat unsuccessful completion as failure
-                state.Status[completed.TaskId] = TaskNodeStatus.Failed;
-                _logger.LogWarning("Graph {GraphId}: task {TaskId} completed with Success=false",
-                    graphId, completed.TaskId);
-                CancelDependents(state, completed.TaskId);
-            }
-            else
-            {
-                state.Status[completed.TaskId] = TaskNodeStatus.Completed;
-                _logger.LogDebug("Graph {GraphId}: task {TaskId} completed", graphId, completed.TaskId);
-                DispatchReadyNodes(state);
-            }
-
-            CheckGraphCompletion(graphId, state);
+        if (!TryFindGraph(completed.TaskId, completed.GraphId, out var graphId, out var state))
             return;
+
+        if (!completed.Success)
+        {
+            state.Status[completed.TaskId] = TaskNodeStatus.Failed;
+            _logger.LogWarning("Graph {GraphId}: task {TaskId} completed with Success=false",
+                graphId, completed.TaskId);
+            CancelDependents(state, completed.TaskId);
         }
+        else
+        {
+            state.Status[completed.TaskId] = TaskNodeStatus.Completed;
+            _logger.LogDebug("Graph {GraphId}: task {TaskId} completed", graphId, completed.TaskId);
+            DispatchReadyNodes(state);
+        }
+
+        CheckGraphCompletion(graphId, state);
     }
 
     private void HandleTaskFailed(TaskFailed failed)
     {
-        foreach (var (graphId, state) in _graphs)
-        {
-            if (!state.Nodes.ContainsKey(failed.TaskId)) continue;
-
-            state.Status[failed.TaskId] = TaskNodeStatus.Failed;
-            _logger.LogWarning("Graph {GraphId}: task {TaskId} failed — {Reason}",
-                graphId, failed.TaskId, failed.Reason);
-
-            // Cancel all transitive dependents
-            CancelDependents(state, failed.TaskId);
-            CheckGraphCompletion(graphId, state);
+        if (!TryFindGraph(failed.TaskId, failed.GraphId, out var graphId, out var state))
             return;
+
+        state.Status[failed.TaskId] = TaskNodeStatus.Failed;
+        _logger.LogWarning("Graph {GraphId}: task {TaskId} failed — {Reason}",
+            graphId, failed.TaskId, failed.Reason);
+
+        CancelDependents(state, failed.TaskId);
+        CheckGraphCompletion(graphId, state);
+    }
+
+    /// <summary>
+    /// Resolves the owning graph for a task. Uses direct GraphId lookup when available,
+    /// falls back to scanning all graphs for backward compatibility.
+    /// </summary>
+    private bool TryFindGraph(string taskId, string? graphId, out string foundGraphId, out GraphState state)
+    {
+        // Direct lookup when GraphId is provided — O(1) instead of O(graphs)
+        if (graphId != null && _graphs.TryGetValue(graphId, out state!))
+        {
+            if (state.Nodes.ContainsKey(taskId))
+            {
+                foundGraphId = graphId;
+                return true;
+            }
+            _logger.LogWarning("GraphId {GraphId} does not contain task {TaskId}", graphId, taskId);
         }
+
+        // Fallback: scan all graphs (backward compat for messages without GraphId)
+        foreach (var (gid, gs) in _graphs)
+        {
+            if (!gs.Nodes.ContainsKey(taskId)) continue;
+            foundGraphId = gid;
+            state = gs;
+            return true;
+        }
+
+        foundGraphId = "";
+        state = null!;
+        return false;
     }
 
     private void DispatchReadyNodes(GraphState state)
@@ -130,8 +153,8 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             _logger.LogDebug("Graph {GraphId}: dispatching task {TaskId}", state.GraphId, taskId);
 
             var request = node.Budget is not null
-                ? new TaskRequestWithBudget(taskId, node.Description, node.RequiredCapabilities, node.Budget)
-                : new TaskRequest(taskId, node.Description, node.RequiredCapabilities);
+                ? new TaskRequestWithBudget(taskId, node.Description, node.RequiredCapabilities, node.Budget, state.GraphId)
+                : new TaskRequest(taskId, node.Description, node.RequiredCapabilities, state.GraphId);
 
             _dispatch.Tell(request);
         }

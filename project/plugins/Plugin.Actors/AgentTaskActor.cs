@@ -28,7 +28,7 @@ public sealed class AgentTaskActor : UntypedActor, IWithTimers
         {
             case TaskAssigned task:
                 var budget = task.Budget;
-                var state = new TaskState(task.TaskId, DateTimeOffset.UtcNow, budget);
+                var state = new TaskState(task.TaskId, DateTimeOffset.UtcNow, budget, task.GraphId);
                 _activeTasks[task.TaskId] = state;
 
                 // Start deadline timer if budget specifies one
@@ -47,8 +47,16 @@ public sealed class AgentTaskActor : UntypedActor, IWithTimers
                 {
                     Timers.Cancel($"deadline-{completed.TaskId}");
                     EmitBudgetReport(completedState, false);
+                    // Stamp GraphId from tracked state if not already set
+                    var enrichedCompleted = completed.GraphId == null && completedState.GraphId != null
+                        ? completed with { GraphId = completedState.GraphId }
+                        : completed;
+                    Context.Parent.Tell(enrichedCompleted);
                 }
-                Context.Parent.Tell(completed);
+                else
+                {
+                    Context.Parent.Tell(completed);
+                }
                 break;
 
             case TaskFailed failed:
@@ -56,8 +64,15 @@ public sealed class AgentTaskActor : UntypedActor, IWithTimers
                 {
                     Timers.Cancel($"deadline-{failed.TaskId}");
                     EmitBudgetReport(failedState, false);
+                    var enrichedFailed = failed.GraphId == null && failedState.GraphId != null
+                        ? failed with { GraphId = failedState.GraphId }
+                        : failed;
+                    Context.Parent.Tell(enrichedFailed);
                 }
-                Context.Parent.Tell(failed);
+                else
+                {
+                    Context.Parent.Tell(failed);
+                }
                 break;
 
             case TaskTimedOut timedOut:
@@ -66,7 +81,7 @@ public sealed class AgentTaskActor : UntypedActor, IWithTimers
                     _logger.LogWarning("Task {TaskId} exceeded deadline for agent {AgentId}",
                         timedOut.TaskId, _agentId);
                     EmitBudgetReport(timedOutState, true);
-                    Context.Parent.Tell(new TaskFailed(timedOut.TaskId, "Deadline exceeded"));
+                    Context.Parent.Tell(new TaskFailed(timedOut.TaskId, "Deadline exceeded", GraphId: timedOutState.GraphId));
                 }
                 break;
 
@@ -97,7 +112,7 @@ public sealed class AgentTaskActor : UntypedActor, IWithTimers
         Context.System.EventStream.Publish(report);
     }
 
-    private record TaskState(string TaskId, DateTimeOffset StartedAt, TaskBudget? Budget);
+    private record TaskState(string TaskId, DateTimeOffset StartedAt, TaskBudget? Budget, string? GraphId = null);
 }
 
 /// <summary>Sent by AgentRpcActor when token output exceeds budget.</summary>
