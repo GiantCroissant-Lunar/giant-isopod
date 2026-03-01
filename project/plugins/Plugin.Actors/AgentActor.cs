@@ -90,7 +90,7 @@ public sealed class AgentActor : UntypedActor
 
         if (_memoryFilePath != null)
         {
-            _memorySupervisor.Tell(new StoreMemory(_agentId, $"Agent {_agentId} started", "session_start"));
+            _memorySupervisor.Tell(new StoreMemory(_agentId, "session", $"Agent {_agentId} started", "session_start"));
         }
 
         _rpcActor.Tell(new StartProcess(_agentId));

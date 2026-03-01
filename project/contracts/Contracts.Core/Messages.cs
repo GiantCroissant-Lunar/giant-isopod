@@ -95,16 +95,16 @@ public record ClearWorkingMemory(string AgentId);
 
 // ── Episodic memory (per-agent, per-task run via Memvid) ──
 
-public record StoreMemory(string AgentId, string Content, string? Title = null, IDictionary<string, string>? Tags = null);
-public record SearchMemory(string AgentId, string Query, int TopK = 10);
-public record MemorySearchResult(string AgentId, IReadOnlyList<MemoryHit> Hits);
+public record StoreMemory(string AgentId, string TaskRunId, string Content, string? Title = null, IDictionary<string, string>? Tags = null);
+public record SearchMemory(string AgentId, string Query, string? TaskRunId = null, int TopK = 10);
+public record MemorySearchResult(string AgentId, string? TaskRunId, IReadOnlyList<MemoryHit> Hits);
 
 // ── Long-term knowledge (per-agent, persistent, embedded DB — future) ──
 
 public record StoreKnowledge(string AgentId, string Content, string Category, IDictionary<string, string>? Tags = null);
 public record QueryKnowledge(string AgentId, string Query, string? Category = null, int TopK = 10);
 public record KnowledgeResult(string AgentId, IReadOnlyList<KnowledgeEntry> Entries);
-public record KnowledgeEntry(string Content, string Category, double Relevance, IDictionary<string, string> Tags, DateTimeOffset StoredAt);
+public record KnowledgeEntry(string Content, string Category, double Relevance, IDictionary<string, string>? Tags, DateTimeOffset StoredAt);
 
 // ── GenUI (A2UI render requests) ──
 

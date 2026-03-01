@@ -116,10 +116,10 @@ opens/creates a task-scoped `.mv2` file. When the task ends, the file can be arc
 or its key findings promoted to Layer 4.
 
 ```csharp
-// Existing messages (scoping clarified)
-public record StoreMemory(string AgentId, string Content, string? Title = null, ...);
-public record SearchMemory(string AgentId, string Query, int TopK = 10);
-public record MemorySearchResult(string AgentId, IReadOnlyList<MemoryHit> Hits);
+// Existing messages — now scoped to task run
+public record StoreMemory(string AgentId, string TaskRunId, string Content, string? Title = null, ...);
+public record SearchMemory(string AgentId, string Query, string? TaskRunId = null, int TopK = 10);
+public record MemorySearchResult(string AgentId, string? TaskRunId, IReadOnlyList<MemoryHit> Hits);
 ```
 
 **Access pattern**: Append-heavy writing, semantic search for recall. Per-agent, per-task.
