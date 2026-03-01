@@ -12,14 +12,16 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class TaskGraphActor : UntypedActor, IWithTimers
 {
     private readonly IActorRef _dispatch;
+    private readonly IActorRef _viewport;
     private readonly ILogger<TaskGraphActor> _logger;
     private readonly Dictionary<string, GraphState> _graphs = new();
 
     public ITimerScheduler Timers { get; set; } = null!;
 
-    public TaskGraphActor(IActorRef dispatch, ILogger<TaskGraphActor> logger)
+    public TaskGraphActor(IActorRef dispatch, IActorRef viewport, ILogger<TaskGraphActor> logger)
     {
         _dispatch = dispatch;
+        _viewport = viewport;
         _logger = logger;
     }
 
@@ -56,6 +58,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
         _graphs[submit.GraphId] = state;
         Sender.Tell(new TaskGraphAccepted(submit.GraphId, submit.Nodes.Count, submit.Edges.Count));
+        _viewport.Tell(new NotifyTaskGraphSubmitted(submit.GraphId, submit.Nodes, submit.Edges));
         _logger.LogInformation("Task graph {GraphId} accepted: {Nodes} nodes, {Edges} edges",
             submit.GraphId, submit.Nodes.Count, submit.Edges.Count);
 
@@ -79,6 +82,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         if (!completed.Success)
         {
             state.Status[completed.TaskId] = TaskNodeStatus.Failed;
+            _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, completed.TaskId, TaskNodeStatus.Failed, completed.AgentId));
             _logger.LogWarning("Graph {GraphId}: task {TaskId} completed with Success=false",
                 graphId, completed.TaskId);
             CancelDependents(state, completed.TaskId);
@@ -86,6 +90,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         else
         {
             state.Status[completed.TaskId] = TaskNodeStatus.Completed;
+            _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, completed.TaskId, TaskNodeStatus.Completed, completed.AgentId));
             _logger.LogDebug("Graph {GraphId}: task {TaskId} completed", graphId, completed.TaskId);
             DispatchReadyNodes(state);
         }
@@ -99,6 +104,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             return;
 
         state.Status[failed.TaskId] = TaskNodeStatus.Failed;
+        _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, failed.TaskId, TaskNodeStatus.Failed));
         _logger.LogWarning("Graph {GraphId}: task {TaskId} failed — {Reason}",
             graphId, failed.TaskId, failed.Reason);
 
@@ -150,6 +156,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
             // All deps satisfied — mark ready and dispatch
             state.Status[taskId] = TaskNodeStatus.Dispatched;
+            _viewport.Tell(new NotifyTaskNodeStatusChanged(state.GraphId, taskId, TaskNodeStatus.Dispatched));
             _logger.LogDebug("Graph {GraphId}: dispatching task {TaskId}", state.GraphId, taskId);
 
             var request = node.Budget is not null
@@ -176,6 +183,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 if (state.Status[dep] is TaskNodeStatus.Pending or TaskNodeStatus.Ready)
                 {
                     state.Status[dep] = TaskNodeStatus.Cancelled;
+                    _viewport.Tell(new NotifyTaskNodeStatusChanged(state.GraphId, dep, TaskNodeStatus.Cancelled));
                     _logger.LogDebug("Graph {GraphId}: cancelled task {TaskId} (dependency {Dep} failed)",
                         state.GraphId, dep, failedTaskId);
                     queue.Enqueue(dep);
@@ -218,6 +226,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             kv => kv.Value == TaskNodeStatus.Completed);
 
         Timers.Cancel($"deadline-{graphId}");
+        _viewport.Tell(new TaskGraphCompleted(graphId, results));
         Context.Parent.Tell(new TaskGraphCompleted(graphId, results));
         Context.System.EventStream.Publish(new TaskGraphCompleted(graphId, results));
 

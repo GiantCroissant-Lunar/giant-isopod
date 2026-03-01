@@ -62,6 +62,18 @@ public sealed class ViewportActor : UntypedActor
             case ProcessOutput output:
                 _bridge?.PublishProcessOutput(output.AgentId, output.Line);
                 break;
+
+            case NotifyTaskGraphSubmitted submitted:
+                _bridge?.PublishTaskGraphSubmitted(submitted.GraphId, submitted.Nodes, submitted.Edges);
+                break;
+
+            case NotifyTaskNodeStatusChanged statusChanged:
+                _bridge?.PublishTaskNodeStatusChanged(statusChanged.GraphId, statusChanged.TaskId, statusChanged.Status, statusChanged.AgentId);
+                break;
+
+            case TaskGraphCompleted graphCompleted:
+                _bridge?.PublishTaskGraphCompleted(graphCompleted.GraphId, graphCompleted.Results);
+                break;
         }
     }
 }
