@@ -167,9 +167,9 @@ def search_knowledge(
     # so we over-fetch and post-filter by category in Python.
     effective_top_k = top_k * 3 if category else top_k
     rows = conn.execute(
-        """SELECT v.id, v.distance, k.content, k.category, k.tags, k.stored_at
+        """SELECT v.id, v.distance, kn.content, kn.category, kn.tags, kn.stored_at
            FROM knowledge_vec v
-           JOIN knowledge k ON k.id = v.id
+           JOIN knowledge kn ON kn.id = v.id
            WHERE v.embedding MATCH ? AND k = ?
            ORDER BY v.distance""",
         (_serialize_vec(query_embedding), effective_top_k),
