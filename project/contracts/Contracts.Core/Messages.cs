@@ -63,6 +63,11 @@ public record TaskGraphCompleted(string GraphId, IReadOnlyDictionary<string, boo
 
 public enum TaskNodeStatus { Pending, Ready, Dispatched, Completed, Failed, Cancelled }
 
+// ── Task graph viewport notifications ──
+
+public record NotifyTaskGraphSubmitted(string GraphId, IReadOnlyList<TaskNode> Nodes, IReadOnlyList<TaskEdge> Edges);
+public record NotifyTaskNodeStatusChanged(string GraphId, string TaskId, TaskNodeStatus Status, string? AgentId = null);
+
 // ── Market coordination ──
 
 public record TaskAvailable(string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities, TimeSpan BidWindow);

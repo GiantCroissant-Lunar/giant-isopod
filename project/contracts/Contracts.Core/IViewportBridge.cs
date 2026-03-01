@@ -13,6 +13,11 @@ public interface IViewportBridge
     void PublishProcessStarted(string agentId, int processId);
     void PublishProcessExited(string agentId, int exitCode);
     void PublishProcessOutput(string agentId, string line);
+
+    // Task graph visualization (default no-op for non-Godot bridges)
+    void PublishTaskGraphSubmitted(string graphId, IReadOnlyList<TaskNode> nodes, IReadOnlyList<TaskEdge> edges) { }
+    void PublishTaskNodeStatusChanged(string graphId, string taskId, TaskNodeStatus status, string? agentId = null) { }
+    void PublishTaskGraphCompleted(string graphId, IReadOnlyDictionary<string, bool> results) { }
 }
 
 public enum AgentActivityState
