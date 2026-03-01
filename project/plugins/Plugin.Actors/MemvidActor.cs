@@ -44,7 +44,7 @@ public sealed class MemvidActor : UntypedActor
                 if (failed.ReplyTo != null)
                 {
                     failed.ReplyTo.Tell(new MemorySearchResult(
-                        _agentId, null, []));
+                        failed.AgentId, null, []));
                 }
                 break;
         }
@@ -56,7 +56,7 @@ public sealed class MemvidActor : UntypedActor
             .ContinueWith(t =>
             {
                 if (t.IsFaulted)
-                    return (object)new MemvidOperationFailed(t.Exception?.GetBaseException().Message ?? "unknown error", null);
+                    return (object)new MemvidOperationFailed(store.AgentId, t.Exception?.GetBaseException().Message ?? "unknown error", null);
                 return new StoreCompleted();
             })
             .PipeTo(Self);
@@ -69,7 +69,7 @@ public sealed class MemvidActor : UntypedActor
             .ContinueWith(t =>
             {
                 if (t.IsFaulted)
-                    return (object)new MemvidOperationFailed(t.Exception?.GetBaseException().Message ?? "unknown error", replyTo);
+                    return (object)new MemvidOperationFailed(search.AgentId, t.Exception?.GetBaseException().Message ?? "unknown error", replyTo);
                 return new SearchCompleted(search.AgentId, search.TaskRunId, t.Result, replyTo);
             })
             .PipeTo(Self);
@@ -78,5 +78,5 @@ public sealed class MemvidActor : UntypedActor
     // Internal messages for PipeTo async bridging
     private sealed record StoreCompleted;
     private sealed record SearchCompleted(string AgentId, string? TaskRunId, IReadOnlyList<MemoryHit> Hits, IActorRef ReplyTo);
-    private sealed record MemvidOperationFailed(string Reason, IActorRef? ReplyTo);
+    private sealed record MemvidOperationFailed(string AgentId, string Reason, IActorRef? ReplyTo);
 }

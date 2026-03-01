@@ -44,8 +44,6 @@ public partial class TaskGraphView : Control
             RightDisconnects = false,
             MinimapEnabled = false,
         };
-        // Read-only: prevent user from moving/connecting nodes
-        _graphEdit.GuiInput += OnGraphEditInput;
         AddChild(_graphEdit);
 
         Visible = false;
@@ -57,13 +55,6 @@ public partial class TaskGraphView : Control
         {
             _graphEdit.Size = new Vector2(Size.X, Size.Y - 24);
         }
-    }
-
-    private static void OnGraphEditInput(InputEvent evt)
-    {
-        // Block user editing — this is a read-only display
-        if (evt is InputEventMouseButton)
-            evt.Dispose();
     }
 
     public void HandleGraphSubmitted(string graphId, IReadOnlyList<TaskNode> nodes, IReadOnlyList<TaskEdge> edges)
@@ -147,6 +138,8 @@ public partial class TaskGraphView : Control
         {
             Title = task.TaskId,
             Name = $"TaskNode_{task.TaskId.Replace(" ", "_")}",
+            Draggable = false,
+            Selectable = false,
             Resizable = false,
             SelfModulate = StatusColors[TaskNodeStatus.Pending],
         };
