@@ -5,9 +5,9 @@ using Microsoft.Extensions.Logging;
 namespace GiantIsopod.Plugin.Actors;
 
 /// <summary>
-/// /user/agents/{name} — owns an agent's pi process, skill registration, and memory reference.
-/// Child actors: rpc (process pipe), tasks (task lifecycle).
-/// Loads AIEOS profile for visual identity. Runs a demo activity cycle when pi is not connected.
+/// /user/agents/{name} — owns an agent's runtime, skill registration, and memory reference.
+/// Child actors: rpc (runtime pipe), tasks (task lifecycle).
+/// Loads AIEOS profile for visual identity. Runs a demo activity cycle when runtime is not connected.
 /// </summary>
 public sealed class AgentActor : UntypedActor
 {
@@ -15,7 +15,7 @@ public sealed class AgentActor : UntypedActor
     private readonly string _aieosProfilePath;
     private readonly string _skillBundleName;
     private readonly string? _memoryFilePath;
-    private readonly string? _cliProviderId;
+    private readonly string? _runtimeId;
     private readonly IActorRef _registry;
     private readonly IActorRef _memorySupervisor;
     private readonly AgentWorldConfig _config;
@@ -24,7 +24,7 @@ public sealed class AgentActor : UntypedActor
     private readonly GiantIsopod.Plugin.Mapping.ProtocolMapper _mapper = new();
 
     private IActorRef? _rpcActor;
-    private bool _piConnected;
+    private bool _runtimeConnected;
     private ICancelable? _demoTimer;
 
     private HashSet<string> _capabilities = new();
@@ -52,13 +52,13 @@ public sealed class AgentActor : UntypedActor
         IActorRef memorySupervisor,
         AgentWorldConfig config,
         ILoggerFactory loggerFactory,
-        string? cliProviderId = null)
+        string? runtimeId = null)
     {
         _agentId = agentId;
         _aieosProfilePath = aieosProfilePath;
         _skillBundleName = skillBundleName;
         _memoryFilePath = memoryFilePath;
-        _cliProviderId = cliProviderId;
+        _runtimeId = runtimeId;
         _registry = registry;
         _memorySupervisor = memorySupervisor;
         _config = config;
@@ -69,7 +69,7 @@ public sealed class AgentActor : UntypedActor
     protected override void PreStart()
     {
         _rpcActor = Context.ActorOf(
-            Props.Create(() => new AgentRpcActor(_agentId, _config, _cliProviderId)),
+            Props.Create(() => new AgentRpcActor(_agentId, _config, _runtimeId)),
             "rpc");
 
         Context.ActorOf(
@@ -93,10 +93,10 @@ public sealed class AgentActor : UntypedActor
             _memorySupervisor.Tell(new StoreMemory(_agentId, "session", $"Agent {_agentId} started", "session_start"));
         }
 
-        _rpcActor.Tell(new StartProcess(_agentId));
+        _rpcActor.Tell(new StartRuntime(_agentId));
         _logger.LogInformation("Agent {AgentId} started (bundle: {Bundle})", _agentId, _skillBundleName);
 
-        // Start demo activity cycle (replaced by real pi events when connected)
+        // Start demo activity cycle (replaced by real runtime events when connected)
         StartDemoTimer();
     }
 
@@ -115,18 +115,18 @@ public sealed class AgentActor : UntypedActor
                 _rpcActor?.Forward(prompt);
                 break;
 
-            case ProcessStarted started when started.ProcessId > 0:
-                _piConnected = true;
+            case RuntimeStarted started when started.ProcessId > 0:
+                _runtimeConnected = true;
                 _demoTimer?.Cancel();
                 Context.System.ActorSelection("/user/viewport")
-                    .Tell(new ProcessStarted(_agentId, started.ProcessId));
-                _logger.LogInformation("Agent {AgentId} pi connected (pid: {Pid})", _agentId, started.ProcessId);
+                    .Tell(new RuntimeStarted(_agentId, started.ProcessId));
+                _logger.LogInformation("Agent {AgentId} runtime connected (pid: {Pid})", _agentId, started.ProcessId);
                 break;
 
-            case ProcessEvent evt:
+            case RuntimeEvent evt:
                 // Forward raw text to terminal renderer
                 Context.System.ActorSelection("/user/viewport")
-                    .Tell(new ProcessOutput(_agentId, evt.RawJson));
+                    .Tell(new RuntimeOutput(_agentId, evt.RawJson));
                 // Simple heuristic for activity state from text output
                 var activityState = MapTextToState(evt.RawJson);
                 if (activityState != AgentActivityState.Idle)
@@ -136,13 +136,13 @@ public sealed class AgentActor : UntypedActor
                 }
                 break;
 
-            case ProcessExited exited:
-                _piConnected = false;
-                _logger.LogWarning("Agent {AgentId} process exited (code: {Code})", _agentId, exited.ExitCode);
+            case RuntimeExited exited:
+                _runtimeConnected = false;
+                _logger.LogWarning("Agent {AgentId} runtime exited (code: {Code})", _agentId, exited.ExitCode);
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new AgentStateChanged(_agentId, AgentActivityState.Idle));
                 Context.System.ActorSelection("/user/viewport")
-                    .Tell(new ProcessExited(_agentId, exited.ExitCode));
+                    .Tell(new RuntimeExited(_agentId, exited.ExitCode));
                 StartDemoTimer();
                 break;
 
@@ -189,7 +189,7 @@ public sealed class AgentActor : UntypedActor
                 break;
 
             case DemoTick tick:
-                if (!_piConnected)
+                if (!_runtimeConnected)
                 {
                     // Visual state cycling only — no fake console output
                     var state = DemoStates[tick.Index % DemoStates.Length];

@@ -62,7 +62,7 @@ public sealed class AgentSupervisorActor : UntypedActor
                         _memorySupervisor,
                         _config,
                         _loggerFactory,
-                        spawn.CliProviderId)),
+                        spawn.RuntimeId)),
                     spawn.AgentId);
 
                 _agents[spawn.AgentId] = agentRef;

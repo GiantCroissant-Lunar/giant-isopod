@@ -14,7 +14,7 @@ public sealed class AgentRpcActor : UntypedActor
     private readonly string _agentId;
     private readonly string? _cliProviderId;
     private readonly AgentWorldConfig _config;
-    private IAgentProcess? _process;
+    private IAgentRuntime? _process;
     private CancellationTokenSource? _cts;
 
     // Per-task token budget tracking (supports concurrent tasks)
@@ -32,15 +32,15 @@ public sealed class AgentRpcActor : UntypedActor
     {
         switch (message)
         {
-            case StartProcess:
-                StartPiProcess();
+            case StartRuntime:
+                StartAgentRuntime();
                 break;
 
             case SendPrompt prompt:
-                _ = SendToPiAsync(prompt.Message);
+                _ = SendToRuntimeAsync(prompt.Message);
                 break;
 
-            case ProcessEvent evt:
+            case RuntimeEvent evt:
                 TrackTokenUsage(evt.RawJson);
                 Context.Parent.Tell(evt);
                 break;
@@ -76,7 +76,7 @@ public sealed class AgentRpcActor : UntypedActor
         }
     }
 
-    private void StartPiProcess()
+    private void StartAgentRuntime()
     {
         _cts = new CancellationTokenSource();
 
@@ -93,7 +93,7 @@ public sealed class AgentRpcActor : UntypedActor
 
         _ = Task.Run(async () =>
         {
-            parent.Tell(new ProcessStarted(_agentId, System.Environment.ProcessId));
+            parent.Tell(new RuntimeStarted(_agentId, System.Environment.ProcessId));
 
             bool started = false;
             try
@@ -106,25 +106,25 @@ public sealed class AgentRpcActor : UntypedActor
                         started = true;
 
                     if (!string.IsNullOrWhiteSpace(line))
-                        self.Tell(new ProcessEvent(_agentId, line));
+                        self.Tell(new RuntimeEvent(_agentId, line));
                 }
 
-                parent.Tell(new ProcessExited(_agentId, 0));
+                parent.Tell(new RuntimeExited(_agentId, 0));
             }
             catch (OperationCanceledException)
             {
                 if (started)
-                    parent.Tell(new ProcessExited(_agentId, -1));
+                    parent.Tell(new RuntimeExited(_agentId, -1));
             }
             catch (Exception ex)
             {
-                self.Tell(new ProcessEvent(_agentId, $"[ERROR] CLI failed: {ex.Message}"));
-                parent.Tell(new ProcessExited(_agentId, -1));
+                self.Tell(new RuntimeEvent(_agentId, $"[ERROR] CLI failed: {ex.Message}"));
+                parent.Tell(new RuntimeExited(_agentId, -1));
             }
         }, ct);
     }
 
-    private async Task SendToPiAsync(string message)
+    private async Task SendToRuntimeAsync(string message)
     {
         if (_process is { IsRunning: true })
         {

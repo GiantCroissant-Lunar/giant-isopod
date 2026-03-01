@@ -11,7 +11,7 @@ namespace GiantIsopod.Plugin.Process;
 /// Resolves {prompt}, {provider}, {model} placeholders in args at runtime.
 /// Streams stdout/stderr line-by-line via CliWrap ListenAsync.
 /// </summary>
-public sealed class CliAgentProcess : IAgentProcess
+public sealed class CliAgentProcess : IAgentRuntime
 {
     private readonly CliProviderEntry _provider;
     private readonly string _workingDirectory;

@@ -249,7 +249,7 @@ public partial class Main : Node2D
 
         _logger?.LogInformation("Spawning agent: {AgentId} (cli: {Provider})", agentId, cliProviderId);
         _agentWorld.AgentSupervisor.Tell(
-            new SpawnAgent(agentId, profileJson, "builder", CliProviderId: cliProviderId),
+            new SpawnAgent(agentId, profileJson, "builder", RuntimeId: cliProviderId),
             Akka.Actor.ActorRefs.NoSender);
     }
 

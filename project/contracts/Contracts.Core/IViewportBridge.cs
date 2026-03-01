@@ -10,9 +10,9 @@ public interface IViewportBridge
     void PublishAgentSpawned(string agentId, AgentVisualInfo visualInfo);
     void PublishAgentDespawned(string agentId);
     void PublishGenUIRequest(string agentId, string a2uiJson);
-    void PublishProcessStarted(string agentId, int processId);
-    void PublishProcessExited(string agentId, int exitCode);
-    void PublishProcessOutput(string agentId, string line);
+    void PublishRuntimeStarted(string agentId, int processId);
+    void PublishRuntimeExited(string agentId, int exitCode);
+    void PublishRuntimeOutput(string agentId, string line);
 
     // Task graph visualization (default no-op for non-Godot bridges)
     void PublishTaskGraphSubmitted(string graphId, IReadOnlyList<TaskNode> nodes, IReadOnlyList<TaskEdge> edges) { }

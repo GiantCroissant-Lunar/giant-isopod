@@ -2,18 +2,18 @@ namespace GiantIsopod.Contracts.Core;
 
 // ── Agent lifecycle ──
 
-public record SpawnAgent(string AgentId, string AieosProfilePath, string SkillBundleName, string? MemoryFilePath = null, string? CliProviderId = null);
+public record SpawnAgent(string AgentId, string AieosProfilePath, string SkillBundleName, string? MemoryFilePath = null, string? RuntimeId = null, ModelSpec? Model = null);
 public record AgentSpawned(string AgentId);
 public record StopAgent(string AgentId);
 public record AgentStopped(string AgentId);
 
-// ── Agent process ──
+// ── Agent runtime ──
 
-public record StartProcess(string AgentId);
-public record ProcessStarted(string AgentId, int ProcessId);
-public record ProcessEvent(string AgentId, string RawJson);
-public record ProcessOutput(string AgentId, string Line);
-public record ProcessExited(string AgentId, int ExitCode);
+public record StartRuntime(string AgentId);
+public record RuntimeStarted(string AgentId, int ProcessId);
+public record RuntimeEvent(string AgentId, string RawJson);
+public record RuntimeOutput(string AgentId, string Line);
+public record RuntimeExited(string AgentId, int ExitCode);
 public record SendPrompt(string AgentId, string Message);
 
 // ── Agent state (actor → viewport) ──

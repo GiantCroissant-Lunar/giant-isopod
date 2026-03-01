@@ -1,9 +1,9 @@
 namespace GiantIsopod.Contracts.Core;
 
 /// <summary>
-/// Manages a single agent CLI process (e.g., pi --mode rpc).
+/// Manages a single agent runtime (CLI subprocess, API client, SDK session, etc.).
 /// </summary>
-public interface IAgentProcess : IAsyncDisposable
+public interface IAgentRuntime : IAsyncDisposable
 {
     string AgentId { get; }
     bool IsRunning { get; }

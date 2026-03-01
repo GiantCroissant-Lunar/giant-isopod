@@ -51,16 +51,16 @@ public sealed class ViewportActor : UntypedActor
                 // Could extend IViewportBridge for memory indicators
                 break;
 
-            case ProcessStarted started:
-                _bridge?.PublishProcessStarted(started.AgentId, started.ProcessId);
+            case RuntimeStarted started:
+                _bridge?.PublishRuntimeStarted(started.AgentId, started.ProcessId);
                 break;
 
-            case ProcessExited exited:
-                _bridge?.PublishProcessExited(exited.AgentId, exited.ExitCode);
+            case RuntimeExited exited:
+                _bridge?.PublishRuntimeExited(exited.AgentId, exited.ExitCode);
                 break;
 
-            case ProcessOutput output:
-                _bridge?.PublishProcessOutput(output.AgentId, output.Line);
+            case RuntimeOutput output:
+                _bridge?.PublishRuntimeOutput(output.AgentId, output.Line);
                 break;
 
             case NotifyTaskGraphSubmitted submitted:

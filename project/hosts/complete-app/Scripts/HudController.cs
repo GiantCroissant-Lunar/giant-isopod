@@ -204,20 +204,20 @@ public partial class HudController : Control
             case GenUIRequestEvent genui:
                 ForwardGenUI(genui.AgentId, genui.A2UIJson);
                 break;
-            case ProcessStartedEvent started:
+            case RuntimeStartedEvent started:
                 _activeProcesses.Add(started.AgentId);
                 UpdateProcessCount();
                 if (_entries.TryGetValue(started.AgentId, out var se))
                     se.SetConnected(true);
                 break;
-            case ProcessExitedEvent exited:
+            case RuntimeExitedEvent exited:
                 _activeProcesses.Remove(exited.AgentId);
                 UpdateProcessCount();
                 if (_entries.TryGetValue(exited.AgentId, out var ee))
                     ee.SetConnected(false);
                 break;
 
-            case ProcessOutputEvent output:
+            case RuntimeOutputEvent output:
                 AppendConsoleOutput(output.AgentId, output.Line);
                 break;
         }

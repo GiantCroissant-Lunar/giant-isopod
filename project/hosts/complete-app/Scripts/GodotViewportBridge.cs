@@ -32,19 +32,19 @@ public sealed class GodotViewportBridge : IViewportBridge
         _eventQueue.Enqueue(new GenUIRequestEvent(agentId, a2uiJson));
     }
 
-    public void PublishProcessStarted(string agentId, int processId)
+    public void PublishRuntimeStarted(string agentId, int processId)
     {
-        _eventQueue.Enqueue(new ProcessStartedEvent(agentId, processId));
+        _eventQueue.Enqueue(new RuntimeStartedEvent(agentId, processId));
     }
 
-    public void PublishProcessExited(string agentId, int exitCode)
+    public void PublishRuntimeExited(string agentId, int exitCode)
     {
-        _eventQueue.Enqueue(new ProcessExitedEvent(agentId, exitCode));
+        _eventQueue.Enqueue(new RuntimeExitedEvent(agentId, exitCode));
     }
 
-    public void PublishProcessOutput(string agentId, string line)
+    public void PublishRuntimeOutput(string agentId, string line)
     {
-        _eventQueue.Enqueue(new ProcessOutputEvent(agentId, line));
+        _eventQueue.Enqueue(new RuntimeOutputEvent(agentId, line));
     }
 
     public void PublishTaskGraphSubmitted(string graphId, IReadOnlyList<TaskNode> nodes, IReadOnlyList<TaskEdge> edges)
@@ -77,9 +77,9 @@ public record StateChangedEvent(string AgentId, AgentActivityState State) : View
 public record AgentSpawnedEvent(string AgentId, AgentVisualInfo VisualInfo) : ViewportEvent(AgentId);
 public record AgentDespawnedEvent(string AgentId) : ViewportEvent(AgentId);
 public record GenUIRequestEvent(string AgentId, string A2UIJson) : ViewportEvent(AgentId);
-public record ProcessStartedEvent(string AgentId, int ProcessId) : ViewportEvent(AgentId);
-public record ProcessExitedEvent(string AgentId, int ExitCode) : ViewportEvent(AgentId);
-public record ProcessOutputEvent(string AgentId, string Line) : ViewportEvent(AgentId);
+public record RuntimeStartedEvent(string AgentId, int ProcessId) : ViewportEvent(AgentId);
+public record RuntimeExitedEvent(string AgentId, int ExitCode) : ViewportEvent(AgentId);
+public record RuntimeOutputEvent(string AgentId, string Line) : ViewportEvent(AgentId);
 
 // Task graph visualization events (AgentId = "" since these are graph-level, not agent-level)
 public record TaskGraphSubmittedEvent(string GraphId, IReadOnlyList<TaskNode> Nodes, IReadOnlyList<TaskEdge> Edges) : ViewportEvent("");
