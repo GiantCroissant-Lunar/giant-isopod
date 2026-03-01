@@ -89,6 +89,19 @@ tasks:
       - cmd: npm install
         dir: .agent/skills/agent-browser
 
+  # ── Tests ──
+
+  test:
+    desc: Run all .NET tests
+    cmds:
+      - dotnet test {{.SLN}} --nologo --verbosity minimal
+
+  test:py:
+    desc: Run Python memory-sidecar tests
+    dir: memory-sidecar
+    cmds:
+      - pytest --tb=short -q
+
   # ── HUD Generation (boom-hud) ──
 
   hud:generate:
