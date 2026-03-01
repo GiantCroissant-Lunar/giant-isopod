@@ -1,13 +1,13 @@
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
 using Microsoft.Extensions.Logging;
+using Plate.ModernSatsuma;
 
 namespace GiantIsopod.Plugin.Actors;
 
 /// <summary>
 /// /user/taskgraph — owns task DAGs, validates acyclicity, dispatches ready nodes.
-/// Currently uses an internal adjacency list; will migrate to ModernSatsuma once
-/// the TopologicalSort algorithm is available (RFC-007).
+/// Uses Plate.ModernSatsuma TopologicalSort (RFC-007) for cycle detection.
 /// </summary>
 public sealed class TaskGraphActor : UntypedActor, IWithTimers
 {
@@ -204,20 +204,24 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
         /// <summary>
         /// Builds graph state from a SubmitTaskGraph message.
-        /// Returns null if the graph contains a cycle (Kahn's algorithm detects this).
+        /// Uses Plate.ModernSatsuma TopologicalSort for cycle detection (RFC-007).
+        /// Returns null if the graph contains a cycle.
         /// </summary>
         public static GraphState? TryCreate(SubmitTaskGraph submit, ILogger logger)
         {
             var nodes = submit.Nodes.ToDictionary(n => n.TaskId);
             var incoming = new Dictionary<string, List<string>>();
             var outgoing = new Dictionary<string, List<string>>();
-            var inDegree = new Dictionary<string, int>();
+
+            // Build ModernSatsuma graph for cycle detection
+            var graph = new CustomGraph();
+            var nodeMap = new Dictionary<string, Node>();
 
             foreach (var node in submit.Nodes)
             {
                 incoming[node.TaskId] = new List<string>();
                 outgoing[node.TaskId] = new List<string>();
-                inDegree[node.TaskId] = 0;
+                nodeMap[node.TaskId] = graph.AddNode();
             }
 
             foreach (var edge in submit.Edges)
@@ -231,33 +235,20 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
                 outgoing[edge.FromTaskId].Add(edge.ToTaskId);
                 incoming[edge.ToTaskId].Add(edge.FromTaskId);
-                inDegree[edge.ToTaskId]++;
+                graph.AddArc(nodeMap[edge.FromTaskId], nodeMap[edge.ToTaskId], Directedness.Directed);
             }
 
-            // Kahn's algorithm for cycle detection
-            var queue = new Queue<string>();
-            foreach (var (taskId, degree) in inDegree)
+            // Use ModernSatsuma TopologicalSort for cycle detection
+            var topoSort = new Plate.ModernSatsuma.TopologicalSort(graph);
+            if (!topoSort.IsAcyclic)
             {
-                if (degree == 0) queue.Enqueue(taskId);
-            }
-
-            var visited = 0;
-            while (queue.Count > 0)
-            {
-                var current = queue.Dequeue();
-                visited++;
-                foreach (var dep in outgoing[current])
-                {
-                    inDegree[dep]--;
-                    if (inDegree[dep] == 0) queue.Enqueue(dep);
-                }
-            }
-
-            if (visited != nodes.Count)
-            {
-                var cyclicNodes = inDegree.Where(kv => kv.Value > 0).Select(kv => kv.Key);
+                // Map cyclic ModernSatsuma nodes back to task IDs
+                var reverseMap = nodeMap.ToDictionary(kv => kv.Value.Id, kv => kv.Key);
+                var cyclicTaskIds = topoSort.CyclicNodes
+                    .Where(n => reverseMap.ContainsKey(n.Id))
+                    .Select(n => reverseMap[n.Id]);
                 logger.LogWarning("Graph {GraphId} rejected: cycle detected involving [{Nodes}]",
-                    submit.GraphId, string.Join(", ", cyclicNodes));
+                    submit.GraphId, string.Join(", ", cyclicTaskIds));
                 return null;
             }
 
