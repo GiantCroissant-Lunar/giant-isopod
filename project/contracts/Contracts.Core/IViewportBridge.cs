@@ -14,6 +14,9 @@ public interface IViewportBridge
     void PublishRuntimeExited(string agentId, int exitCode);
     void PublishRuntimeOutput(string agentId, string line);
 
+    // AG-UI event streaming (default no-op for non-Godot bridges)
+    void PublishAgUiEvent(string agentId, object agUiEvent) { }
+
     // Task graph visualization (default no-op for non-Godot bridges)
     void PublishTaskGraphSubmitted(string graphId, IReadOnlyList<TaskNode> nodes, IReadOnlyList<TaskEdge> edges) { }
     void PublishTaskNodeStatusChanged(string graphId, string taskId, TaskNodeStatus status, string? agentId = null) { }

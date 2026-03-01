@@ -47,6 +47,17 @@ public sealed class GodotViewportBridge : IViewportBridge
         _eventQueue.Enqueue(new RuntimeOutputEvent(agentId, line));
     }
 
+    public void PublishAgUiEvent(string agentId, object agUiEvent)
+    {
+        _eventQueue.Enqueue(new AgUiViewportEvent(agentId, agUiEvent));
+    }
+
+    /// <summary>
+    /// Callback for GenUI actions from GDScript → C#.
+    /// Set by Main.cs to forward actions into the actor system.
+    /// </summary>
+    public Action<string, string, string, string>? OnGenUIAction { get; set; }
+
     public void PublishTaskGraphSubmitted(string graphId, IReadOnlyList<TaskNode> nodes, IReadOnlyList<TaskEdge> edges)
     {
         _eventQueue.Enqueue(new TaskGraphSubmittedEvent(graphId, nodes, edges));
@@ -80,6 +91,12 @@ public record GenUIRequestEvent(string AgentId, string A2UIJson) : ViewportEvent
 public record RuntimeStartedEvent(string AgentId, int ProcessId) : ViewportEvent(AgentId);
 public record RuntimeExitedEvent(string AgentId, int ExitCode) : ViewportEvent(AgentId);
 public record RuntimeOutputEvent(string AgentId, string Line) : ViewportEvent(AgentId);
+
+// AG-UI event (agentId-scoped)
+public record AgUiViewportEvent(string AgentId, object Event) : ViewportEvent(AgentId);
+
+// GenUI action from GDScript back to C# (agentId, surfaceId, actionId, componentId)
+public record GenUIActionEvent(string AgentId, string SurfaceId, string ActionId, string ComponentId) : ViewportEvent(AgentId);
 
 // Task graph visualization events (AgentId = "" since these are graph-level, not agent-level)
 public record TaskGraphSubmittedEvent(string GraphId, IReadOnlyList<TaskNode> Nodes, IReadOnlyList<TaskEdge> Edges) : ViewportEvent("");

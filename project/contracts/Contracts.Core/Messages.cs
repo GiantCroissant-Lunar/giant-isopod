@@ -115,6 +115,23 @@ public record KnowledgeEntry(string Content, string Category, double Relevance, 
 
 public record RenderGenUI(string AgentId, string A2UIJson);
 
+// ── GenUI actions (UI → agent) ──
+
+public record GenUIAction(string AgentId, string SurfaceId, string ActionId, string ComponentId, IReadOnlyDictionary<string, string>? Payload = null);
+
+// ── AG-UI events (agent → viewport) ──
+
+public record AgUiEvent(string AgentId, object Event);
+
+// ── A2A (Agent-to-Agent) ──
+
+public record A2ASendTask(string TaskId, string TargetAgentId, string Description, string? PayloadJson = null);
+public record A2AGetTask(string TaskId);
+public record A2ATaskResult(string TaskId, string StatusJson);
+public record QueryAgentCards(IReadOnlySet<string>? RequiredCapabilities = null);
+public record AgentCardsResult(IReadOnlyList<AgentCardInfo> Cards);
+public record AgentCardInfo(string AgentId, string Name, string? Description = null, IReadOnlyList<string>? Skills = null);
+
 // ── Viewport bridge ──
 
 public record SetViewportBridge(IViewportBridge Bridge);
