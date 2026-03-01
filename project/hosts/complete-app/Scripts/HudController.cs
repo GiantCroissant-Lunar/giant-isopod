@@ -441,21 +441,30 @@ public partial class HudController : Control
         Control? instance = null;
         bool usingFallback = false;
 
-        // Check if GodotXterm native lib is available by testing if the Terminal class exists
-        bool godotXtermAvailable = ClassDB.ClassExists("Terminal");
-
-        if (godotXtermAvailable)
+        try
         {
-            try
+            var scene = GD.Load<PackedScene>("res://Scenes/AgentTerminal.tscn");
+            if (scene != null)
             {
-                var scene = GD.Load<PackedScene>("res://Scenes/AgentTerminal.tscn");
-                if (scene != null)
-                    instance = scene.Instantiate<Control>();
+                var candidate = scene.Instantiate<Control>();
+                // Verify the Terminal child node has a working write() method.
+                // When GodotXterm native lib is missing, the Terminal node exists
+                // but its type falls back to a base class without write().
+                var terminalNode = candidate.GetNodeOrNull("Terminal");
+                if (terminalNode != null && terminalNode.HasMethod("write"))
+                {
+                    instance = candidate;
+                }
+                else
+                {
+                    candidate.QueueFree();
+                    DebugLog($"GodotXterm Terminal node missing write() method — native lib not loaded");
+                }
             }
-            catch (Exception ex)
-            {
-                DebugLog($"GodotXterm terminal failed for {agentId}: {ex.Message}");
-            }
+        }
+        catch (Exception ex)
+        {
+            DebugLog($"GodotXterm terminal failed for {agentId}: {ex.Message}");
         }
 
         if (instance == null)
@@ -463,7 +472,7 @@ public partial class HudController : Control
             // Fallback: RichTextLabel-based console (works without GodotXterm native libs)
             instance = CreateFallbackTerminal(agentId);
             usingFallback = true;
-            DebugLog($"Using fallback RichTextLabel terminal for {agentId} (GodotXterm available: {godotXtermAvailable})");
+            DebugLog($"Using fallback RichTextLabel terminal for {agentId}");
         }
 
         instance.Visible = false;
