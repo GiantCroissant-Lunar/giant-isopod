@@ -1,0 +1,44 @@
+{
+  "type": "createSurface",
+  "surfaceId": "demo-form",
+  "components": [
+    {
+      "id": "title",
+      "type": "label",
+      "props": { "text": "Task Submission Form", "fontSize": "18" }
+    },
+    {
+      "id": "desc-label",
+      "type": "label",
+      "props": { "text": "Task Description:" }
+    },
+    {
+      "id": "desc-input",
+      "type": "text_input",
+      "props": { "placeholder": "Enter task description..." },
+      "dataBinding": "/taskDescription"
+    },
+    {
+      "id": "priority-check",
+      "type": "checkbox",
+      "props": { "label": "High Priority" },
+      "dataBinding": "/highPriority"
+    },
+    {
+      "id": "sep",
+      "type": "separator"
+    },
+    {
+      "id": "submit-btn",
+      "type": "button",
+      "props": { "text": "Submit Task" },
+      "actions": [
+        { "id": "submit", "type": "click", "label": "Submit" }
+      ]
+    }
+  ],
+  "dataModel": {
+    "taskDescription": "",
+    "highPriority": false
+  }
+}

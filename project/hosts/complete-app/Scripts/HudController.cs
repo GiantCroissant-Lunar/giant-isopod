@@ -11,6 +11,7 @@ public partial class HudController : Control
 {
     public event Action<string>? OnSpawnRequested;
     public event Action<string>? OnRemoveRequested;
+    public event Action<string, string, string, string>? OnGenUIActionTriggered;
 
     // Scene paths
     private const string SwarmHudScene = "res://Scenes/Hud/SwarmhudView.tscn";
@@ -161,6 +162,33 @@ public partial class HudController : Control
             case RuntimeOutputEvent output:
                 _terminalManager.AppendOutput(output.AgentId, output.Line, _showingTerminal, _selectedAgentId);
                 break;
+            case AgUiViewportEvent agui:
+                HandleAgUiEvent(agui.AgentId, agui.Event);
+                break;
+        }
+    }
+
+    private void HandleAgUiEvent(string agentId, object evt)
+    {
+        // Log tool call events to console for visibility
+        var evtType = evt.GetType().Name;
+        switch (evtType)
+        {
+            case "ToolCallStartEvent":
+                var toolName = evt.GetType().GetProperty("ToolName")?.GetValue(evt)?.ToString() ?? "?";
+                _terminalManager.AppendOutput(agentId, $"[AG-UI] Tool call: {toolName}", _showingTerminal, _selectedAgentId);
+                break;
+            case "TextMessageContentEvent":
+                var delta = evt.GetType().GetProperty("Delta")?.GetValue(evt)?.ToString() ?? "";
+                if (!string.IsNullOrEmpty(delta))
+                    _terminalManager.AppendOutput(agentId, delta, _showingTerminal, _selectedAgentId);
+                break;
+            case "RunStartedEvent":
+                _terminalManager.AppendOutput(agentId, "[AG-UI] Run started", _showingTerminal, _selectedAgentId);
+                break;
+            case "RunFinishedEvent":
+                _terminalManager.AppendOutput(agentId, "[AG-UI] Run finished", _showingTerminal, _selectedAgentId);
+                break;
         }
     }
 
@@ -222,7 +250,21 @@ public partial class HudController : Control
     private void ForwardGenUI(string agentId, string a2uiJson)
     {
         if (_genUIHost?.HasMethod("render_a2ui") == true)
+        {
+            // Connect action_triggered signal if not already connected
+            if (!_genUIHost.IsConnected("action_triggered", Callable.From<string, string, string, string>(HandleGenUIAction)))
+            {
+                _genUIHost.Connect("action_triggered",
+                    Callable.From<string, string, string, string>(HandleGenUIAction));
+            }
             _genUIHost.Call("render_a2ui", agentId, a2uiJson);
+        }
+    }
+
+    private void HandleGenUIAction(string agentId, string surfaceId, string actionId, string componentId)
+    {
+        GD.Print($"[GenUI] Action: agent={agentId} surface={surfaceId} action={actionId} component={componentId}");
+        OnGenUIActionTriggered?.Invoke(agentId, surfaceId, actionId, componentId);
     }
 
     private string GetSelectedProviderId()

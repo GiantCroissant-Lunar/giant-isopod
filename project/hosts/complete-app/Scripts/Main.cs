@@ -91,6 +91,7 @@ public partial class Main : Node2D
         // Wire HUD buttons
         _hud.OnSpawnRequested += HandleSpawnRequest;
         _hud.OnRemoveRequested += HandleRemoveRequest;
+        _hud.OnGenUIActionTriggered += HandleGenUIAction;
 
         // Populate runtime dropdown
         _hud.SetRuntimes(runtimes.All);
@@ -336,6 +337,10 @@ public partial class Main : Node2D
                     _logger?.LogInformation("HUD reloaded (F6)");
                     GetViewport().SetInputAsHandled();
                     break;
+                case Key.F7:
+                    SubmitDemoGenUI();
+                    GetViewport().SetInputAsHandled();
+                    break;
             }
         }
     }
@@ -382,12 +387,45 @@ public partial class Main : Node2D
             Akka.Actor.ActorRefs.NoSender);
     }
 
+    private void HandleGenUIAction(string agentId, string surfaceId, string actionId, string componentId)
+    {
+        _logger?.LogInformation("[GenUI] Action from {AgentId}: surface={SurfaceId} action={ActionId} component={ComponentId}",
+            agentId, surfaceId, actionId, componentId);
+
+        // Forward to agent actor as GenUIAction message
+        if (_agentWorld != null)
+        {
+            _agentWorld.AgentSupervisor.Tell(
+                new GenUIAction(agentId, surfaceId, actionId, componentId),
+                Akka.Actor.ActorRefs.NoSender);
+        }
+    }
+
+    private void SubmitDemoGenUI()
+    {
+        // Load demo A2UI form JSON and render it
+        const string demoPath = "res://Data/Demo/demo-a2ui-form.json";
+        using var file = Godot.FileAccess.Open(demoPath, Godot.FileAccess.ModeFlags.Read);
+        if (file == null)
+        {
+            _logger?.LogWarning("Demo A2UI form not found at {Path}", demoPath);
+            return;
+        }
+
+        var json = file.GetAsText();
+        _logger?.LogInformation("Rendering demo A2UI form (F7)");
+
+        // Send through viewport bridge so it goes through normal HUD event flow
+        _viewportBridge?.PublishGenUIRequest("demo-agent", json);
+    }
+
     public override void _ExitTree()
     {
         if (_hud != null)
         {
             _hud.OnSpawnRequested -= HandleSpawnRequest;
             _hud.OnRemoveRequested -= HandleRemoveRequest;
+            _hud.OnGenUIActionTriggered -= HandleGenUIAction;
         }
         foreach (var sprite in _sprites.Values)
             sprite.AgentClicked -= OnAgentClicked;
