@@ -31,7 +31,7 @@ public sealed class MemvidActor : UntypedActor
                 // TODO: Call MemvidClient.SearchAsync via CliWrap
                 // memvid search --file {_mv2Path} "{search.Query}" --json -n {search.TopK}
                 // Parse response, reply with MemorySearchResult
-                Sender.Tell(new MemorySearchResult(search.AgentId, []));
+                Sender.Tell(new MemorySearchResult(search.AgentId, search.TaskRunId, []));
                 break;
         }
     }
