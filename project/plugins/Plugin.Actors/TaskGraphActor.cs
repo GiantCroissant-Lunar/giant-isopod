@@ -47,10 +47,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
     private void HandleSubmit(SubmitTaskGraph submit)
     {
-        var state = GraphState.TryCreate(submit, _logger);
+        var (state, rejectReason) = GraphState.TryCreate(submit, _logger);
         if (state is null)
         {
-            Sender.Tell(new TaskGraphRejected(submit.GraphId, "Graph contains a cycle"));
+            Sender.Tell(new TaskGraphRejected(submit.GraphId, rejectReason!));
             return;
         }
 
@@ -77,10 +77,21 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         {
             if (!state.Nodes.ContainsKey(completed.TaskId)) continue;
 
-            state.Status[completed.TaskId] = TaskNodeStatus.Completed;
-            _logger.LogDebug("Graph {GraphId}: task {TaskId} completed", graphId, completed.TaskId);
+            if (!completed.Success)
+            {
+                // Treat unsuccessful completion as failure
+                state.Status[completed.TaskId] = TaskNodeStatus.Failed;
+                _logger.LogWarning("Graph {GraphId}: task {TaskId} completed with Success=false",
+                    graphId, completed.TaskId);
+                CancelDependents(state, completed.TaskId);
+            }
+            else
+            {
+                state.Status[completed.TaskId] = TaskNodeStatus.Completed;
+                _logger.LogDebug("Graph {GraphId}: task {TaskId} completed", graphId, completed.TaskId);
+                DispatchReadyNodes(state);
+            }
 
-            DispatchReadyNodes(state);
             CheckGraphCompletion(graphId, state);
             return;
         }
@@ -157,9 +168,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
         _logger.LogWarning("Graph {GraphId} deadline exceeded — aborting all pending tasks", timedOut.GraphId);
 
-        // Cancel all non-terminal nodes
-        foreach (var (taskId, status) in state.Status)
+        // Cancel all non-terminal nodes (snapshot keys to avoid mutation during iteration)
+        foreach (var taskId in state.Status.Keys.ToList())
         {
+            var status = state.Status[taskId];
             if (status is TaskNodeStatus.Pending or TaskNodeStatus.Ready or TaskNodeStatus.Dispatched)
             {
                 state.Status[taskId] = status == TaskNodeStatus.Dispatched
@@ -182,8 +194,8 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             kv => kv.Key,
             kv => kv.Value == TaskNodeStatus.Completed);
 
+        Timers.Cancel($"deadline-{graphId}");
         Context.Parent.Tell(new TaskGraphCompleted(graphId, results));
-        // Also publish on EventStream for any listeners
         Context.System.EventStream.Publish(new TaskGraphCompleted(graphId, results));
 
         _graphs.Remove(graphId);
@@ -205,10 +217,19 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         /// <summary>
         /// Builds graph state from a SubmitTaskGraph message.
         /// Uses Plate.ModernSatsuma TopologicalSort for cycle detection (RFC-007).
-        /// Returns null if the graph contains a cycle.
+        /// Returns (null, reason) if the graph is invalid.
         /// </summary>
-        public static GraphState? TryCreate(SubmitTaskGraph submit, ILogger logger)
+        public static (GraphState? State, string? RejectReason) TryCreate(SubmitTaskGraph submit, ILogger logger)
         {
+            // Detect duplicate TaskIds before building (ToDictionary would throw)
+            var duplicates = submit.Nodes.GroupBy(n => n.TaskId).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+            if (duplicates.Count > 0)
+            {
+                logger.LogWarning("Graph {GraphId} rejected: duplicate TaskIds [{Ids}]",
+                    submit.GraphId, string.Join(", ", duplicates));
+                return (null, $"Duplicate TaskIds: {string.Join(", ", duplicates)}");
+            }
+
             var nodes = submit.Nodes.ToDictionary(n => n.TaskId);
             var incoming = new Dictionary<string, List<string>>();
             var outgoing = new Dictionary<string, List<string>>();
@@ -249,19 +270,19 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                     .Select(n => reverseMap[n.Id]);
                 logger.LogWarning("Graph {GraphId} rejected: cycle detected involving [{Nodes}]",
                     submit.GraphId, string.Join(", ", cyclicTaskIds));
-                return null;
+                return (null, $"Graph contains a cycle involving: {string.Join(", ", cyclicTaskIds)}");
             }
 
             var status = nodes.Keys.ToDictionary(id => id, _ => TaskNodeStatus.Pending);
 
-            return new GraphState
+            return (new GraphState
             {
                 GraphId = submit.GraphId,
                 Nodes = nodes,
                 IncomingEdges = incoming,
                 OutgoingEdges = outgoing,
                 Status = status,
-            };
+            }, null);
         }
     }
 
