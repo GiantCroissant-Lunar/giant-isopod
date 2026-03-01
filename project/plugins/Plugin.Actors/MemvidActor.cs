@@ -15,11 +15,20 @@ public sealed class MemvidActor : UntypedActor
     private readonly MemvidClient _client;
     private readonly ILogger<MemvidActor> _logger;
 
+    private static readonly TimeSpan CommitDebounce = TimeSpan.FromSeconds(5);
+    private ICancelable? _commitTimer;
+    private bool _pendingCommit;
+
     public MemvidActor(string agentId, string mv2Path, string memvidExecutable, ILogger<MemvidActor> logger)
     {
         _agentId = agentId;
         _client = new MemvidClient(agentId, mv2Path, memvidExecutable);
         _logger = logger;
+    }
+
+    protected override void PostStop()
+    {
+        _commitTimer?.Cancel();
     }
 
     protected override void OnReceive(object message)
@@ -34,13 +43,23 @@ public sealed class MemvidActor : UntypedActor
                 HandleSearch(search);
                 break;
 
+            case CommitMemory:
+                HandleCommit();
+                break;
+
             case StoreCompleted completed:
                 _logger.LogDebug("Stored memory for {AgentId}: {Title}", _agentId, completed.Title);
+                ScheduleDebouncedCommit();
                 break;
 
             case SearchCompleted completed:
                 completed.ReplyTo.Tell(new MemorySearchResult(
                     completed.AgentId, completed.TaskRunId, completed.Hits));
+                break;
+
+            case CommitCompleted:
+                _pendingCommit = false;
+                _logger.LogDebug("Memory committed for {AgentId}", _agentId);
                 break;
 
             case MemvidOperationFailed failed:
@@ -83,8 +102,33 @@ public sealed class MemvidActor : UntypedActor
             .PipeTo(Self);
     }
 
+    private void HandleCommit()
+    {
+        if (_pendingCommit) return; // already committing
+        _pendingCommit = true;
+
+        _client.CommitAsync()
+            .ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    return (object)new MemvidOperationFailed(_agentId, null, $"commit failed: {t.Exception?.GetBaseException().Message}", null);
+                if (t.IsCanceled)
+                    return (object)new MemvidOperationFailed(_agentId, null, "commit canceled", null);
+                return new CommitCompleted();
+            })
+            .PipeTo(Self);
+    }
+
+    private void ScheduleDebouncedCommit()
+    {
+        _commitTimer?.Cancel();
+        _commitTimer = Context.System.Scheduler.ScheduleTellOnceCancelable(
+            CommitDebounce, Self, new CommitMemory(_agentId), Self);
+    }
+
     // Internal messages for PipeTo async bridging
     private sealed record StoreCompleted(string Title);
     private sealed record SearchCompleted(string AgentId, string? TaskRunId, IReadOnlyList<MemoryHit> Hits, IActorRef ReplyTo);
+    private sealed record CommitCompleted;
     private sealed record MemvidOperationFailed(string AgentId, string? TaskRunId, string Reason, IActorRef? ReplyTo);
 }

@@ -69,7 +69,7 @@ public sealed class AgentWorldSystem : IDisposable
 
         AgentSupervisor = _system.ActorOf(
             Props.Create(() => new AgentSupervisorActor(
-                Registry, MemorySupervisor, config,
+                Registry, MemorySupervisor, KnowledgeSupervisor, config,
                 loggerFactory)),
             "agents");
 

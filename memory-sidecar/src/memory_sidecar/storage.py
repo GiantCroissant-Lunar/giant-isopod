@@ -163,24 +163,19 @@ def search_knowledge(
     top_k: int = 10,
 ) -> list[dict[str, Any]]:
     """Search knowledge entries by vector similarity, optionally filtered by category."""
+    # sqlite-vec does not support arbitrary WHERE predicates alongside MATCH + k = ?,
+    # so we over-fetch and post-filter by category in Python.
+    effective_top_k = top_k * 3 if category else top_k
+    rows = conn.execute(
+        """SELECT v.id, v.distance, kn.content, kn.category, kn.tags, kn.stored_at
+           FROM knowledge_vec v
+           JOIN knowledge kn ON kn.id = v.id
+           WHERE v.embedding MATCH ? AND k = ?
+           ORDER BY v.distance""",
+        (_serialize_vec(query_embedding), effective_top_k),
+    ).fetchall()
     if category:
-        rows = conn.execute(
-            """SELECT v.id, v.distance, k.content, k.category, k.tags, k.stored_at
-               FROM knowledge_vec v
-               JOIN knowledge k ON k.id = v.id
-               WHERE v.embedding MATCH ? AND k.category = ? AND k = ?
-               ORDER BY v.distance""",
-            (_serialize_vec(query_embedding), category, top_k),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """SELECT v.id, v.distance, k.content, k.category, k.tags, k.stored_at
-               FROM knowledge_vec v
-               JOIN knowledge k ON k.id = v.id
-               WHERE v.embedding MATCH ? AND k = ?
-               ORDER BY v.distance""",
-            (_serialize_vec(query_embedding), top_k),
-        ).fetchall()
+        rows = [r for r in rows if r[3] == category][:top_k]
     return [
         {
             "content": r[2],

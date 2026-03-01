@@ -19,6 +19,7 @@ public sealed class AgentActor : UntypedActor
     private readonly ModelSpec? _model;
     private readonly IActorRef _registry;
     private readonly IActorRef _memorySupervisor;
+    private readonly IActorRef _knowledgeSupervisor;
     private readonly AgentWorldConfig _config;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<AgentActor> _logger;
@@ -34,6 +35,7 @@ public sealed class AgentActor : UntypedActor
     private int _activeTaskCount;
     private const int MaxConcurrentTasks = 3;
     private const double MinBidThreshold = 0.5;
+    private static readonly TimeSpan RetrievalTimeout = TimeSpan.FromSeconds(5);
 
     private static readonly AgentActivityState[] DemoStates =
     [
@@ -52,6 +54,7 @@ public sealed class AgentActor : UntypedActor
         string? memoryFilePath,
         IActorRef registry,
         IActorRef memorySupervisor,
+        IActorRef knowledgeSupervisor,
         AgentWorldConfig config,
         ILoggerFactory loggerFactory,
         string? runtimeId = null,
@@ -65,6 +68,7 @@ public sealed class AgentActor : UntypedActor
         _model = model;
         _registry = registry;
         _memorySupervisor = memorySupervisor;
+        _knowledgeSupervisor = knowledgeSupervisor;
         _config = config;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<AgentActor>();
@@ -166,7 +170,54 @@ public sealed class AgentActor : UntypedActor
                 _activeTaskCount++;
                 if (task.Budget?.MaxTokens is { } maxTokens)
                     _rpcActor?.Tell(new SetTokenBudget(task.TaskId, maxTokens));
-                Context.Child("tasks").Forward(task);
+                // Pre-task knowledge retrieval: query relevant context before forwarding to tasks
+                if (task.Description != null)
+                {
+                    Context.System.ActorSelection("/user/viewport")
+                        .Tell(new AgentMemoryActivity(_agentId, false, "Retrieving context"));
+                    _knowledgeSupervisor.Ask<KnowledgeResult>(
+                            new QueryKnowledge(_agentId, task.Description, TopK: 5),
+                            RetrievalTimeout)
+                        .ContinueWith(t =>
+                        {
+                            if (t.IsFaulted || t.IsCanceled)
+                                return (object)new RetrievalFailed(task, t.Exception?.GetBaseException().Message ?? "timeout");
+                            return new RetrievalComplete(task, t.Result.Entries);
+                        })
+                        .PipeTo(Self);
+                }
+                else
+                {
+                    // No description — skip retrieval, forward immediately
+                    Context.Child("tasks").Tell(task);
+                }
+                break;
+
+            case RetrievalComplete retrieval:
+                if (retrieval.Entries.Count > 0)
+                {
+                    // Assemble context-enriched prompt from retrieved knowledge
+                    var contextLines = retrieval.Entries
+                        .Select(e => $"[{e.Category}] {e.Content}")
+                        .ToList();
+                    var contextBlock = string.Join("\n", contextLines);
+                    var enrichedPrompt = $"[Retrieved context for task]\n{contextBlock}\n\n[Task]\n{retrieval.Task.Description}";
+                    _rpcActor?.Tell(new SendPrompt(_agentId, enrichedPrompt));
+                    _logger.LogInformation("Agent {AgentId} retrieved {Count} knowledge entries for task {TaskId}",
+                        _agentId, retrieval.Entries.Count, retrieval.Task.TaskId);
+                }
+                Context.System.ActorSelection("/user/viewport")
+                    .Tell(new AgentMemoryActivity(_agentId, false));
+                Context.Child("tasks").Tell(retrieval.Task);
+                break;
+
+            case RetrievalFailed failed:
+                _logger.LogWarning("Knowledge retrieval failed for agent {AgentId} task {TaskId}: {Reason}",
+                    _agentId, failed.Task.TaskId, failed.Reason);
+                Context.System.ActorSelection("/user/viewport")
+                    .Tell(new AgentMemoryActivity(_agentId, false));
+                // Graceful degradation — proceed without context
+                Context.Child("tasks").Tell(failed.Task);
                 break;
 
             case TaskCompleted completed:
@@ -174,6 +225,17 @@ public sealed class AgentActor : UntypedActor
                 Context.Child("tasks").Tell(completed);
                 if (completed.GraphId != null)
                     Context.System.ActorSelection("/user/taskgraph").Tell(completed);
+                // Post-task write-back: store outcome in long-term knowledge and episodic memory
+                if (completed.Summary != null)
+                {
+                    _knowledgeSupervisor.Tell(new StoreKnowledge(
+                        _agentId, completed.Summary, "outcome",
+                        new Dictionary<string, string> { ["taskId"] = completed.TaskId }));
+                    _memorySupervisor.Tell(new StoreMemory(
+                        _agentId, completed.TaskId, completed.Summary,
+                        $"Task {completed.TaskId} completed"));
+                    _logger.LogDebug("Agent {AgentId} stored outcome for task {TaskId}", _agentId, completed.TaskId);
+                }
                 break;
 
             case TaskFailed failed:
@@ -181,6 +243,13 @@ public sealed class AgentActor : UntypedActor
                 Context.Child("tasks").Tell(failed);
                 if (failed.GraphId != null)
                     Context.System.ActorSelection("/user/taskgraph").Tell(failed);
+                // Store failure as pitfall knowledge
+                if (failed.Reason != null)
+                {
+                    _knowledgeSupervisor.Tell(new StoreKnowledge(
+                        _agentId, failed.Reason, "pitfall",
+                        new Dictionary<string, string> { ["taskId"] = failed.TaskId }));
+                }
                 break;
 
             case TaskBidRejected:
@@ -305,5 +374,8 @@ public sealed class AgentActor : UntypedActor
         return AgentActivityState.Idle;
     }
 
+    // Internal messages for pre-task retrieval PipeTo bridging
+    private sealed record RetrievalComplete(TaskAssigned Task, IReadOnlyList<KnowledgeEntry> Entries);
+    private sealed record RetrievalFailed(TaskAssigned Task, string Reason);
     private sealed record DemoTick(int Index);
 }
