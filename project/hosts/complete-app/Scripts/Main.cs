@@ -81,13 +81,21 @@ public partial class Main : Node2D
         // Populate CLI provider dropdown
         _hud.SetProviders(cliProviders.All);
 
-        // Task graph DAG visualization (hidden until a graph is submitted)
+        // Task graph DAG visualization — must live in HUD CanvasLayer for proper UI rendering
         _taskGraphView = new TaskGraphView
         {
-            Position = new Vector2(10, 40),
-            Size = new Vector2(480, 320),
+            AnchorLeft = 0,
+            AnchorTop = 0,
+            AnchorRight = 0,
+            AnchorBottom = 0,
+            OffsetLeft = 10,
+            OffsetTop = 80,
+            OffsetRight = 500,
+            OffsetBottom = 400,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        AddChild(_taskGraphView);
+        var hudRoot = GetNode<Control>("HUD/HUDRoot");
+        hudRoot.AddChild(_taskGraphView);
 
         QueueRedraw();
         CacheAgentProfiles();

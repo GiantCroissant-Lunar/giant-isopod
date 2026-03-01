@@ -28,6 +28,7 @@ public partial class HudController : Control
     private string? _selectedAgentId;
     private Control? _terminalContainer; // holds the currently visible Terminal
     private readonly Dictionary<string, GodotObject> _agentTerminals = new(); // agentId → AgentTerminal instance
+    private readonly HashSet<string> _fallbackTerminals = new(); // agents using RichTextLabel fallback
     private readonly Dictionary<string, GiantIsopod.Plugin.Process.AsciicastRecorder> _agentRecorders = new();
 
     // Markdown rendered view — RichTextLabel per agent
@@ -437,35 +438,50 @@ public partial class HudController : Control
     {
         if (_agentTerminals.ContainsKey(agentId) || _terminalContainer == null) return;
 
-        var scene = GD.Load<PackedScene>("res://Scenes/AgentTerminal.tscn");
-        if (scene == null)
+        Control? instance = null;
+        bool usingFallback = false;
+
+        try
         {
-            GD.PrintErr($"Failed to load AgentTerminal.tscn for {agentId}");
-            return;
+            var scene = GD.Load<PackedScene>("res://Scenes/AgentTerminal.tscn");
+            if (scene != null)
+                instance = scene.Instantiate<Control>();
+        }
+        catch (Exception ex)
+        {
+            DebugLog($"GodotXterm terminal failed for {agentId}: {ex.Message}");
         }
 
-        var instance = scene.Instantiate<Control>();
+        if (instance == null)
+        {
+            // Fallback: RichTextLabel-based console (works without GodotXterm native libs)
+            instance = CreateFallbackTerminal(agentId);
+            usingFallback = true;
+            DebugLog($"Using fallback RichTextLabel terminal for {agentId}");
+        }
+
         instance.Visible = false;
         instance.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         instance.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
         _terminalContainer.AddChild(instance);
-
         _agentTerminals[agentId] = instance;
+        if (usingFallback) _fallbackTerminals.Add(agentId);
 
+        var capturedUsingFallback = usingFallback;
         // Make visible after _ready() runs on next frame
         Callable.From(() =>
         {
             instance.Visible = true;
-            instance.Call("write_text", $"\u001b[32m● Agent {agentId} connected\u001b[0m\r\n");
-            DebugLog($"Terminal created for {agentId}: container={_terminalContainer!.Size}, instance={instance.Size}");
+
+            WriteToTerminal(instance, capturedUsingFallback, $"● Agent {agentId} connected\n");
+            DebugLog($"Terminal created for {agentId} (fallback={capturedUsingFallback}): container={_terminalContainer!.Size}, instance={instance.Size}");
 
             // Flush any buffered output
             if (_pendingOutput.TryGetValue(agentId, out var pending))
             {
                 foreach (var line in pending)
                 {
-                    var text = ColorizeOutput(line) + "\r\n";
-                    instance.Call("write_text", text);
+                    WriteToTerminal(instance, capturedUsingFallback, line + "\n");
                 }
                 _pendingOutput.Remove(agentId);
                 DebugLog($"Flushed {pending.Count} buffered lines for {agentId}");
@@ -489,6 +505,51 @@ public partial class HudController : Control
     }
 
     /// <summary>
+    /// Creates a RichTextLabel-based fallback terminal when GodotXterm native libs are unavailable.
+    /// </summary>
+    private static Control CreateFallbackTerminal(string agentId)
+    {
+        var container = new PanelContainer();
+        var bg = new StyleBoxFlat();
+        bg.BgColor = new Color(0.06f, 0.07f, 0.1f);
+        bg.ContentMarginLeft = 6;
+        bg.ContentMarginRight = 6;
+        bg.ContentMarginTop = 4;
+        bg.ContentMarginBottom = 4;
+        container.AddThemeStyleboxOverride("panel", bg);
+
+        var rtl = new RichTextLabel();
+        rtl.Name = "FallbackTerminal";
+        rtl.BbcodeEnabled = true;
+        rtl.FitContent = false;
+        rtl.ScrollFollowing = true;
+        rtl.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
+        rtl.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
+        rtl.AddThemeColorOverride("default_color", new Color(0.82f, 0.84f, 0.9f));
+        rtl.AddThemeFontSizeOverride("normal_font_size", 13);
+        container.AddChild(rtl);
+
+        return container;
+    }
+
+    /// <summary>
+    /// Writes text to either a GodotXterm terminal or a fallback RichTextLabel.
+    /// </summary>
+    private static void WriteToTerminal(Control terminal, bool isFallback, string text)
+    {
+        if (isFallback)
+        {
+            var rtl = terminal.GetNodeOrNull<RichTextLabel>("FallbackTerminal");
+            rtl?.AppendText(text);
+        }
+        else
+        {
+            var colorized = ColorizeOutput(text.TrimEnd('\n', '\r')) + "\r\n";
+            terminal.Call("write_text", colorized);
+        }
+    }
+
+    /// <summary>
     /// Cleans up Terminal + PTY for a removed agent.
     /// </summary>
     private void CleanupTerminalForAgent(string agentId)
@@ -497,6 +558,7 @@ public partial class HudController : Control
         {
             termControl.QueueFree();
             _agentTerminals.Remove(agentId);
+            _fallbackTerminals.Remove(agentId);
         }
 
         // Clean up markdown label
@@ -578,12 +640,12 @@ public partial class HudController : Control
             return;
         }
 
-        // ListenAsync gives lines without newlines, Terminal needs \r\n
-        var text = ColorizeOutput(line) + "\r\n";
-
-        term.Call("write_text", text);
+        // Write to terminal (GodotXterm or fallback RichTextLabel)
+        var isFallback = _fallbackTerminals.Contains(agentId);
+        WriteToTerminal((Control)term, isFallback, line + "\n");
 
         // Record to asciicast
+        var text = ColorizeOutput(line) + "\r\n";
         if (_agentRecorders.TryGetValue(agentId, out var recorder))
             recorder.WriteOutput(text);
 
