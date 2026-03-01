@@ -5,27 +5,29 @@ using GiantIsopod.Plugin.Process;
 namespace GiantIsopod.Plugin.Actors;
 
 /// <summary>
-/// /user/agents/{name}/rpc — manages the CliWrap pipe to pi --mode rpc.
-/// Reads stdout events and forwards them to the parent AgentActor.
-/// Reports ProcessStarted only after the child process is confirmed running.
+/// /user/agents/{name}/rpc — manages the runtime pipe for an agent.
+/// Creates the correct IAgentRuntime via RuntimeFactory and streams output
+/// as RuntimeEvent messages to the parent AgentActor.
 /// </summary>
-public sealed class AgentRpcActor : UntypedActor
+public sealed class AgentRuntimeActor : UntypedActor
 {
     private readonly string _agentId;
-    private readonly string? _cliProviderId;
+    private readonly string? _runtimeId;
+    private readonly ModelSpec? _model;
     private readonly AgentWorldConfig _config;
-    private IAgentRuntime? _process;
+    private IAgentRuntime? _runtime;
     private CancellationTokenSource? _cts;
 
     // Per-task token budget tracking (supports concurrent tasks)
     private readonly Dictionary<string, TokenBudgetState> _tokenBudgets = new();
-    private string? _activeTaskId; // most recently assigned task gets output attributed
+    private string? _activeTaskId;
 
-    public AgentRpcActor(string agentId, AgentWorldConfig config, string? cliProviderId = null)
+    public AgentRuntimeActor(string agentId, AgentWorldConfig config, string? runtimeId = null, ModelSpec? model = null)
     {
         _agentId = agentId;
         _config = config;
-        _cliProviderId = cliProviderId;
+        _runtimeId = runtimeId;
+        _model = model;
     }
 
     protected override void OnReceive(object message)
@@ -60,14 +62,12 @@ public sealed class AgentRpcActor : UntypedActor
         budgetState.CumulativeChars += output.Length;
         var estimatedTokens = (int)(budgetState.CumulativeChars / 4);
 
-        // Kill process at 120% of budget
         if (estimatedTokens > budgetState.MaxTokens * 1.2)
         {
             Context.ActorSelection("../tasks")
                 .Tell(new TokenBudgetExceeded(_activeTaskId, estimatedTokens, budgetState.MaxTokens));
             _cts?.Cancel();
         }
-        // Warn at 100% of budget
         else if (!budgetState.Warned && estimatedTokens > budgetState.MaxTokens)
         {
             budgetState.Warned = true;
@@ -80,12 +80,12 @@ public sealed class AgentRpcActor : UntypedActor
     {
         _cts = new CancellationTokenSource();
 
-        var workDir = !string.IsNullOrEmpty(_config.CliWorkingDirectory)
-            ? _config.CliWorkingDirectory
+        var workDir = !string.IsNullOrEmpty(_config.RuntimeWorkingDirectory)
+            ? _config.RuntimeWorkingDirectory
             : System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
 
-        var provider = _config.CliProviders.ResolveOrDefault(_cliProviderId ?? _config.DefaultCliProviderId);
-        _process = new CliAgentProcess(_agentId, provider, workDir, _config.CliEnvironment);
+        var runtimeConfig = _config.Runtimes.ResolveOrDefault(_runtimeId ?? _config.DefaultRuntimeId);
+        _runtime = RuntimeFactory.Create(_agentId, runtimeConfig, _model, workDir, _config.RuntimeEnvironment);
 
         var self = Self;
         var parent = Context.Parent;
@@ -98,9 +98,9 @@ public sealed class AgentRpcActor : UntypedActor
             bool started = false;
             try
             {
-                await _process.StartAsync(ct);
+                await _runtime.StartAsync(ct);
 
-                await foreach (var line in _process.ReadEventsAsync(ct))
+                await foreach (var line in _runtime.ReadEventsAsync(ct))
                 {
                     if (!started)
                         started = true;
@@ -118,7 +118,7 @@ public sealed class AgentRpcActor : UntypedActor
             }
             catch (Exception ex)
             {
-                self.Tell(new RuntimeEvent(_agentId, $"[ERROR] CLI failed: {ex.Message}"));
+                self.Tell(new RuntimeEvent(_agentId, $"[ERROR] Runtime failed: {ex.Message}"));
                 parent.Tell(new RuntimeExited(_agentId, -1));
             }
         }, ct);
@@ -126,9 +126,9 @@ public sealed class AgentRpcActor : UntypedActor
 
     private async Task SendToRuntimeAsync(string message)
     {
-        if (_process is { IsRunning: true })
+        if (_runtime is { IsRunning: true })
         {
-            await _process.SendAsync(message, _cts?.Token ?? CancellationToken.None);
+            await _runtime.SendAsync(message, _cts?.Token ?? CancellationToken.None);
         }
     }
 
@@ -136,11 +136,11 @@ public sealed class AgentRpcActor : UntypedActor
     {
         _cts?.Cancel();
         _cts?.Dispose();
-        _ = _process?.DisposeAsync();
+        _ = _runtime?.DisposeAsync();
     }
 }
 
-/// <summary>Sets the token budget for the active task on this RPC actor.</summary>
+/// <summary>Sets the token budget for the active task on this runtime actor.</summary>
 public record SetTokenBudget(string TaskId, int MaxTokens);
 
 internal sealed class TokenBudgetState(int maxTokens)

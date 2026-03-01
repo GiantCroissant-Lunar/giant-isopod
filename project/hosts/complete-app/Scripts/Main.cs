@@ -40,17 +40,17 @@ public partial class Main : Node2D
             if (file != null)
                 cliProvidersJson = file.GetAsText();
         }
-        var cliProviders = GiantIsopod.Plugin.Process.CliProviderRegistry.LoadFromJson(cliProvidersJson);
+        var runtimes = GiantIsopod.Plugin.Process.RuntimeRegistry.LoadFromLegacyCliProviders(cliProvidersJson);
 
         var config = new AgentWorldConfig
         {
             SkillsBasePath = ProjectSettings.GlobalizePath("res://Data/Skills"),
             MemoryBasePath = ProjectSettings.GlobalizePath("user://memory"),
             AgentDataPath = ProjectSettings.GlobalizePath("res://Data/Agents"),
-            CliProviders = cliProviders,
-            DefaultCliProviderId = "pi",
-            CliWorkingDirectory = @"C:\lunar-horse\yokan-projects\giant-isopod",
-            CliEnvironment = new Dictionary<string, string>
+            Runtimes = runtimes,
+            DefaultRuntimeId = "pi",
+            RuntimeWorkingDirectory = @"C:\lunar-horse\yokan-projects\giant-isopod",
+            RuntimeEnvironment = new Dictionary<string, string>
             {
                 ["ZAI_API_KEY"] = "08bbb0b6b8d649fbbafa5c11091e5ac3.4dzlUajBX9I8oE0F"
             },
@@ -78,8 +78,8 @@ public partial class Main : Node2D
         _hud.OnSpawnRequested += HandleSpawnRequest;
         _hud.OnRemoveRequested += HandleRemoveRequest;
 
-        // Populate CLI provider dropdown
-        _hud.SetProviders(cliProviders.All);
+        // Populate runtime dropdown
+        _hud.SetRuntimes(runtimes.All);
 
         // Task graph DAG visualization — must live in HUD CanvasLayer for proper UI rendering
         _taskGraphView = new TaskGraphView
@@ -232,12 +232,12 @@ public partial class Main : Node2D
     }
 
 
-    private void HandleSpawnRequest(string cliProviderId)
+    private void HandleSpawnRequest(string runtimeId)
     {
         if (_agentWorld == null) return;
 
         _nextAgentIndex++;
-        var agentId = $"{cliProviderId}-{_nextAgentIndex}";
+        var agentId = $"{runtimeId}-{_nextAgentIndex}";
 
         // Pick a random cached profile or use a minimal default
         string profileJson = "{}";
@@ -247,9 +247,9 @@ public partial class Main : Node2D
             profileJson = profiles[_nextAgentIndex % profiles.Length];
         }
 
-        _logger?.LogInformation("Spawning agent: {AgentId} (cli: {Provider})", agentId, cliProviderId);
+        _logger?.LogInformation("Spawning agent: {AgentId} (runtime: {RuntimeId})", agentId, runtimeId);
         _agentWorld.AgentSupervisor.Tell(
-            new SpawnAgent(agentId, profileJson, "builder", RuntimeId: cliProviderId),
+            new SpawnAgent(agentId, profileJson, "builder", RuntimeId: runtimeId),
             Akka.Actor.ActorRefs.NoSender);
     }
 

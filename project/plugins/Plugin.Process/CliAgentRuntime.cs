@@ -2,18 +2,19 @@ using System.Runtime.CompilerServices;
 using CliWrap;
 using CliWrap.EventStream;
 using GiantIsopod.Contracts.Core;
-using GiantIsopod.Contracts.Protocol.CliProvider;
+using GiantIsopod.Contracts.Protocol.Runtime;
 
 namespace GiantIsopod.Plugin.Process;
 
 /// <summary>
-/// Generic CLI agent process driven by CliProviderEntry config.
+/// CLI-based agent runtime driven by CliRuntimeConfig.
 /// Resolves {prompt}, {provider}, {model} placeholders in args at runtime.
 /// Streams stdout/stderr line-by-line via CliWrap ListenAsync.
 /// </summary>
-public sealed class CliAgentProcess : IAgentRuntime
+public sealed class CliAgentRuntime : IAgentRuntime
 {
-    private readonly CliProviderEntry _provider;
+    private readonly CliRuntimeConfig _config;
+    private readonly ModelSpec? _model;
     private readonly string _workingDirectory;
     private readonly Dictionary<string, string> _extraEnv;
     private CancellationTokenSource? _cts;
@@ -21,16 +22,17 @@ public sealed class CliAgentProcess : IAgentRuntime
 
     public string AgentId { get; }
     public bool IsRunning { get; private set; }
-    public string ProviderId => _provider.Id;
 
-    public CliAgentProcess(
+    public CliAgentRuntime(
         string agentId,
-        CliProviderEntry provider,
+        CliRuntimeConfig config,
+        ModelSpec? model,
         string workingDirectory,
         Dictionary<string, string>? extraEnv = null)
     {
         AgentId = agentId;
-        _provider = provider;
+        _config = config;
+        _model = model;
         _workingDirectory = workingDirectory;
         _extraEnv = extraEnv ?? new();
     }
@@ -60,14 +62,12 @@ public sealed class CliAgentProcess : IAgentRuntime
 
         var resolvedArgs = ResolveArgs();
 
-        var cmd = Cli.Wrap(_provider.Executable)
+        var cmd = Cli.Wrap(_config.Executable)
             .WithArguments(resolvedArgs)
             .WithWorkingDirectory(_workingDirectory)
             .WithEnvironmentVariables(env =>
             {
-                // Provider-level env from JSON config, with placeholder resolution
-                // e.g. {ZAI_API_KEY} in config gets resolved from _extraEnv
-                foreach (var (key, value) in _provider.Env)
+                foreach (var (key, value) in _config.Env)
                     env.Set(key, ResolvePlaceholders(value, _extraEnv));
             })
             .WithValidation(CommandResultValidation.None);
@@ -92,9 +92,6 @@ public sealed class CliAgentProcess : IAgentRuntime
         IsRunning = false;
     }
 
-    /// <summary>
-    /// Resolves {prompt}, {provider}, {model} and any defaults-defined placeholders in args.
-    /// </summary>
     private string[] ResolveArgs()
     {
         var placeholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -102,11 +99,18 @@ public sealed class CliAgentProcess : IAgentRuntime
             ["prompt"] = _prompt
         };
 
-        // Merge defaults from provider config
-        foreach (var (key, value) in _provider.Defaults)
+        // Merge defaults from config
+        foreach (var (key, value) in _config.Defaults)
             placeholders.TryAdd(key, value);
 
-        return _provider.Args
+        // Override with explicit model spec if provided
+        var effectiveModel = RuntimeFactory.MergeModel(_model, _config.DefaultModel);
+        if (effectiveModel?.Provider is { } provider)
+            placeholders["provider"] = provider;
+        if (effectiveModel?.ModelId is { } modelId)
+            placeholders["model"] = modelId;
+
+        return _config.Args
             .Select(arg => ResolvePlaceholders(arg, placeholders))
             .ToArray();
     }

@@ -8,7 +8,7 @@ namespace GiantIsopod.Hosts.CompleteApp;
 /// </summary>
 public partial class HudController : Control
 {
-    public event Action<string>? OnSpawnRequested; // passes selected CLI provider id
+    public event Action<string>? OnSpawnRequested; // passes selected runtime id
     public event Action<string>? OnRemoveRequested;
 
     private Label? _agentCountLabel;
@@ -18,7 +18,7 @@ public partial class HudController : Control
     private Control? _genUIHost;
 
     private readonly Dictionary<string, AgentHudEntry> _entries = new();
-    private readonly HashSet<string> _activeProcesses = new();
+    private readonly HashSet<string> _activeRuntimes = new();
     private OptionButton? _providerDropdown;
     private List<string> _providerIds = new();
 
@@ -56,7 +56,7 @@ public partial class HudController : Control
         var topBar = GetNodeOrNull<HBoxContainer>("TopBar");
         if (topBar != null && _agentCountLabel != null)
         {
-            _processCountLabel = new Label { Text = "CLI: 0" };
+            _processCountLabel = new Label { Text = "Runtimes: 0" };
             _processCountLabel.AddThemeColorOverride("font_color", new Color(0.5f, 0.55f, 0.65f));
             topBar.AddChild(_processCountLabel);
             topBar.MoveChild(_processCountLabel, _agentCountLabel.GetIndex() + 1);
@@ -205,14 +205,14 @@ public partial class HudController : Control
                 ForwardGenUI(genui.AgentId, genui.A2UIJson);
                 break;
             case RuntimeStartedEvent started:
-                _activeProcesses.Add(started.AgentId);
-                UpdateProcessCount();
+                _activeRuntimes.Add(started.AgentId);
+                UpdateRuntimeCount();
                 if (_entries.TryGetValue(started.AgentId, out var se))
                     se.SetConnected(true);
                 break;
             case RuntimeExitedEvent exited:
-                _activeProcesses.Remove(exited.AgentId);
-                UpdateProcessCount();
+                _activeRuntimes.Remove(exited.AgentId);
+                UpdateRuntimeCount();
                 if (_entries.TryGetValue(exited.AgentId, out var ee))
                     ee.SetConnected(false);
                 break;
@@ -261,10 +261,10 @@ public partial class HudController : Control
             _agentCountLabel.Text = $"Agents: {_entries.Count}";
     }
 
-    private void UpdateProcessCount()
+    private void UpdateRuntimeCount()
     {
         if (_processCountLabel != null)
-            _processCountLabel.Text = $"CLI: {_activeProcesses.Count}";
+            _processCountLabel.Text = $"Runtimes: {_activeRuntimes.Count}";
     }
 
     private void CreateConsolePanel()
@@ -710,18 +710,18 @@ public partial class HudController : Control
     }
 
     /// <summary>
-    /// Populates the CLI provider dropdown from the loaded registry.
+    /// Populates the runtime dropdown from the loaded registry.
     /// Call from Main._Ready() after HUD is initialized.
     /// </summary>
-    public void SetProviders(IReadOnlyCollection<GiantIsopod.Contracts.Protocol.CliProvider.CliProviderEntry> providers)
+    public void SetRuntimes(IReadOnlyCollection<GiantIsopod.Contracts.Protocol.Runtime.RuntimeConfig> runtimes)
     {
         _providerIds.Clear();
         if (_providerDropdown == null) return;
         _providerDropdown.Clear();
-        foreach (var p in providers)
+        foreach (var r in runtimes)
         {
-            _providerIds.Add(p.Id);
-            _providerDropdown.AddItem(p.DisplayName ?? p.Id);
+            _providerIds.Add(r.Id);
+            _providerDropdown.AddItem(r.DisplayName ?? r.Id);
         }
         if (_providerDropdown.ItemCount > 0)
             _providerDropdown.Selected = 0;

@@ -100,17 +100,17 @@ public record AgentWorldConfig
     public required string MemoryBasePath { get; init; }
     public required string AgentDataPath { get; init; }
 
-    /// <summary>CLI provider registry loaded from cli-providers.json.</summary>
-    public required GiantIsopod.Plugin.Process.CliProviderRegistry CliProviders { get; init; }
+    /// <summary>Runtime registry loaded from runtimes.json (or legacy cli-providers.json).</summary>
+    public required GiantIsopod.Plugin.Process.RuntimeRegistry Runtimes { get; init; }
 
-    /// <summary>Default CLI provider id when spawning agents (null = first in list).</summary>
-    public string? DefaultCliProviderId { get; init; }
+    /// <summary>Default runtime id when spawning agents (null = first in list).</summary>
+    public string? DefaultRuntimeId { get; init; }
 
-    /// <summary>Working directory for CLI processes.</summary>
-    public string CliWorkingDirectory { get; init; } = "";
+    /// <summary>Working directory for agent runtimes.</summary>
+    public string RuntimeWorkingDirectory { get; init; } = "";
 
-    /// <summary>Extra environment variables merged into all CLI processes (e.g. API keys).</summary>
-    public Dictionary<string, string> CliEnvironment { get; init; } = new();
+    /// <summary>Extra environment variables merged into all agent runtimes (e.g. API keys).</summary>
+    public Dictionary<string, string> RuntimeEnvironment { get; init; } = new();
 
     public string MemvidExecutable { get; init; } = "memvid";
 }
