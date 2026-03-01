@@ -19,6 +19,7 @@ public sealed class AgentWorldSystem : IDisposable
     public IActorRef Dispatch { get; }
     public IActorRef TaskGraph { get; }
     public IActorRef Viewport { get; }
+    public IActorRef A2A { get; }
 
     public AgentWorldSystem(AgentWorldConfig config, ILoggerFactory loggerFactory)
     {
@@ -77,6 +78,12 @@ public sealed class AgentWorldSystem : IDisposable
                 Dispatch, Viewport,
                 loggerFactory.CreateLogger<TaskGraphActor>())),
             "taskgraph");
+
+        A2A = _system.ActorOf(
+            Props.Create(() => new A2AActor(
+                Dispatch, Registry,
+                loggerFactory.CreateLogger<A2AActor>())),
+            "a2a");
 
         _logger.LogInformation("Actor system started");
     }
