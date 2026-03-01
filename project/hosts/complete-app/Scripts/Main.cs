@@ -32,15 +32,28 @@ public partial class Main : Node2D
 
     public override void _Ready()
     {
-        // Load CLI providers from JSON config
-        var cliProvidersJson = "{}";
-        const string cliProvidersResPath = "res://Data/CliProviders/cli-providers.json";
-        using (var file = Godot.FileAccess.Open(cliProvidersResPath, Godot.FileAccess.ModeFlags.Read))
+        // Load runtimes — try new format first, fall back to legacy cli-providers.json
+        GiantIsopod.Plugin.Process.RuntimeRegistry runtimes;
+        const string runtimesResPath = "res://Data/Runtimes/runtimes.json";
+        const string legacyResPath = "res://Data/CliProviders/cli-providers.json";
+
+        using (var file = Godot.FileAccess.Open(runtimesResPath, Godot.FileAccess.ModeFlags.Read))
         {
             if (file != null)
-                cliProvidersJson = file.GetAsText();
+            {
+                runtimes = GiantIsopod.Plugin.Process.RuntimeRegistry.LoadFromJson(file.GetAsText());
+            }
+            else
+            {
+                var legacyJson = "{}";
+                using (var legacyFile = Godot.FileAccess.Open(legacyResPath, Godot.FileAccess.ModeFlags.Read))
+                {
+                    if (legacyFile != null)
+                        legacyJson = legacyFile.GetAsText();
+                }
+                runtimes = GiantIsopod.Plugin.Process.RuntimeRegistry.LoadFromLegacyCliProviders(legacyJson);
+            }
         }
-        var runtimes = GiantIsopod.Plugin.Process.RuntimeRegistry.LoadFromLegacyCliProviders(cliProvidersJson);
 
         var config = new AgentWorldConfig
         {

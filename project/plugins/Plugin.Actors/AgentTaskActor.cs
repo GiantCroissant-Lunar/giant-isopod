@@ -115,5 +115,5 @@ public sealed class AgentTaskActor : UntypedActor, IWithTimers
     private record TaskState(string TaskId, DateTimeOffset StartedAt, TaskBudget? Budget, string? GraphId = null);
 }
 
-/// <summary>Sent by AgentRpcActor when token output exceeds budget.</summary>
+/// <summary>Sent by AgentRuntimeActor when token output exceeds budget.</summary>
 public record TokenBudgetExceeded(string TaskId, int EstimatedTokens, int MaxTokens);
