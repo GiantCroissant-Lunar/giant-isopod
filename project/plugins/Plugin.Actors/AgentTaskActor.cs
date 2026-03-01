@@ -52,7 +52,7 @@ public sealed class AgentTaskActor : UntypedActor, IWithTimers
                 break;
 
             case TaskFailed failed:
-                if (_activeTasks.Remove(failed.TaskId ?? "", out var failedState))
+                if (_activeTasks.Remove(failed.TaskId, out var failedState))
                 {
                     Timers.Cancel($"deadline-{failed.TaskId}");
                     EmitBudgetReport(failedState, false);
@@ -71,7 +71,7 @@ public sealed class AgentTaskActor : UntypedActor, IWithTimers
                 break;
 
             case TokenBudgetExceeded exceeded:
-                if (_activeTasks.TryGetValue(exceeded.TaskId, out var tokenState))
+                if (_activeTasks.ContainsKey(exceeded.TaskId))
                 {
                     _logger.LogWarning("Task {TaskId} exceeded token budget ({Used}/{Max}) for agent {AgentId}",
                         exceeded.TaskId, exceeded.EstimatedTokens, exceeded.MaxTokens, _agentId);

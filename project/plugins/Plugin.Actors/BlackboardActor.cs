@@ -1,5 +1,4 @@
 using Akka.Actor;
-using Akka.Event;
 using GiantIsopod.Contracts.Core;
 using Microsoft.Extensions.Logging;
 
@@ -54,6 +53,7 @@ public sealed class BlackboardActor : UntypedActor
                     _subscribers[subscribe.Key] = set;
                 }
                 set.Add(Sender);
+                Context.Watch(Sender);
                 _logger.LogDebug("Subscriber added for key {Key}", subscribe.Key);
 
                 // Send current value immediately if it exists

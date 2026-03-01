@@ -17,11 +17,9 @@ public sealed class AgentRpcActor : UntypedActor
     private IAgentProcess? _process;
     private CancellationTokenSource? _cts;
 
-    // Token budget tracking
-    private long _cumulativeOutputChars;
-    private int? _maxTokenBudget;
-    private string? _activeTaskId;
-    private bool _tokenBudgetWarned;
+    // Per-task token budget tracking (supports concurrent tasks)
+    private readonly Dictionary<string, TokenBudgetState> _tokenBudgets = new();
+    private string? _activeTaskId; // most recently assigned task gets output attributed
 
     public AgentRpcActor(string agentId, AgentWorldConfig config, string? cliProviderId = null)
     {
@@ -49,34 +47,32 @@ public sealed class AgentRpcActor : UntypedActor
 
             case SetTokenBudget budget:
                 _activeTaskId = budget.TaskId;
-                _maxTokenBudget = budget.MaxTokens;
-                _cumulativeOutputChars = 0;
-                _tokenBudgetWarned = false;
+                _tokenBudgets[budget.TaskId] = new TokenBudgetState(budget.MaxTokens);
                 break;
         }
     }
 
     private void TrackTokenUsage(string output)
     {
-        _cumulativeOutputChars += output.Length;
+        if (_activeTaskId is null || !_tokenBudgets.TryGetValue(_activeTaskId, out var budgetState))
+            return;
 
-        if (_maxTokenBudget is not { } max || _activeTaskId is null) return;
-
-        var estimatedTokens = (int)(_cumulativeOutputChars / 4);
+        budgetState.CumulativeChars += output.Length;
+        var estimatedTokens = (int)(budgetState.CumulativeChars / 4);
 
         // Kill process at 120% of budget
-        if (estimatedTokens > max * 1.2)
+        if (estimatedTokens > budgetState.MaxTokens * 1.2)
         {
             Context.ActorSelection("../tasks")
-                .Tell(new TokenBudgetExceeded(_activeTaskId, estimatedTokens, max));
+                .Tell(new TokenBudgetExceeded(_activeTaskId, estimatedTokens, budgetState.MaxTokens));
             _cts?.Cancel();
         }
         // Warn at 100% of budget
-        else if (!_tokenBudgetWarned && estimatedTokens > max)
+        else if (!budgetState.Warned && estimatedTokens > budgetState.MaxTokens)
         {
-            _tokenBudgetWarned = true;
+            budgetState.Warned = true;
             Context.ActorSelection("../tasks")
-                .Tell(new TokenBudgetExceeded(_activeTaskId, estimatedTokens, max));
+                .Tell(new TokenBudgetExceeded(_activeTaskId, estimatedTokens, budgetState.MaxTokens));
         }
     }
 
@@ -146,3 +142,10 @@ public sealed class AgentRpcActor : UntypedActor
 
 /// <summary>Sets the token budget for the active task on this RPC actor.</summary>
 public record SetTokenBudget(string TaskId, int MaxTokens);
+
+internal sealed class TokenBudgetState(int maxTokens)
+{
+    public int MaxTokens { get; } = maxTokens;
+    public long CumulativeChars { get; set; }
+    public bool Warned { get; set; }
+}

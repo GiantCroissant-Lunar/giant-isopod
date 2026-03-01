@@ -36,8 +36,9 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         {
             case TaskRequest request:
                 _logger.LogDebug("Dispatching task {TaskId}", request.TaskId);
+                var requester = Sender; // capture before BecomeStacked changes Sender
                 _registry.Tell(new QueryCapableAgents(request.RequiredCapabilities));
-                BecomeStacked(msg => HandleRegistryResponse(msg, request));
+                BecomeStacked(msg => HandleRegistryResponse(msg, request, requester));
                 break;
 
             case TaskBid bid:
@@ -50,7 +51,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         }
     }
 
-    private void HandleRegistryResponse(object message, TaskRequest pendingRequest)
+    private void HandleRegistryResponse(object message, TaskRequest pendingRequest, IActorRef requester)
     {
         if (message is CapableAgentsResult result)
         {
@@ -59,15 +60,15 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             if (result.AgentIds.Count == 0)
             {
                 _logger.LogWarning("No agent satisfies capability requirement for task {TaskId}", pendingRequest.TaskId);
-                Sender.Tell(new TaskFailed(
+                requester.Tell(new TaskFailed(
                     pendingRequest.TaskId,
                     "No agent satisfies the capability requirement",
                     pendingRequest.RequiredCapabilities));
                 return;
             }
 
-            // Start bid session
-            var session = new BidSession(pendingRequest, result.AgentIds, Sender);
+            // Start bid session — use captured requester, not Sender (which is now the registry)
+            var session = new BidSession(pendingRequest, result.AgentIds, requester);
             _bidSessions[pendingRequest.TaskId] = session;
 
             // Broadcast TaskAvailable to all capable agents
@@ -102,8 +103,21 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
     {
         if (!_bidSessions.TryGetValue(bid.TaskId, out var session))
         {
-            // Bid arrived after session closed — ignore
             _logger.LogDebug("Late bid from {AgentId} for task {TaskId}, ignoring", bid.AgentId, bid.TaskId);
+            return;
+        }
+
+        // Reject bids from agents not in the capable list
+        if (!session.CapableAgents.Contains(bid.AgentId))
+        {
+            _logger.LogDebug("Bid from non-capable agent {AgentId} for task {TaskId}, ignoring", bid.AgentId, bid.TaskId);
+            return;
+        }
+
+        // Reject duplicate bids from the same agent
+        if (session.Bids.Any(b => b.AgentId == bid.AgentId))
+        {
+            _logger.LogDebug("Duplicate bid from {AgentId} for task {TaskId}, ignoring", bid.AgentId, bid.TaskId);
             return;
         }
 

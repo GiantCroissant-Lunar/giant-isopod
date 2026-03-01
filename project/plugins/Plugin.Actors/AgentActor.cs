@@ -273,7 +273,7 @@ public sealed class AgentActor : UntypedActor
             _activeTaskCount,
             TimeSpan.FromMinutes(5)); // default estimate
 
-        // Reply to dispatch (sender is AgentSupervisor, but bid goes to dispatch via EventStream)
+        // Send bid directly to dispatch actor
         Context.System.ActorSelection("/user/dispatch").Tell(bid);
     }
 
