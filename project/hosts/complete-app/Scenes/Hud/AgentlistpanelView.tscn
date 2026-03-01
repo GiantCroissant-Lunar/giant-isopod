@@ -1,0 +1,21 @@
+[gd_scene load_steps=1 format=3]
+
+[node name="AgentListPanelView" type="PanelContainer"]
+custom_minimum_size = Vector2(240, 0)
+size_flags_vertical = 3
+
+[node name="VBox" type="VBoxContainer" parent="."]
+theme_override_constants/separation = 0
+
+[node name="Header" type="HBoxContainer" parent="VBox"]
+custom_minimum_size = Vector2(0, 32)
+
+[node name="HeaderLabel" type="Label" parent="VBox/Header"]
+text = "Agents"
+
+[node name="ScrollArea" type="ScrollContainer" parent="VBox"]
+size_flags_vertical = 3
+
+[node name="AgentList" type="VBoxContainer" parent="VBox/ScrollArea"]
+size_flags_horizontal = 3
+theme_override_constants/separation = 2

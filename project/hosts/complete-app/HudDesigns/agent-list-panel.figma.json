@@ -1,0 +1,106 @@
+{
+  "name": "AgentListPanel",
+  "version": "1.0.0",
+  "document": {
+    "id": "0:0",
+    "name": "Document",
+    "type": "DOCUMENT",
+    "children": [
+      {
+        "id": "0:1",
+        "name": "Page 1",
+        "type": "CANVAS",
+        "children": [
+          {
+            "id": "3:1",
+            "name": "AgentListPanel",
+            "type": "FRAME",
+            "layoutMode": "VERTICAL",
+            "primaryAxisAlignItems": "MIN",
+            "counterAxisAlignItems": "MIN",
+            "itemSpacing": 0,
+            "paddingLeft": 0,
+            "paddingRight": 0,
+            "paddingTop": 0,
+            "paddingBottom": 0,
+            "absoluteBoundingBox": { "x": 0, "y": 0, "width": 240, "height": 600 },
+            "fills": [
+              {
+                "type": "SOLID",
+                "visible": true,
+                "color": { "r": 0.1, "g": 0.1, "b": 0.12, "a": 0.9 }
+              }
+            ],
+            "cornerRadius": 4,
+            "children": [
+              {
+                "id": "3:2",
+                "name": "Header",
+                "type": "FRAME",
+                "layoutMode": "HORIZONTAL",
+                "primaryAxisAlignItems": "MIN",
+                "counterAxisAlignItems": "CENTER",
+                "itemSpacing": 0,
+                "paddingLeft": 12,
+                "paddingRight": 12,
+                "paddingTop": 8,
+                "paddingBottom": 8,
+                "absoluteBoundingBox": { "x": 0, "y": 0, "width": 240, "height": 32 },
+                "fills": [
+                  {
+                    "type": "SOLID",
+                    "visible": true,
+                    "color": { "r": 0.12, "g": 0.12, "b": 0.15, "a": 1.0 }
+                  }
+                ],
+                "children": [
+                  {
+                    "id": "3:3",
+                    "name": "HeaderLabel",
+                    "type": "TEXT",
+                    "characters": "Agents",
+                    "style": {
+                      "fontSize": 13,
+                      "fontWeight": 700,
+                      "fills": [{ "type": "SOLID", "color": { "r": 0.8, "g": 0.8, "b": 0.85, "a": 1.0 } }]
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "3:4",
+                "name": "ScrollArea [height: fill]",
+                "type": "FRAME",
+                "layoutMode": "VERTICAL",
+                "primaryAxisAlignItems": "MIN",
+                "counterAxisAlignItems": "MIN",
+                "itemSpacing": 0,
+                "absoluteBoundingBox": { "x": 0, "y": 32, "width": 240, "height": 568 },
+                "children": [
+                  {
+                    "id": "3:5",
+                    "name": "AgentList",
+                    "type": "FRAME",
+                    "layoutMode": "VERTICAL",
+                    "primaryAxisAlignItems": "MIN",
+                    "counterAxisAlignItems": "MIN",
+                    "itemSpacing": 2,
+                    "paddingLeft": 4,
+                    "paddingRight": 4,
+                    "paddingTop": 4,
+                    "paddingBottom": 4,
+                    "absoluteBoundingBox": { "x": 0, "y": 32, "width": 240, "height": 568 },
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "components": {},
+  "componentSets": {},
+  "styles": {}
+}

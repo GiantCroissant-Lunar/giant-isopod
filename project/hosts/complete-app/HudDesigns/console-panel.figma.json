@@ -1,0 +1,146 @@
+{
+  "name": "ConsolePanel",
+  "version": "1.0.0",
+  "document": {
+    "id": "0:0",
+    "name": "Document",
+    "type": "DOCUMENT",
+    "children": [
+      {
+        "id": "0:1",
+        "name": "Page 1",
+        "type": "CANVAS",
+        "children": [
+          {
+            "id": "5:1",
+            "name": "ConsolePanel",
+            "type": "FRAME",
+            "layoutMode": "VERTICAL",
+            "primaryAxisAlignItems": "MIN",
+            "counterAxisAlignItems": "MIN",
+            "itemSpacing": 0,
+            "absoluteBoundingBox": { "x": 0, "y": 0, "width": 1920, "height": 350 },
+            "fills": [
+              {
+                "type": "SOLID",
+                "visible": true,
+                "color": { "r": 0.08, "g": 0.08, "b": 0.1, "a": 0.95 }
+              }
+            ],
+            "cornerRadius": 4,
+            "children": [
+              {
+                "id": "5:2",
+                "name": "ConsoleHeader",
+                "type": "FRAME",
+                "layoutMode": "HORIZONTAL",
+                "primaryAxisAlignItems": "MIN",
+                "counterAxisAlignItems": "CENTER",
+                "itemSpacing": 8,
+                "paddingLeft": 12,
+                "paddingRight": 12,
+                "paddingTop": 6,
+                "paddingBottom": 6,
+                "absoluteBoundingBox": { "x": 0, "y": 0, "width": 1920, "height": 30 },
+                "fills": [
+                  {
+                    "type": "SOLID",
+                    "visible": true,
+                    "color": { "r": 0.12, "g": 0.12, "b": 0.15, "a": 1.0 }
+                  }
+                ],
+                "children": [
+                  {
+                    "id": "5:3",
+                    "name": "ConsoleTitle",
+                    "type": "TEXT",
+                    "characters": "Console",
+                    "style": {
+                      "fontSize": 12,
+                      "fontWeight": 700,
+                      "fills": [{ "type": "SOLID", "color": { "r": 0.8, "g": 0.8, "b": 0.85, "a": 1.0 } }]
+                    }
+                  },
+                  {
+                    "id": "5:4",
+                    "name": "TabSpacer [width: 16]",
+                    "type": "LINE"
+                  },
+                  {
+                    "id": "5:5",
+                    "name": "TerminalTabBtn",
+                    "type": "TEXT",
+                    "characters": "Terminal",
+                    "style": {
+                      "fontSize": 11,
+                      "fontWeight": 600,
+                      "fills": [{ "type": "SOLID", "color": { "r": 0.7, "g": 0.7, "b": 0.75, "a": 1.0 } }]
+                    }
+                  },
+                  {
+                    "id": "5:6",
+                    "name": "RenderedTabBtn",
+                    "type": "TEXT",
+                    "characters": "Rendered",
+                    "style": {
+                      "fontSize": 11,
+                      "fontWeight": 400,
+                      "fills": [{ "type": "SOLID", "color": { "r": 0.5, "g": 0.5, "b": 0.55, "a": 1.0 } }]
+                    }
+                  },
+                  {
+                    "id": "5:7",
+                    "name": "HeaderSpacer [width: fill]",
+                    "type": "LINE"
+                  },
+                  {
+                    "id": "5:8",
+                    "name": "CloseBtn",
+                    "type": "TEXT",
+                    "characters": "x",
+                    "style": {
+                      "fontSize": 12,
+                      "fontWeight": 700,
+                      "fills": [{ "type": "SOLID", "color": { "r": 0.6, "g": 0.6, "b": 0.65, "a": 1.0 } }]
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "5:9",
+                "name": "ConsoleBody [height: fill]",
+                "type": "FRAME",
+                "layoutMode": "VERTICAL",
+                "primaryAxisAlignItems": "MIN",
+                "counterAxisAlignItems": "MIN",
+                "absoluteBoundingBox": { "x": 0, "y": 30, "width": 1920, "height": 320 },
+                "children": [
+                  {
+                    "id": "5:10",
+                    "name": "TerminalContainer [width: fill] [height: fill]",
+                    "type": "FRAME",
+                    "layoutMode": "VERTICAL",
+                    "absoluteBoundingBox": { "x": 0, "y": 30, "width": 1920, "height": 320 },
+                    "children": []
+                  },
+                  {
+                    "id": "5:11",
+                    "name": "RenderedContainer [width: fill] [height: fill]",
+                    "type": "FRAME",
+                    "visible": false,
+                    "layoutMode": "VERTICAL",
+                    "absoluteBoundingBox": { "x": 0, "y": 30, "width": 1920, "height": 320 },
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "components": {},
+  "componentSets": {},
+  "styles": {}
+}

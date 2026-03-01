@@ -89,6 +89,30 @@ tasks:
       - cmd: npm install
         dir: .agent/skills/agent-browser
 
+  # ── HUD Generation (boom-hud) ──
+
+  hud:generate:
+    desc: Regenerate HUD .tscn scenes from Figma JSON designs via boom-hud
+    vars:
+      BOOM_HUD_CLI: 'C:\lunar-horse\plate-projects\boom-hud\dotnet\src\BoomHud.Cli\BoomHud.Cli.csproj'
+      HUD_DESIGNS: '{{.GODOT_PROJECT}}/HudDesigns'
+      HUD_OUTPUT: '{{.GODOT_PROJECT}}/Scenes/Hud'
+      HUD_NS: GiantIsopod.Hosts.CompleteApp
+    cmds:
+      - for:
+          - swarm-top-bar
+          - agent-list-entry
+          - agent-list-panel
+          - spawn-controls
+          - console-panel
+          - swarm-hud
+        cmd: >-
+          dotnet run --project "{{.BOOM_HUD_CLI}}" -c Release --
+          generate "{{.HUD_DESIGNS}}/{{.ITEM}}.figma.json"
+          --target godot --tscn --tscn-no-script
+          --namespace "{{.HUD_NS}}"
+          --output "{{.HUD_OUTPUT}}"
+
   # ── .NET / Godot ──
 
   build:

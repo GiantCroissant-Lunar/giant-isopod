@@ -1,0 +1,103 @@
+{
+  "name": "SpawnControls",
+  "version": "1.0.0",
+  "document": {
+    "id": "0:0",
+    "name": "Document",
+    "type": "DOCUMENT",
+    "children": [
+      {
+        "id": "0:1",
+        "name": "Page 1",
+        "type": "CANVAS",
+        "children": [
+          {
+            "id": "4:1",
+            "name": "SpawnControls",
+            "type": "FRAME",
+            "layoutMode": "HORIZONTAL",
+            "primaryAxisAlignItems": "MIN",
+            "counterAxisAlignItems": "CENTER",
+            "itemSpacing": 8,
+            "paddingLeft": 12,
+            "paddingRight": 12,
+            "paddingTop": 6,
+            "paddingBottom": 6,
+            "absoluteBoundingBox": { "x": 0, "y": 0, "width": 280, "height": 36 },
+            "fills": [
+              {
+                "type": "SOLID",
+                "visible": true,
+                "color": { "r": 0.1, "g": 0.1, "b": 0.12, "a": 0.9 }
+              }
+            ],
+            "cornerRadius": 4,
+            "children": [
+              {
+                "id": "4:2",
+                "name": "RuntimeDropdown",
+                "type": "FRAME",
+                "layoutMode": "HORIZONTAL",
+                "absoluteBoundingBox": { "x": 0, "y": 0, "width": 160, "height": 24 },
+                "fills": [
+                  {
+                    "type": "SOLID",
+                    "visible": true,
+                    "color": { "r": 0.18, "g": 0.18, "b": 0.22, "a": 1.0 }
+                  }
+                ],
+                "cornerRadius": 3,
+                "children": [
+                  {
+                    "id": "4:3",
+                    "name": "DropdownLabel",
+                    "type": "TEXT",
+                    "characters": "Select runtime...",
+                    "style": {
+                      "fontSize": 12,
+                      "fontWeight": 400,
+                      "fills": [{ "type": "SOLID", "color": { "r": 0.7, "g": 0.7, "b": 0.75, "a": 1.0 } }]
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "4:4",
+                "name": "CreateButton",
+                "type": "FRAME",
+                "layoutMode": "HORIZONTAL",
+                "primaryAxisAlignItems": "CENTER",
+                "counterAxisAlignItems": "CENTER",
+                "absoluteBoundingBox": { "x": 0, "y": 0, "width": 80, "height": 24 },
+                "fills": [
+                  {
+                    "type": "SOLID",
+                    "visible": true,
+                    "color": { "r": 0.2, "g": 0.45, "b": 0.3, "a": 1.0 }
+                  }
+                ],
+                "cornerRadius": 3,
+                "children": [
+                  {
+                    "id": "4:5",
+                    "name": "CreateLabel",
+                    "type": "TEXT",
+                    "characters": "+ Spawn",
+                    "style": {
+                      "fontSize": 12,
+                      "fontWeight": 600,
+                      "fills": [{ "type": "SOLID", "color": { "r": 0.9, "g": 0.95, "b": 0.9, "a": 1.0 } }]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "components": {},
+  "componentSets": {},
+  "styles": {}
+}

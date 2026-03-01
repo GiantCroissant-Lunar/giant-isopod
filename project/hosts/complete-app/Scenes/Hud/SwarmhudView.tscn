@@ -1,0 +1,40 @@
+[gd_scene load_steps=1 format=3]
+
+[node name="SwarmHudView" type="VBoxContainer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="TopBarSlot" type="HBoxContainer" parent="."]
+custom_minimum_size = Vector2(0, 32)
+
+[node name="MiddleRow" type="HBoxContainer" parent="."]
+size_flags_vertical = 3
+
+[node name="LeftColumn" type="VBoxContainer" parent="MiddleRow"]
+custom_minimum_size = Vector2(300, 0)
+
+[node name="SpawnControlsSlot" type="HBoxContainer" parent="MiddleRow/LeftColumn"]
+
+[node name="LeftSpacer" type="Control" parent="MiddleRow/LeftColumn"]
+size_flags_vertical = 3
+
+[node name="CenterArea" type="VBoxContainer" parent="MiddleRow"]
+size_flags_horizontal = 3
+
+[node name="GenUIHost" type="VBoxContainer" parent="MiddleRow/CenterArea"]
+size_flags_horizontal = 3
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="RightColumn" type="VBoxContainer" parent="MiddleRow"]
+custom_minimum_size = Vector2(240, 0)
+
+[node name="AgentPanelSlot" type="VBoxContainer" parent="MiddleRow/RightColumn"]
+size_flags_vertical = 3
+
+[node name="ConsolePanelSlot" type="VBoxContainer" parent="."]
+custom_minimum_size = Vector2(0, 350)

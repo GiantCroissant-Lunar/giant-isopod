@@ -1,0 +1,117 @@
+{
+  "name": "SwarmHud",
+  "version": "1.0.0",
+  "document": {
+    "id": "0:0",
+    "name": "Document",
+    "type": "DOCUMENT",
+    "children": [
+      {
+        "id": "0:1",
+        "name": "Page 1",
+        "type": "CANVAS",
+        "children": [
+          {
+            "id": "6:1",
+            "name": "SwarmHud",
+            "type": "FRAME",
+            "layoutMode": "VERTICAL",
+            "primaryAxisAlignItems": "MIN",
+            "counterAxisAlignItems": "MIN",
+            "itemSpacing": 0,
+            "absoluteBoundingBox": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+            "children": [
+              {
+                "id": "6:2",
+                "name": "TopBarSlot [width: fill]",
+                "type": "FRAME",
+                "layoutMode": "HORIZONTAL",
+                "absoluteBoundingBox": { "x": 0, "y": 0, "width": 1920, "height": 32 },
+                "children": []
+              },
+              {
+                "id": "6:3",
+                "name": "MiddleRow [width: fill] [height: fill]",
+                "type": "FRAME",
+                "layoutMode": "HORIZONTAL",
+                "primaryAxisAlignItems": "SPACE_BETWEEN",
+                "counterAxisAlignItems": "MIN",
+                "itemSpacing": 0,
+                "absoluteBoundingBox": { "x": 0, "y": 32, "width": 1920, "height": 698 },
+                "children": [
+                  {
+                    "id": "6:4",
+                    "name": "LeftColumn",
+                    "type": "FRAME",
+                    "layoutMode": "VERTICAL",
+                    "primaryAxisAlignItems": "MAX",
+                    "counterAxisAlignItems": "MIN",
+                    "itemSpacing": 8,
+                    "paddingLeft": 12,
+                    "paddingTop": 8,
+                    "absoluteBoundingBox": { "x": 0, "y": 32, "width": 300, "height": 698 },
+                    "children": [
+                      {
+                        "id": "6:5",
+                        "name": "SpawnControlsSlot",
+                        "type": "FRAME",
+                        "layoutMode": "HORIZONTAL",
+                        "absoluteBoundingBox": { "x": 12, "y": 40, "width": 280, "height": 36 },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "id": "6:6",
+                    "name": "CenterArea [width: fill] [height: fill]",
+                    "type": "FRAME",
+                    "layoutMode": "VERTICAL",
+                    "absoluteBoundingBox": { "x": 300, "y": 32, "width": 1380, "height": 698 },
+                    "children": [
+                      {
+                        "id": "6:7",
+                        "name": "GenUIHost [width: fill] [height: fill]",
+                        "type": "FRAME",
+                        "layoutMode": "VERTICAL",
+                        "absoluteBoundingBox": { "x": 300, "y": 32, "width": 1380, "height": 698 },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "id": "6:8",
+                    "name": "RightColumn",
+                    "type": "FRAME",
+                    "layoutMode": "VERTICAL",
+                    "absoluteBoundingBox": { "x": 1680, "y": 32, "width": 240, "height": 698 },
+                    "children": [
+                      {
+                        "id": "6:9",
+                        "name": "AgentPanelSlot [height: fill]",
+                        "type": "FRAME",
+                        "layoutMode": "VERTICAL",
+                        "absoluteBoundingBox": { "x": 1680, "y": 32, "width": 240, "height": 698 },
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "6:10",
+                "name": "ConsolePanelSlot [width: fill]",
+                "type": "FRAME",
+                "layoutMode": "VERTICAL",
+                "absoluteBoundingBox": { "x": 0, "y": 730, "width": 1920, "height": 350 },
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "components": {},
+  "componentSets": {},
+  "styles": {}
+}

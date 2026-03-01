@@ -1,0 +1,12 @@
+[gd_scene load_steps=1 format=3]
+
+[node name="SpawnControlsView" type="HBoxContainer"]
+custom_minimum_size = Vector2(0, 36)
+theme_override_constants/separation = 8
+
+[node name="RuntimeDropdown" type="OptionButton" parent="."]
+custom_minimum_size = Vector2(160, 0)
+
+[node name="CreateButton" type="Button" parent="."]
+custom_minimum_size = Vector2(80, 0)
+text = "+ Spawn"
