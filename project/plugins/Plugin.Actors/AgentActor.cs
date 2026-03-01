@@ -152,6 +152,8 @@ public sealed class AgentActor : UntypedActor
 
             case TaskAssigned task:
                 _activeTaskCount++;
+                if (task.Budget?.MaxTokens is { } maxTokens)
+                    _rpcActor?.Tell(new SetTokenBudget(task.TaskId, maxTokens));
                 Context.Child("tasks").Forward(task);
                 break;
 

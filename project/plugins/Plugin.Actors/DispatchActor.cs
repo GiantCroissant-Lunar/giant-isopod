@@ -129,8 +129,9 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             _logger.LogInformation("Task {TaskId} awarded to {AgentId} via bid (fitness={Fitness:F2}, {BidCount} bids)",
                 taskId, winner.AgentId, winner.Fitness, session.Bids.Count);
 
-            // Notify winner and losers
-            var assignment = new TaskAssigned(taskId, winner.AgentId);
+            // Notify winner and losers — preserve budget from original request
+            var budget = (session.Request as TaskRequestWithBudget)?.Budget;
+            var assignment = new TaskAssigned(taskId, winner.AgentId, budget);
             _agentSupervisor.Tell(assignment);
             session.OriginalSender.Tell(assignment);
 
@@ -144,9 +145,10 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             // Fallback: first-match assignment (original behavior)
             _logger.LogWarning("No bids received for task {TaskId}, using first-match fallback", taskId);
             var selectedAgent = session.CapableAgents[0];
-            var assignment = new TaskAssigned(taskId, selectedAgent);
-            _agentSupervisor.Tell(assignment);
-            session.OriginalSender.Tell(assignment);
+            var fallbackBudget = (session.Request as TaskRequestWithBudget)?.Budget;
+            var fallbackAssignment = new TaskAssigned(taskId, selectedAgent, fallbackBudget);
+            _agentSupervisor.Tell(fallbackAssignment);
+            session.OriginalSender.Tell(fallbackAssignment);
         }
     }
 

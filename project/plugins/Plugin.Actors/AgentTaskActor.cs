@@ -27,7 +27,7 @@ public sealed class AgentTaskActor : UntypedActor, IWithTimers
         switch (message)
         {
             case TaskAssigned task:
-                var budget = GetBudgetForTask(task.TaskId);
+                var budget = task.Budget;
                 var state = new TaskState(task.TaskId, DateTimeOffset.UtcNow, budget);
                 _activeTasks[task.TaskId] = state;
 
@@ -95,19 +95,6 @@ public sealed class AgentTaskActor : UntypedActor, IWithTimers
             TokenBudgetExceeded: false);
 
         Context.System.EventStream.Publish(report);
-    }
-
-    /// <summary>
-    /// Resolves budget from the pending TaskRequestWithBudget if available.
-    /// This is a simplified lookup — in production the budget would flow through the assignment.
-    /// </summary>
-    private TaskBudget? GetBudgetForTask(string taskId)
-    {
-        // Budget is passed through the message chain; for now we rely on
-        // the TaskGraphActor or caller sending TaskRequestWithBudget, which
-        // the DispatchActor preserves through assignment. The budget is
-        // cached in state when the task is assigned.
-        return null; // Will be enhanced when budget flows through assignment
     }
 
     private record TaskState(string TaskId, DateTimeOffset StartedAt, TaskBudget? Budget);

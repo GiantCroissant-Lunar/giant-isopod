@@ -27,7 +27,7 @@ public record TaskRequest(string TaskId, string Description, IReadOnlySet<string
 public record TaskRequestWithBudget(
     string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities,
     TaskBudget Budget) : TaskRequest(TaskId, Description, RequiredCapabilities);
-public record TaskAssigned(string TaskId, string AgentId);
+public record TaskAssigned(string TaskId, string AgentId, TaskBudget? Budget = null);
 public record TaskCompleted(string TaskId, string AgentId, bool Success, string? Summary = null);
 public record TaskFailed(string TaskId, string? Reason = null, IReadOnlySet<string>? UnmetCapabilities = null);
 public record TaskTimedOut(string TaskId);
