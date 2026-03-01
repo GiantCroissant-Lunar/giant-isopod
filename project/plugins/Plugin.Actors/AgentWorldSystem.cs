@@ -14,8 +14,10 @@ public sealed class AgentWorldSystem : IDisposable
 
     public IActorRef Registry { get; }
     public IActorRef MemorySupervisor { get; }
+    public IActorRef Blackboard { get; }
     public IActorRef AgentSupervisor { get; }
     public IActorRef Dispatch { get; }
+    public IActorRef TaskGraph { get; }
     public IActorRef Viewport { get; }
 
     public AgentWorldSystem(AgentWorldConfig config, ILoggerFactory loggerFactory)
@@ -46,6 +48,11 @@ public sealed class AgentWorldSystem : IDisposable
                 loggerFactory.CreateLogger<MemorySupervisorActor>())),
             "memory");
 
+        Blackboard = _system.ActorOf(
+            Props.Create(() => new BlackboardActor(
+                loggerFactory.CreateLogger<BlackboardActor>())),
+            "blackboard");
+
         AgentSupervisor = _system.ActorOf(
             Props.Create(() => new AgentSupervisorActor(
                 Registry, MemorySupervisor, config,
@@ -57,6 +64,12 @@ public sealed class AgentWorldSystem : IDisposable
                 Registry, AgentSupervisor,
                 loggerFactory.CreateLogger<DispatchActor>())),
             "dispatch");
+
+        TaskGraph = _system.ActorOf(
+            Props.Create(() => new TaskGraphActor(
+                Dispatch,
+                loggerFactory.CreateLogger<TaskGraphActor>())),
+            "taskgraph");
 
         Viewport = _system.ActorOf(
             Props.Create(() => new ViewportActor(

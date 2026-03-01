@@ -61,7 +61,7 @@ public sealed class AgentSupervisorActor : UntypedActor
                         _registry,
                         _memorySupervisor,
                         _config,
-                        _loggerFactory.CreateLogger<AgentActor>(),
+                        _loggerFactory,
                         spawn.CliProviderId)),
                     spawn.AgentId);
 
@@ -93,6 +93,11 @@ public sealed class AgentSupervisorActor : UntypedActor
             case TaskAssigned task:
                 if (_agents.TryGetValue(task.AgentId, out var taskTarget))
                     taskTarget.Forward(message);
+                break;
+
+            case ForwardToAgent forward:
+                if (_agents.TryGetValue(forward.AgentId, out var forwardTarget))
+                    forwardTarget.Tell(forward.Payload, Sender);
                 break;
         }
     }

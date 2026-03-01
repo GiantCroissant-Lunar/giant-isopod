@@ -11,6 +11,7 @@
     <PackageReference Include="Akka" Version="1.5.35" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+    <PackageReference Include="Plate.ModernSatsuma" Version="0.2.0-topological" />
   </ItemGroup>
 
   <ItemGroup>
