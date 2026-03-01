@@ -1,4 +1,4 @@
-# Handover: Swarm Enhancements (Sessions 1–3)
+# Handover: Swarm Enhancements (Sessions 1–4)
 
 Date: 2026-03-01
 
@@ -10,6 +10,9 @@ and ADR-003 memory architecture. PRs #1 and #2 merged to main.
 Session 3 fixed cross-graph TaskId collisions (review comment #7), added viewport DAG
 visualization pipeline, GodotXterm fallback terminal, and TaskGraphView (GraphEdit).
 
+Session 4 resolved all four session-3 handover priorities: F5 demo graph trigger,
+user:// recording paths, GodotXterm native libs, and MemvidActor CliWrap integration.
+
 ## Branch & PR State
 
 ### giant-isopod
@@ -18,16 +21,31 @@ visualization pipeline, GodotXterm fallback terminal, and TaskGraphView (GraphEd
 |--------|------|----|---------|--------|
 | `worktree-swarm-enhancements` | `main` | #1 | 10 | **Merged** |
 | `feat/risk-gate-and-memory` | `main` | #2 | 3 | **Merged** |
-| `feat/taskid-collision-and-dag-viz` | `main` | — | 8 | Session 3 work, pending PR |
+| `feat/taskid-collision-and-dag-viz` | `main` | #3 | 13 | Sessions 3–4, PR pending |
 
-Worktree path (session 3):
+Worktree path:
 - `C:\lunar-horse\yokan-projects\giant-isopod\.claude\worktrees\swarm-enhancements`
 
 ### modern-satsuma
 
 Packed as `Plate.ModernSatsuma 0.2.0-topological` in local NuGet feed.
 
-## What Session 3 Contains (8 commits on `feat/taskid-collision-and-dag-viz`)
+## What Session 4 Contains (5 new commits)
+
+| Commit | Type | What |
+|--------|------|------|
+| `8cfbd4a` | feat | F5 keyboard shortcut submits demo 6-node DAG through full pipeline |
+| `20acc56` | fix | Console log + asciicast recordings use Godot `user://` instead of `%USERPROFILE%` |
+| `1619dc6` | feat | MemvidActor wired to MemvidClient via CliWrap (PipeTo async pattern) |
+| `dc13ba7` | chore | Track TaskGraphView.cs.uid |
+
+### GodotXterm native libs (local-only, not committed)
+
+Downloaded [godot-xterm v4.0.3](https://github.com/lihop/godot-xterm/releases/tag/v4.0.3)
+native binaries into `addons/godot_xterm/lib/`. The `.gitignore` in `lib/` excludes them
+from git. New clones need to re-download — see setup instructions below.
+
+## What Session 3 Contains (8 commits)
 
 | Commit | Type | What |
 |--------|------|------|
@@ -56,40 +74,32 @@ ActorSystem "agent-world"
 └── /user/viewport          ← ViewportActor (observer bridge to Godot, task graph events)
 ```
 
+## Setup: GodotXterm Native Libs
+
+The native binaries are git-ignored. To set up on a new machine:
+
+```bash
+curl -L -o /tmp/godot-xterm.zip https://github.com/lihop/godot-xterm/releases/download/v4.0.3/godot-xterm-v4.0.3.zip
+unzip /tmp/godot-xterm.zip "addons/godot_xterm/lib/*" -d /tmp/gxt
+cp /tmp/gxt/addons/godot_xterm/lib/*.dll project/hosts/complete-app/addons/godot_xterm/lib/
+# On Linux: cp /tmp/gxt/addons/godot_xterm/lib/*.so project/hosts/complete-app/addons/godot_xterm/lib/
+rm -rf /tmp/godot-xterm.zip /tmp/gxt
+```
+
+Without native libs, the app still runs — HudController falls back to RichTextLabel console.
+
 ## Remaining Work (Prioritized)
 
-### Next session priorities
+### Next priorities
 
-1. **TaskGraphView not visible** — TaskGraphView is wired and renders in the HUD
-   CanvasLayer, but it is hidden by default (`Visible = false`) and only shows when
-   a `SubmitTaskGraph` message is received. There is currently **no UI to submit a
-   task graph**. Options:
-   - Add a "Submit Test Graph" button to HUD that sends a sample SubmitTaskGraph
-   - Wire a keyboard shortcut (e.g. F5) to submit a demo DAG
-   - Wait until a real orchestrator/planner submits graphs programmatically
-
-2. **Asciicast recordings in user home** — `.cast` files are written to
-   `%USERPROFILE%\giant-isopod-recordings\` (hardcoded in HudController line 44).
-   Should be moved to `user://recordings/` (Godot user data dir) or made
-   configurable via AgentWorldConfig.
-
-3. **GodotXterm native libs missing** — `addons/godot_xterm/lib/` is empty.
-   The RichTextLabel fallback works, but for proper terminal rendering, download
-   or build the GodotXterm native binaries for Windows x86_64 and place them in
-   `project/hosts/complete-app/addons/godot_xterm/lib/`.
-
-4. **Memvid CliWrap integration** — wire MemvidActor to actual `memvid put`/`search`
-   CLI calls. Scope per-task (episodic memory).
-
-### Later
-
-5. Agent-to-agent communication (via blackboard or direct messaging)
-6. Fitness refinements (specialization depth, performance history)
-7. Persistence (serialize GraphState to disk or embedded DB)
-8. Long-term knowledge store (SQLite/LiteDB, KnowledgeStoreActor)
-9. Per-provider token parsing (replace char-based approximation)
-10. Consensus voting (multi-agent approval)
-11. GOAP planning (planner → DAG → TaskGraphActor)
+1. Agent-to-agent communication (via blackboard or direct messaging)
+2. Fitness refinements (specialization depth, performance history)
+3. Persistence (serialize GraphState to disk or embedded DB)
+4. Long-term knowledge store (SQLite/LiteDB, KnowledgeStoreActor)
+5. Per-provider token parsing (replace char-based approximation)
+6. Consensus voting (multi-agent approval)
+7. GOAP planning (planner → DAG → TaskGraphActor)
+8. Task-scoped `.mv2` files (ADR-003 calls for per-task, current is per-agent)
 
 ## Key Design Decisions
 
@@ -114,20 +124,27 @@ ActorSystem "agent-world"
   instantiation. If native lib is missing, falls back to RichTextLabel-based console.
   ClassDB.ClassExists("Terminal") is unreliable (class registered from .gdextension metadata
   even when DLL is absent).
+- **MemvidActor CliWrap (session 4)**: MemvidActor delegates to MemvidClient (CliWrap 3.8.2).
+  Uses Akka PipeTo pattern for async bridging. MemvidExecutable config flows from
+  AgentWorldConfig → MemorySupervisorActor → MemvidActor constructor.
 
-## Key File Paths (Session 3)
+## Key File Paths
 
 | File | Role |
 |------|------|
 | `project/contracts/Contracts.Core/Messages.cs` | GraphId on task messages + Notify* records |
 | `project/contracts/Contracts.Core/IViewportBridge.cs` | 3 default no-op task graph methods |
+| `project/contracts/Contracts.Core/IMemoryStore.cs` | IMemoryStore interface + MemoryHit record |
 | `project/plugins/Plugin.Actors/TaskGraphActor.cs` | TryFindGraph, viewport notifications |
 | `project/plugins/Plugin.Actors/AgentTaskActor.cs` | GraphId storage + enrichment |
 | `project/plugins/Plugin.Actors/AgentActor.cs` | Routes graph-tagged completions to /user/taskgraph |
 | `project/plugins/Plugin.Actors/DispatchActor.cs` | GraphId through bid/approval pipeline |
 | `project/plugins/Plugin.Actors/ViewportActor.cs` | Handles Notify* + TaskGraphCompleted |
-| `project/plugins/Plugin.Actors/AgentWorldSystem.cs` | Viewport created before TaskGraph |
-| `project/hosts/complete-app/Scripts/GodotViewportBridge.cs` | 3 new event records |
-| `project/hosts/complete-app/Scripts/TaskGraphView.cs` | **New** — GraphEdit DAG visualization |
-| `project/hosts/complete-app/Scripts/HudController.cs` | Fallback terminal + WriteToTerminal |
-| `project/hosts/complete-app/Scripts/Main.cs` | TaskGraphView in HUDRoot + drain loop |
+| `project/plugins/Plugin.Actors/AgentWorldSystem.cs` | Viewport created before TaskGraph; config wiring |
+| `project/plugins/Plugin.Actors/MemvidActor.cs` | CliWrap-backed episodic memory (PipeTo async) |
+| `project/plugins/Plugin.Actors/MemorySupervisorActor.cs` | Per-agent MemvidActor supervisor |
+| `project/plugins/Plugin.Process/MemvidClient.cs` | CliWrap memvid CLI wrapper |
+| `project/hosts/complete-app/Scripts/GodotViewportBridge.cs` | 3 task graph event records |
+| `project/hosts/complete-app/Scripts/TaskGraphView.cs` | GraphEdit DAG visualization |
+| `project/hosts/complete-app/Scripts/HudController.cs` | Fallback terminal + user:// paths |
+| `project/hosts/complete-app/Scripts/Main.cs` | TaskGraphView + F5 demo graph + drain loop |
