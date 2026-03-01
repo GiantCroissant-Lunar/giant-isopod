@@ -18,8 +18,6 @@ from memory_sidecar.config import (
 class TestDataDir:
     def test_default_path(self):
         with mock.patch.dict(os.environ, {}, clear=True):
-            # Remove env var if present
-            os.environ.pop("MEMORY_SIDECAR_DATA_DIR", None)
             result = data_dir()
             assert result == Path("data/memory")
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 import struct
 
+import pytest
+
 from memory_sidecar.storage import (
     _serialize_vec,
     delete_stale_chunks,
@@ -75,14 +77,11 @@ class TestInitCodebaseSchema:
             "VALUES ('f.py', '0:0', 'python', 'code', '2024-01-01')"
         )
         # Duplicate should fail
-        try:
+        with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO code_chunks (filename, location, language, code, updated_at) "
                 "VALUES ('f.py', '0:0', 'python', 'other', '2024-01-01')"
             )
-            assert False, "Should have raised IntegrityError"
-        except sqlite3.IntegrityError:
-            pass
 
 
 class TestInitKnowledgeSchema:
