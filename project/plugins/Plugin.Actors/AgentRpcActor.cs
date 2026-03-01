@@ -17,6 +17,12 @@ public sealed class AgentRpcActor : UntypedActor
     private IAgentProcess? _process;
     private CancellationTokenSource? _cts;
 
+    // Token budget tracking
+    private long _cumulativeOutputChars;
+    private int? _maxTokenBudget;
+    private string? _activeTaskId;
+    private bool _tokenBudgetWarned;
+
     public AgentRpcActor(string agentId, AgentWorldConfig config, string? cliProviderId = null)
     {
         _agentId = agentId;
@@ -37,8 +43,40 @@ public sealed class AgentRpcActor : UntypedActor
                 break;
 
             case ProcessEvent evt:
+                TrackTokenUsage(evt.RawJson);
                 Context.Parent.Tell(evt);
                 break;
+
+            case SetTokenBudget budget:
+                _activeTaskId = budget.TaskId;
+                _maxTokenBudget = budget.MaxTokens;
+                _cumulativeOutputChars = 0;
+                _tokenBudgetWarned = false;
+                break;
+        }
+    }
+
+    private void TrackTokenUsage(string output)
+    {
+        _cumulativeOutputChars += output.Length;
+
+        if (_maxTokenBudget is not { } max || _activeTaskId is null) return;
+
+        var estimatedTokens = (int)(_cumulativeOutputChars / 4);
+
+        // Kill process at 120% of budget
+        if (estimatedTokens > max * 1.2)
+        {
+            Context.ActorSelection("../tasks")
+                .Tell(new TokenBudgetExceeded(_activeTaskId, estimatedTokens, max));
+            _cts?.Cancel();
+        }
+        // Warn at 100% of budget
+        else if (!_tokenBudgetWarned && estimatedTokens > max)
+        {
+            _tokenBudgetWarned = true;
+            Context.ActorSelection("../tasks")
+                .Tell(new TokenBudgetExceeded(_activeTaskId, estimatedTokens, max));
         }
     }
 
@@ -105,3 +143,6 @@ public sealed class AgentRpcActor : UntypedActor
         _ = _process?.DisposeAsync();
     }
 }
+
+/// <summary>Sets the token budget for the active task on this RPC actor.</summary>
+public record SetTokenBudget(string TaskId, int MaxTokens);

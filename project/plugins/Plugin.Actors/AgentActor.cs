@@ -19,12 +19,19 @@ public sealed class AgentActor : UntypedActor
     private readonly IActorRef _registry;
     private readonly IActorRef _memorySupervisor;
     private readonly AgentWorldConfig _config;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<AgentActor> _logger;
     private readonly GiantIsopod.Plugin.Mapping.ProtocolMapper _mapper = new();
 
     private IActorRef? _rpcActor;
     private bool _piConnected;
     private ICancelable? _demoTimer;
+
+    private HashSet<string> _capabilities = new();
+    private readonly Dictionary<string, string> _workingMemory = new();
+    private int _activeTaskCount;
+    private const int MaxConcurrentTasks = 3;
+    private const double MinBidThreshold = 0.5;
 
     private static readonly AgentActivityState[] DemoStates =
     [
@@ -44,7 +51,7 @@ public sealed class AgentActor : UntypedActor
         IActorRef registry,
         IActorRef memorySupervisor,
         AgentWorldConfig config,
-        ILogger<AgentActor> logger,
+        ILoggerFactory loggerFactory,
         string? cliProviderId = null)
     {
         _agentId = agentId;
@@ -55,7 +62,8 @@ public sealed class AgentActor : UntypedActor
         _registry = registry;
         _memorySupervisor = memorySupervisor;
         _config = config;
-        _logger = logger;
+        _loggerFactory = loggerFactory;
+        _logger = loggerFactory.CreateLogger<AgentActor>();
     }
 
     protected override void PreStart()
@@ -65,13 +73,15 @@ public sealed class AgentActor : UntypedActor
             "rpc");
 
         Context.ActorOf(
-            Props.Create(() => new AgentTaskActor(_agentId)),
+            Props.Create(() => new AgentTaskActor(_agentId,
+                _loggerFactory.CreateLogger<AgentTaskActor>())),
             "tasks");
 
         // Load AIEOS profile for visual info and capabilities
         var visualInfo = LoadVisualInfo();
         var capabilities = LoadCapabilities();
 
+        _capabilities = capabilities;
         _registry.Tell(new RegisterSkills(_agentId, capabilities));
 
         // Notify viewport with rich visual info
@@ -136,8 +146,40 @@ public sealed class AgentActor : UntypedActor
                 StartDemoTimer();
                 break;
 
+            case TaskAvailable available:
+                EvaluateAndBid(available);
+                break;
+
             case TaskAssigned task:
+                _activeTaskCount++;
                 Context.Child("tasks").Forward(task);
+                break;
+
+            case TaskCompleted completed:
+                _activeTaskCount = Math.Max(0, _activeTaskCount - 1);
+                Context.Child("tasks").Forward(completed);
+                break;
+
+            case TaskFailed failed:
+                _activeTaskCount = Math.Max(0, _activeTaskCount - 1);
+                Context.Child("tasks").Forward(failed);
+                break;
+
+            case TaskBidRejected:
+                // No action needed — bid lost
+                break;
+
+            case SetWorkingMemory set:
+                _workingMemory[set.Key] = set.Value;
+                break;
+
+            case GetWorkingMemory get:
+                _workingMemory.TryGetValue(get.Key, out var val);
+                Sender.Tell(new WorkingMemoryValue(_agentId, get.Key, val));
+                break;
+
+            case ClearWorkingMemory:
+                _workingMemory.Clear();
                 break;
 
             case DemoTick tick:
@@ -207,6 +249,30 @@ public sealed class AgentActor : UntypedActor
         }
 
         return new HashSet<string>();
+    }
+
+    private void EvaluateAndBid(TaskAvailable available)
+    {
+        // Don't bid if at capacity
+        if (_activeTaskCount >= MaxConcurrentTasks) return;
+
+        // Compute fitness: fraction of required capabilities we have
+        if (available.RequiredCapabilities.Count == 0) return;
+        var matchCount = available.RequiredCapabilities.Count(c => _capabilities.Contains(c));
+        var fitness = (double)matchCount / available.RequiredCapabilities.Count;
+
+        // Don't bid if fitness is below threshold
+        if (fitness < MinBidThreshold) return;
+
+        var bid = new TaskBid(
+            available.TaskId,
+            _agentId,
+            fitness,
+            _activeTaskCount,
+            TimeSpan.FromMinutes(5)); // default estimate
+
+        // Reply to dispatch (sender is AgentSupervisor, but bid goes to dispatch via EventStream)
+        Context.System.ActorSelection("/user/dispatch").Tell(bid);
     }
 
     private static AgentActivityState MapTextToState(string text)
