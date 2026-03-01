@@ -38,6 +38,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             case TaskFailed failed:
                 HandleTaskFailed(failed);
                 break;
+
+            case GraphTimedOut timedOut:
+                HandleGraphTimedOut(timedOut);
+                break;
         }
     }
 
@@ -144,6 +148,27 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 }
             }
         }
+    }
+
+    private void HandleGraphTimedOut(GraphTimedOut timedOut)
+    {
+        if (!_graphs.TryGetValue(timedOut.GraphId, out var state))
+            return;
+
+        _logger.LogWarning("Graph {GraphId} deadline exceeded — aborting all pending tasks", timedOut.GraphId);
+
+        // Cancel all non-terminal nodes
+        foreach (var (taskId, status) in state.Status)
+        {
+            if (status is TaskNodeStatus.Pending or TaskNodeStatus.Ready or TaskNodeStatus.Dispatched)
+            {
+                state.Status[taskId] = status == TaskNodeStatus.Dispatched
+                    ? TaskNodeStatus.Failed
+                    : TaskNodeStatus.Cancelled;
+            }
+        }
+
+        CheckGraphCompletion(timedOut.GraphId, state);
     }
 
     private void CheckGraphCompletion(string graphId, GraphState state)
