@@ -24,6 +24,10 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
     private readonly Dictionary<string, PendingApproval> _pendingApprovals = new();
 
     private static readonly TimeSpan DefaultBidWindow = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan ApprovalTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>Only accept RiskApproved/RiskDenied from the viewport actor.</summary>
+    private const string TrustedApproverPath = "/user/viewport";
 
     public ITimerScheduler Timers { get; set; } = null!;
 
@@ -54,11 +58,27 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
                 break;
 
             case RiskApproved approved:
+                if (!IsFromTrustedApprover())
+                {
+                    _logger.LogWarning("Rejected RiskApproved for {TaskId} from untrusted sender {Sender}",
+                        approved.TaskId, Sender.Path);
+                    break;
+                }
                 HandleRiskApproved(approved.TaskId);
                 break;
 
             case RiskDenied denied:
+                if (!IsFromTrustedApprover())
+                {
+                    _logger.LogWarning("Rejected RiskDenied for {TaskId} from untrusted sender {Sender}",
+                        denied.TaskId, Sender.Path);
+                    break;
+                }
                 HandleRiskDenied(denied.TaskId, denied.Reason);
+                break;
+
+            case ApprovalTimedOut timedOut:
+                HandleApprovalTimeout(timedOut.TaskId);
                 break;
         }
     }
@@ -181,8 +201,15 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             _pendingApprovals[taskId] = new PendingApproval(taskId, selectedAgentId, budget, session.OriginalSender);
             var approval = new RiskApprovalRequired(taskId, RiskLevel.Critical, session.Request.Description);
             Context.System.EventStream.Publish(approval);
-            _logger.LogWarning("Task {TaskId} requires risk approval (Critical) — assignment to {AgentId} held",
-                taskId, selectedAgentId);
+
+            // Start timeout timer to prevent indefinite pending state
+            Timers.StartSingleTimer(
+                $"approval-{taskId}",
+                new ApprovalTimedOut(taskId),
+                ApprovalTimeout);
+
+            _logger.LogWarning("Task {TaskId} requires risk approval (Critical) — assignment to {AgentId} held ({Timeout}s timeout)",
+                taskId, selectedAgentId, ApprovalTimeout.TotalSeconds);
             return;
         }
 
@@ -196,6 +223,11 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         originalSender.Tell(assignment);
     }
 
+    private bool IsFromTrustedApprover()
+    {
+        return Sender.Path.ToString().EndsWith(TrustedApproverPath);
+    }
+
     private void HandleRiskApproved(string taskId)
     {
         if (!_pendingApprovals.Remove(taskId, out var pending))
@@ -204,6 +236,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             return;
         }
 
+        Timers.Cancel($"approval-{taskId}");
         _logger.LogInformation("Task {TaskId} risk approved — assigning to {AgentId}", taskId, pending.AgentId);
         AwardTask(taskId, pending.AgentId, pending.Budget, pending.OriginalSender);
     }
@@ -216,8 +249,19 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             return;
         }
 
+        Timers.Cancel($"approval-{taskId}");
         _logger.LogWarning("Task {TaskId} risk denied: {Reason}", taskId, reason);
         pending.OriginalSender.Tell(new TaskFailed(taskId, $"Risk denied: {reason}"));
+    }
+
+    private void HandleApprovalTimeout(string taskId)
+    {
+        if (!_pendingApprovals.Remove(taskId, out var pending))
+            return;
+
+        _logger.LogWarning("Task {TaskId} risk approval timed out after {Timeout}s — denying",
+            taskId, ApprovalTimeout.TotalSeconds);
+        pending.OriginalSender.Tell(new TaskFailed(taskId, "Risk approval timed out"));
     }
 
     private sealed class BidSession
@@ -236,6 +280,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
     }
 
     private sealed record BidWindowClosed(string TaskId);
+    private sealed record ApprovalTimedOut(string TaskId);
     private sealed record PendingApproval(string TaskId, string AgentId, TaskBudget? Budget, IActorRef OriginalSender);
 }
 
