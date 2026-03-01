@@ -4,188 +4,135 @@ using GiantIsopod.Contracts.Core;
 namespace GiantIsopod.Hosts.CompleteApp;
 
 /// <summary>
-/// HUD controller with agent list, spawn/remove buttons, and status display.
+/// HUD orchestrator — loads generated .tscn scenes, wires events,
+/// delegates to TerminalManager and AgentListManager.
 /// </summary>
 public partial class HudController : Control
 {
-    public event Action<string>? OnSpawnRequested; // passes selected runtime id
+    public event Action<string>? OnSpawnRequested;
     public event Action<string>? OnRemoveRequested;
 
-    private Label? _agentCountLabel;
-    private Label? _versionLabel;
-    private Label? _processCountLabel;
-    private VBoxContainer? _agentList;
+    // Scene paths
+    private const string SwarmHudScene = "res://Scenes/Hud/SwarmhudView.tscn";
+    private const string TopBarScene = "res://Scenes/Hud/SwarmtopbarView.tscn";
+    private const string AgentPanelScene = "res://Scenes/Hud/AgentlistpanelView.tscn";
+    private const string SpawnControlsScene = "res://Scenes/Hud/SpawncontrolsView.tscn";
+    private const string ConsoleScene = "res://Scenes/Hud/ConsolepanelView.tscn";
+
+    private HudSceneLoader _sceneLoader = null!;
+    private AgentListManager _agentListManager = null!;
+    private TerminalManager _terminalManager = null!;
+
+    private OptionButton? _runtimeDropdown;
+    private Button? _createButton;
+    private List<string> _providerIds = new();
     private Control? _genUIHost;
 
-    private readonly Dictionary<string, AgentHudEntry> _entries = new();
-    private readonly HashSet<string> _activeRuntimes = new();
-    private OptionButton? _providerDropdown;
-    private List<string> _providerIds = new();
-
-    // Console view — GodotXterm Terminal + PTY per agent
+    // Console state
     private PanelContainer? _consolePanel;
     private Label? _consoleTitle;
     private string? _selectedAgentId;
-    private Control? _terminalContainer; // holds the currently visible Terminal
-    private readonly Dictionary<string, GodotObject> _agentTerminals = new(); // agentId → AgentTerminal instance
-    private readonly HashSet<string> _fallbackTerminals = new(); // agents using RichTextLabel fallback
-    private readonly Dictionary<string, GiantIsopod.Plugin.Process.AsciicastRecorder> _agentRecorders = new();
-
-    // Markdown rendered view — RichTextLabel per agent
-    private Control? _markdownContainer;
-    private readonly Dictionary<string, RichTextLabel> _agentMarkdownLabels = new();
-    private readonly Dictionary<string, System.Text.StringBuilder> _agentMarkdownBuffers = new();
+    private bool _showingTerminal = true;
     private Button? _tabTerminalBtn;
     private Button? _tabRenderedBtn;
-    private bool _showingTerminal = true;
-
-    private string _consoleLogPath = null!;
-    private string _recordingsDir = null!;
+    private Control? _terminalContainer;
+    private Control? _markdownContainer;
 
     public override void _Ready()
     {
-        var userDir = ProjectSettings.GlobalizePath("user://");
-        _consoleLogPath = System.IO.Path.Combine(userDir, "giant-isopod-console.log");
-        _recordingsDir = System.IO.Path.Combine(userDir, "recordings");
+        _sceneLoader = new HudSceneLoader(this);
+        _agentListManager = new AgentListManager();
+        _terminalManager = new TerminalManager();
 
-        _agentCountLabel = GetNode<Label>("%AgentCount");
-        _versionLabel = GetNode<Label>("%VersionLabel");
-        _agentList = GetNode<VBoxContainer>("%AgentList");
-        _genUIHost = GetNode<Control>("%GenUIHost");
+        _agentListManager.OnAgentRemoveClicked += id => OnRemoveRequested?.Invoke(id);
 
-        var topBar = GetNodeOrNull<HBoxContainer>("TopBar");
-        if (topBar != null && _agentCountLabel != null)
-        {
-            _processCountLabel = new Label { Text = "Runtimes: 0" };
-            _processCountLabel.AddThemeColorOverride("font_color", new Color(0.5f, 0.55f, 0.65f));
-            topBar.AddChild(_processCountLabel);
-            topBar.MoveChild(_processCountLabel, _agentCountLabel.GetIndex() + 1);
-        }
-
-        var version = ProjectSettings.GetSetting("application/config/version", "dev").AsString();
-        if (_versionLabel != null) _versionLabel.Text = $"v{version}";
-
-        ApplyTheme();
-        CreateButtons();
-        CreateConsolePanel();
+        LoadScenes();
+        WireEvents();
     }
 
-    private void CreateButtons()
+    private void LoadScenes()
     {
-        // Floating spawn row — dropdown + button, top-left
-        var spawnRow = new HBoxContainer();
-        spawnRow.Name = "SpawnRow";
-        spawnRow.Position = new Vector2(12, 40);
-        spawnRow.AddThemeConstantOverride("separation", 4);
+        // Load the root HUD layout
+        var hudRoot = _sceneLoader.LoadScene(SwarmHudScene, this);
 
-        // CLI provider dropdown
-        _providerDropdown = new OptionButton();
-        _providerDropdown.AddThemeFontSizeOverride("font_size", 14);
-        _providerDropdown.AddThemeColorOverride("font_color", new Color(0.8f, 0.85f, 0.95f));
-        _providerDropdown.AddThemeColorOverride("font_hover_color", new Color(0.9f, 0.95f, 1.0f));
-        _providerDropdown.AddThemeColorOverride("font_focus_color", new Color(0.8f, 0.85f, 0.95f));
-        _providerDropdown.CustomMinimumSize = new Vector2(130, 38);
-        var dropStyle = new StyleBoxFlat();
-        dropStyle.BgColor = new Color(0.12f, 0.13f, 0.18f, 0.95f);
-        dropStyle.CornerRadiusTopLeft = 6;
-        dropStyle.CornerRadiusBottomLeft = 6;
-        dropStyle.ContentMarginLeft = 12;
-        dropStyle.ContentMarginRight = 12;
-        dropStyle.ContentMarginTop = 8;
-        dropStyle.ContentMarginBottom = 8;
-        dropStyle.BorderWidthTop = 2;
-        dropStyle.BorderWidthBottom = 2;
-        dropStyle.BorderWidthLeft = 2;
-        dropStyle.BorderColor = new Color(0.25f, 0.3f, 0.4f, 0.8f);
-        _providerDropdown.AddThemeStyleboxOverride("normal", dropStyle);
-        var dropHover = (StyleBoxFlat)dropStyle.Duplicate();
-        dropHover.BgColor = new Color(0.16f, 0.17f, 0.24f, 0.98f);
-        _providerDropdown.AddThemeStyleboxOverride("hover", dropHover);
-        var dropPressed = (StyleBoxFlat)dropStyle.Duplicate();
-        dropPressed.BgColor = new Color(0.14f, 0.15f, 0.22f, 0.98f);
-        _providerDropdown.AddThemeStyleboxOverride("pressed", dropPressed);
-        _providerDropdown.AddThemeStyleboxOverride("focus", dropStyle);
-        // Ensure at least a placeholder item so the dropdown is visible
-        _providerDropdown.AddItem("(loading...)");
-        spawnRow.AddChild(_providerDropdown);
+        // Load sub-scenes into their slots
+        var topBarSlot = hudRoot.GetNode("TopBarSlot");
+        var spawnSlot = hudRoot.GetNode("MiddleRow/LeftColumn/SpawnControlsSlot");
+        var agentPanelSlot = hudRoot.GetNode("MiddleRow/RightColumn/AgentPanelSlot");
+        var consolePanelSlot = hudRoot.GetNode("ConsolePanelSlot");
 
-        // Spawn button
-        var spawnBtn = new Button { Text = "+ Create" };
-        spawnBtn.AddThemeColorOverride("font_color", new Color(0.85f, 1.0f, 0.85f));
-        spawnBtn.AddThemeFontSizeOverride("font_size", 14);
-        var spawnStyle = new StyleBoxFlat();
-        spawnStyle.BgColor = new Color(0.1f, 0.35f, 0.15f, 0.95f);
-        spawnStyle.CornerRadiusTopRight = 6;
-        spawnStyle.CornerRadiusBottomRight = 6;
-        spawnStyle.ContentMarginLeft = 12;
-        spawnStyle.ContentMarginRight = 12;
-        spawnStyle.ContentMarginTop = 8;
-        spawnStyle.ContentMarginBottom = 8;
-        spawnStyle.BorderWidthTop = 2;
-        spawnStyle.BorderWidthBottom = 2;
-        spawnStyle.BorderWidthRight = 2;
-        spawnStyle.BorderColor = new Color(0.3f, 0.7f, 0.35f, 0.8f);
-        spawnBtn.AddThemeStyleboxOverride("normal", spawnStyle);
-        var spawnHover = (StyleBoxFlat)spawnStyle.Duplicate();
-        spawnHover.BgColor = new Color(0.15f, 0.45f, 0.2f, 0.98f);
-        spawnBtn.AddThemeStyleboxOverride("hover", spawnHover);
-        spawnBtn.Pressed += () =>
+        _sceneLoader.LoadScene(TopBarScene, topBarSlot);
+        _sceneLoader.LoadScene(SpawnControlsScene, spawnSlot);
+        _sceneLoader.LoadScene(AgentPanelScene, agentPanelSlot);
+        _sceneLoader.LoadScene(ConsoleScene, consolePanelSlot);
+
+        // Grab references from loaded scenes
+        var agentCountLabel = _sceneLoader.FindNode<Label>(TopBarScene, "AgentCount")!;
+        var runtimeCountLabel = _sceneLoader.FindNode<Label>(TopBarScene, "RuntimeCount")!;
+        var versionLabel = _sceneLoader.FindNode<Label>(TopBarScene, "VersionLabel");
+
+        _runtimeDropdown = _sceneLoader.FindNode<OptionButton>(SpawnControlsScene, "RuntimeDropdown");
+        _createButton = _sceneLoader.FindNode<Button>(SpawnControlsScene, "CreateButton");
+
+        var agentList = _sceneLoader.FindNode<VBoxContainer>(AgentPanelScene, "VBox/ScrollArea/AgentList")!;
+
+        _consoleTitle = _sceneLoader.FindNode<Label>(ConsoleScene, "VBox/ConsoleHeader/ConsoleTitle");
+        _tabTerminalBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/TerminalTabBtn");
+        _tabRenderedBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/RenderedTabBtn");
+        var closeBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/CloseBtn");
+        _terminalContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "VBox/ConsoleBody/TerminalContainer");
+        _markdownContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "VBox/ConsoleBody/RenderedContainer");
+
+        _genUIHost = hudRoot.GetNodeOrNull<Control>("MiddleRow/CenterArea/GenUIHost");
+
+        // Console starts hidden
+        var consoleInstance = _sceneLoader.GetInstance(ConsoleScene);
+        if (consoleInstance != null)
+        {
+            _consolePanel = consoleInstance as PanelContainer ?? consoleInstance.GetParentOrNull<PanelContainer>();
+            consoleInstance.Visible = false;
+        }
+
+        // Set version label
+        var version = ProjectSettings.GetSetting("application/config/version", "dev").AsString();
+        if (versionLabel != null) versionLabel.Text = $"v{version}";
+
+        // Initialize managers
+        _agentListManager.Initialize(agentList, agentCountLabel, runtimeCountLabel);
+        _terminalManager.Initialize(_terminalContainer!, _markdownContainer!);
+
+        // Ensure dropdown has placeholder
+        _runtimeDropdown?.AddItem("(loading...)");
+    }
+
+    private void WireEvents()
+    {
+        _createButton?.Connect("pressed", Callable.From(() =>
         {
             var selectedId = GetSelectedProviderId();
             OnSpawnRequested?.Invoke(selectedId);
-        };
-        spawnRow.AddChild(spawnBtn);
+        }));
 
-        AddChild(spawnRow);
+        _tabTerminalBtn?.Connect("pressed", Callable.From(() => SwitchTab(terminal: true)));
+        _tabRenderedBtn?.Connect("pressed", Callable.From(() => SwitchTab(terminal: false)));
 
-        if (_agentList == null) return;
-
-        // Header in side panel
-        var header = new Label { Text = "Agents" };
-        header.AddThemeColorOverride("font_color", new Color(0.55f, 0.58f, 0.65f));
-        header.AddThemeFontSizeOverride("font_size", 12);
-        _agentList.AddChild(header);
-
-        var sep = new HSeparator();
-        sep.AddThemeConstantOverride("separation", 6);
-        _agentList.AddChild(sep);
+        var closeBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/CloseBtn");
+        closeBtn?.Connect("pressed", Callable.From(() =>
+        {
+            var consoleInstance = _sceneLoader.GetInstance(ConsoleScene);
+            if (consoleInstance != null) consoleInstance.Visible = false;
+            _selectedAgentId = null;
+        }));
     }
 
-    private void ApplyTheme()
+    /// <summary>
+    /// Re-wires events after a hot-reload. Called by HudHotReload.
+    /// </summary>
+    public void RewireAfterReload(Dictionary<string, Control> newInstances)
     {
-        var topBar = GetNodeOrNull<HBoxContainer>("TopBar");
-        if (topBar != null)
-        {
-            var topBg = new StyleBoxFlat();
-            topBg.BgColor = new Color(0.1f, 0.11f, 0.15f, 0.9f);
-            topBg.ContentMarginLeft = 12;
-            topBg.ContentMarginRight = 12;
-            topBg.ContentMarginTop = 6;
-            topBg.ContentMarginBottom = 6;
-            topBg.BorderWidthBottom = 1;
-            topBg.BorderColor = new Color(0.2f, 0.22f, 0.28f);
-            topBar.AddThemeStyleboxOverride("panel", topBg);
-        }
-
-        var agentPanel = GetNodeOrNull<PanelContainer>("AgentPanel");
-        if (agentPanel != null)
-        {
-            var panelBg = new StyleBoxFlat();
-            panelBg.BgColor = new Color(0.1f, 0.11f, 0.15f, 0.85f);
-            panelBg.ContentMarginLeft = 10;
-            panelBg.ContentMarginRight = 10;
-            panelBg.ContentMarginTop = 10;
-            panelBg.ContentMarginBottom = 10;
-            panelBg.CornerRadiusTopLeft = 6;
-            panelBg.CornerRadiusBottomLeft = 6;
-            panelBg.BorderWidthLeft = 1;
-            panelBg.BorderColor = new Color(0.2f, 0.22f, 0.28f);
-            agentPanel.AddThemeStyleboxOverride("panel", panelBg);
-        }
-
-        _agentCountLabel?.AddThemeColorOverride("font_color", new Color(0.7f, 0.75f, 0.85f));
-        _versionLabel?.AddThemeColorOverride("font_color", new Color(0.45f, 0.48f, 0.55f));
-        _versionLabel?.AddThemeFontSizeOverride("font_size", 12);
+        // Re-grab references from reloaded scenes
+        LoadScenes();
+        WireEvents();
     }
 
     public void ApplyEvent(ViewportEvent evt)
@@ -193,199 +140,65 @@ public partial class HudController : Control
         switch (evt)
         {
             case AgentSpawnedEvent spawned:
-                AddAgent(spawned.AgentId, spawned.VisualInfo);
+                _agentListManager.AddAgent(spawned.AgentId, spawned.VisualInfo);
                 break;
             case AgentDespawnedEvent despawned:
-                RemoveAgent(despawned.AgentId);
+                _agentListManager.RemoveAgent(despawned.AgentId);
+                _terminalManager.CleanupAgent(despawned.AgentId);
                 break;
             case StateChangedEvent stateChanged:
-                UpdateAgentState(stateChanged.AgentId, stateChanged.State);
+                _agentListManager.UpdateAgentState(stateChanged.AgentId, stateChanged.State);
                 break;
             case GenUIRequestEvent genui:
                 ForwardGenUI(genui.AgentId, genui.A2UIJson);
                 break;
             case RuntimeStartedEvent started:
-                _activeRuntimes.Add(started.AgentId);
-                UpdateRuntimeCount();
-                if (_entries.TryGetValue(started.AgentId, out var se))
-                    se.SetConnected(true);
+                _agentListManager.SetRuntimeConnected(started.AgentId, true);
                 break;
             case RuntimeExitedEvent exited:
-                _activeRuntimes.Remove(exited.AgentId);
-                UpdateRuntimeCount();
-                if (_entries.TryGetValue(exited.AgentId, out var ee))
-                    ee.SetConnected(false);
+                _agentListManager.SetRuntimeConnected(exited.AgentId, false);
                 break;
-
             case RuntimeOutputEvent output:
-                AppendConsoleOutput(output.AgentId, output.Line);
+                _terminalManager.AppendOutput(output.AgentId, output.Line, _showingTerminal, _selectedAgentId);
                 break;
         }
     }
 
-    private void AddAgent(string agentId, AgentVisualInfo info)
+    public void SelectAgent(string agentId)
     {
-        if (_entries.ContainsKey(agentId) || _agentList == null) return;
+        _selectedAgentId = agentId;
+        if (_consoleTitle != null)
+            _consoleTitle.Text = $"Console — {agentId}";
 
-        var entry = new AgentHudEntry(agentId, info.DisplayName);
-        entry.OnRemoveClicked += () => OnRemoveRequested?.Invoke(agentId);
-        _agentList.AddChild(entry.Root);
-        _entries[agentId] = entry;
-        UpdateCount();
+        var consoleInstance = _sceneLoader.GetInstance(ConsoleScene);
+        if (consoleInstance != null) consoleInstance.Visible = true;
+
+        _terminalManager.ShowAgent(agentId);
+
+        if (_terminalContainer != null) _terminalContainer.Visible = _showingTerminal;
+        if (_markdownContainer != null) _markdownContainer.Visible = !_showingTerminal;
+
+        if (!_showingTerminal)
+            _terminalManager.RefreshMarkdown(agentId);
     }
 
-    private void RemoveAgent(string agentId)
+    public void AppendConsoleOutput(string agentId, string line)
     {
-        if (!_entries.TryGetValue(agentId, out var entry)) return;
-        entry.Root.QueueFree();
-        _entries.Remove(agentId);
-        CleanupTerminalForAgent(agentId);
-        UpdateCount();
+        _terminalManager.AppendOutput(agentId, line, _showingTerminal, _selectedAgentId);
     }
 
-    private void UpdateAgentState(string agentId, AgentActivityState state)
+    public void SetRuntimes(IReadOnlyCollection<GiantIsopod.Contracts.Protocol.Runtime.RuntimeConfig> runtimes)
     {
-        if (_entries.TryGetValue(agentId, out var entry))
-            entry.SetState(state);
-    }
-
-    private void ForwardGenUI(string agentId, string a2uiJson)
-    {
-        if (_genUIHost?.HasMethod("render_a2ui") == true)
-            _genUIHost.Call("render_a2ui", agentId, a2uiJson);
-    }
-
-    private void UpdateCount()
-    {
-        if (_agentCountLabel != null)
-            _agentCountLabel.Text = $"Agents: {_entries.Count}";
-    }
-
-    private void UpdateRuntimeCount()
-    {
-        if (_processCountLabel != null)
-            _processCountLabel.Text = $"Runtimes: {_activeRuntimes.Count}";
-    }
-
-    private void CreateConsolePanel()
-    {
-        _consolePanel = new PanelContainer();
-        _consolePanel.Visible = false;
-        _consolePanel.AnchorLeft = 0;
-        _consolePanel.AnchorRight = 1;
-        _consolePanel.AnchorTop = 1;
-        _consolePanel.AnchorBottom = 1;
-        _consolePanel.OffsetTop = -350;
-        _consolePanel.OffsetBottom = 0;
-        _consolePanel.OffsetLeft = 0;
-        _consolePanel.OffsetRight = 0;
-        _consolePanel.GrowHorizontal = Control.GrowDirection.Both;
-        _consolePanel.GrowVertical = Control.GrowDirection.Begin;
-
-        var bg = new StyleBoxFlat();
-        bg.BgColor = new Color(0.06f, 0.07f, 0.1f, 0.95f);
-        bg.BorderWidthTop = 2;
-        bg.BorderColor = new Color(0.25f, 0.5f, 0.3f, 0.8f);
-        bg.ContentMarginLeft = 4;
-        bg.ContentMarginRight = 4;
-        bg.ContentMarginTop = 4;
-        bg.ContentMarginBottom = 4;
-        _consolePanel.AddThemeStyleboxOverride("panel", bg);
-
-        var vbox = new VBoxContainer();
-        vbox.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        vbox.AddThemeConstantOverride("separation", 2);
-        _consolePanel.AddChild(vbox);
-
-        // Header row
-        var header = new HBoxContainer();
-        vbox.AddChild(header);
-
-        _consoleTitle = new Label { Text = "Console" };
-        _consoleTitle.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        _consoleTitle.AddThemeColorOverride("font_color", new Color(0.3f, 0.85f, 0.4f));
-        _consoleTitle.AddThemeFontSizeOverride("font_size", 11);
-        header.AddChild(_consoleTitle);
-
-        // Tab buttons: Terminal | Rendered
-        _tabTerminalBtn = CreateTabButton("Terminal", true);
-        _tabRenderedBtn = CreateTabButton("Rendered", false);
-        _tabTerminalBtn.Pressed += () => SwitchTab(terminal: true);
-        _tabRenderedBtn.Pressed += () => SwitchTab(terminal: false);
-        header.AddChild(_tabTerminalBtn);
-        header.AddChild(_tabRenderedBtn);
-
-        var closeBtn = new Button { Text = "✕" };
-        closeBtn.AddThemeFontSizeOverride("font_size", 10);
-        closeBtn.AddThemeColorOverride("font_color", new Color(0.6f, 0.6f, 0.65f));
-        var closeBg = new StyleBoxFlat();
-        closeBg.BgColor = new Color(0.15f, 0.15f, 0.2f, 0.6f);
-        closeBg.CornerRadiusTopLeft = 3;
-        closeBg.CornerRadiusTopRight = 3;
-        closeBg.CornerRadiusBottomLeft = 3;
-        closeBg.CornerRadiusBottomRight = 3;
-        closeBg.ContentMarginLeft = 4;
-        closeBg.ContentMarginRight = 4;
-        closeBg.ContentMarginTop = 1;
-        closeBg.ContentMarginBottom = 1;
-        closeBtn.AddThemeStyleboxOverride("normal", closeBg);
-        closeBtn.Pressed += () => { _consolePanel.Visible = false; _selectedAgentId = null; };
-        header.AddChild(closeBtn);
-
-        // Container for Terminal nodes — one per agent, only the selected one is visible
-        _terminalContainer = new MarginContainer();
-        _terminalContainer.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        _terminalContainer.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        _terminalContainer.CustomMinimumSize = new Vector2(0, 300);
-        vbox.AddChild(_terminalContainer);
-
-        // Container for Markdown rendered views — one RichTextLabel per agent
-        _markdownContainer = new MarginContainer();
-        _markdownContainer.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        _markdownContainer.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        _markdownContainer.CustomMinimumSize = new Vector2(0, 300);
-        _markdownContainer.Visible = false;
-        vbox.AddChild(_markdownContainer);
-
-        AddChild(_consolePanel);
-    }
-
-    private Button CreateTabButton(string text, bool active)
-    {
-        var btn = new Button { Text = text };
-        btn.AddThemeFontSizeOverride("font_size", 10);
-        var style = new StyleBoxFlat();
-        style.CornerRadiusTopLeft = 3;
-        style.CornerRadiusTopRight = 3;
-        style.CornerRadiusBottomLeft = 3;
-        style.CornerRadiusBottomRight = 3;
-        style.ContentMarginLeft = 8;
-        style.ContentMarginRight = 8;
-        style.ContentMarginTop = 2;
-        style.ContentMarginBottom = 2;
-        style.BgColor = active ? new Color(0.2f, 0.4f, 0.25f, 0.8f) : new Color(0.15f, 0.15f, 0.2f, 0.6f);
-        btn.AddThemeStyleboxOverride("normal", style);
-        btn.AddThemeColorOverride("font_color", active ? new Color(0.85f, 1f, 0.85f) : new Color(0.5f, 0.55f, 0.6f));
-        return btn;
-    }
-
-    private void UpdateTabStyles()
-    {
-        if (_tabTerminalBtn == null || _tabRenderedBtn == null) return;
-        var activeColor = new Color(0.2f, 0.4f, 0.25f, 0.8f);
-        var inactiveColor = new Color(0.15f, 0.15f, 0.2f, 0.6f);
-
-        var termStyle = (StyleBoxFlat)_tabTerminalBtn.GetThemeStylebox("normal").Duplicate();
-        termStyle.BgColor = _showingTerminal ? activeColor : inactiveColor;
-        _tabTerminalBtn.AddThemeStyleboxOverride("normal", termStyle);
-        _tabTerminalBtn.RemoveThemeColorOverride("font_color");
-        _tabTerminalBtn.AddThemeColorOverride("font_color", _showingTerminal ? new Color(0.85f, 1f, 0.85f) : new Color(0.5f, 0.55f, 0.6f));
-
-        var rendStyle = (StyleBoxFlat)_tabRenderedBtn.GetThemeStylebox("normal").Duplicate();
-        rendStyle.BgColor = !_showingTerminal ? activeColor : inactiveColor;
-        _tabRenderedBtn.AddThemeStyleboxOverride("normal", rendStyle);
-        _tabRenderedBtn.RemoveThemeColorOverride("font_color");
-        _tabRenderedBtn.AddThemeColorOverride("font_color", !_showingTerminal ? new Color(0.85f, 1f, 0.85f) : new Color(0.5f, 0.55f, 0.6f));
+        _providerIds.Clear();
+        if (_runtimeDropdown == null) return;
+        _runtimeDropdown.Clear();
+        foreach (var r in runtimes)
+        {
+            _providerIds.Add(r.Id);
+            _runtimeDropdown.AddItem(r.DisplayName ?? r.Id);
+        }
+        if (_runtimeDropdown.ItemCount > 0)
+            _runtimeDropdown.Selected = 0;
     }
 
     private void SwitchTab(bool terminal)
@@ -395,354 +208,29 @@ public partial class HudController : Control
         if (_markdownContainer != null) _markdownContainer.Visible = !terminal;
         UpdateTabStyles();
 
-        // When switching to rendered, refresh the current agent's markdown
         if (!terminal && _selectedAgentId != null)
-            RefreshMarkdown(_selectedAgentId);
+            _terminalManager.RefreshMarkdown(_selectedAgentId);
     }
 
-    private RichTextLabel CreateMarkdownLabelForAgent(string agentId)
+    private void UpdateTabStyles()
     {
-        if (_agentMarkdownLabels.TryGetValue(agentId, out var existing))
-            return existing;
-
-        var rtl = new RichTextLabel();
-        rtl.BbcodeEnabled = true;
-        rtl.FitContent = false;
-        rtl.ScrollFollowing = true;
-        rtl.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        rtl.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        rtl.AddThemeColorOverride("default_color", new Color(0.82f, 0.84f, 0.9f));
-        rtl.AddThemeFontSizeOverride("normal_font_size", 13);
-        rtl.Visible = false;
-        _markdownContainer?.AddChild(rtl);
-        _agentMarkdownLabels[agentId] = rtl;
-        return rtl;
+        if (_tabTerminalBtn == null || _tabRenderedBtn == null) return;
+        _tabTerminalBtn.ButtonPressed = _showingTerminal;
+        _tabRenderedBtn.ButtonPressed = !_showingTerminal;
     }
 
-    private void RefreshMarkdown(string agentId)
+    private void ForwardGenUI(string agentId, string a2uiJson)
     {
-        if (!_agentMarkdownBuffers.TryGetValue(agentId, out var buffer)) return;
-        if (!_agentMarkdownLabels.TryGetValue(agentId, out var label))
-            label = CreateMarkdownLabelForAgent(agentId);
-
-        var bbcode = MarkdownBBCode.Convert(buffer.ToString());
-        label.Clear();
-        label.AppendText(""); // reset
-        label.ParseBbcode(bbcode);
-    }
-
-    /// <summary>
-    /// Creates a GodotXterm Terminal + PTY pair for an agent by instantiating the AgentTerminal scene.
-    /// </summary>
-    private void CreateTerminalForAgent(string agentId)
-    {
-        if (_agentTerminals.ContainsKey(agentId) || _terminalContainer == null) return;
-
-        Control? instance = null;
-        bool usingFallback = false;
-
-        try
-        {
-            var scene = GD.Load<PackedScene>("res://Scenes/AgentTerminal.tscn");
-            if (scene != null)
-            {
-                var candidate = scene.Instantiate<Control>();
-                // Verify the Terminal child node has a working write() method.
-                // When GodotXterm native lib is missing, the Terminal node exists
-                // but its type falls back to a base class without write().
-                var terminalNode = candidate.GetNodeOrNull("Terminal");
-                if (terminalNode != null && terminalNode.HasMethod("write"))
-                {
-                    instance = candidate;
-                }
-                else
-                {
-                    candidate.QueueFree();
-                    DebugLog($"GodotXterm Terminal node missing write() method — native lib not loaded");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            DebugLog($"GodotXterm terminal failed for {agentId}: {ex.Message}");
-        }
-
-        if (instance == null)
-        {
-            // Fallback: RichTextLabel-based console (works without GodotXterm native libs)
-            instance = CreateFallbackTerminal(agentId);
-            usingFallback = true;
-            DebugLog($"Using fallback RichTextLabel terminal for {agentId}");
-        }
-
-        instance.Visible = false;
-        instance.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        instance.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        _terminalContainer.AddChild(instance);
-        _agentTerminals[agentId] = instance;
-        if (usingFallback) _fallbackTerminals.Add(agentId);
-
-        var capturedUsingFallback = usingFallback;
-        // Make visible after _ready() runs on next frame
-        Callable.From(() =>
-        {
-            instance.Visible = true;
-
-            WriteToTerminal(instance, capturedUsingFallback, $"● Agent {agentId} connected\n");
-            DebugLog($"Terminal created for {agentId} (fallback={capturedUsingFallback}): container={_terminalContainer!.Size}, instance={instance.Size}");
-
-            // Flush any buffered output
-            if (_pendingOutput.TryGetValue(agentId, out var pending))
-            {
-                foreach (var line in pending)
-                {
-                    WriteToTerminal(instance, capturedUsingFallback, line + "\n");
-                }
-                _pendingOutput.Remove(agentId);
-                DebugLog($"Flushed {pending.Count} buffered lines for {agentId}");
-            }
-
-            // Start asciicast recording
-            try
-            {
-                var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-                var castPath = System.IO.Path.Combine(_recordingsDir, $"{agentId}-{timestamp}.cast");
-                var recorder = new GiantIsopod.Plugin.Process.AsciicastRecorder(castPath, 120, 24);
-                _agentRecorders[agentId] = recorder;
-                recorder.WriteOutput($"\u001b[32m● Agent {agentId} connected\u001b[0m\r\n");
-                DebugLog($"Recording to {castPath}");
-            }
-            catch (Exception ex)
-            {
-                DebugLog($"Failed to start recording for {agentId}: {ex.Message}");
-            }
-        }).CallDeferred();
-    }
-
-    /// <summary>
-    /// Creates a RichTextLabel-based fallback terminal when GodotXterm native libs are unavailable.
-    /// </summary>
-    private static Control CreateFallbackTerminal(string agentId)
-    {
-        var container = new PanelContainer();
-        var bg = new StyleBoxFlat();
-        bg.BgColor = new Color(0.06f, 0.07f, 0.1f);
-        bg.ContentMarginLeft = 6;
-        bg.ContentMarginRight = 6;
-        bg.ContentMarginTop = 4;
-        bg.ContentMarginBottom = 4;
-        container.AddThemeStyleboxOverride("panel", bg);
-
-        var rtl = new RichTextLabel();
-        rtl.Name = "FallbackTerminal";
-        rtl.BbcodeEnabled = true;
-        rtl.FitContent = false;
-        rtl.ScrollFollowing = true;
-        rtl.SizeFlagsVertical = Control.SizeFlags.ExpandFill;
-        rtl.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
-        rtl.AddThemeColorOverride("default_color", new Color(0.82f, 0.84f, 0.9f));
-        rtl.AddThemeFontSizeOverride("normal_font_size", 13);
-        container.AddChild(rtl);
-
-        return container;
-    }
-
-    /// <summary>
-    /// Writes text to either a GodotXterm terminal or a fallback RichTextLabel.
-    /// </summary>
-    private static void WriteToTerminal(Control terminal, bool isFallback, string text)
-    {
-        if (isFallback)
-        {
-            var rtl = terminal.GetNodeOrNull<RichTextLabel>("FallbackTerminal");
-            rtl?.AppendText(text);
-        }
-        else
-        {
-            var colorized = ColorizeOutput(text.TrimEnd('\n', '\r')) + "\r\n";
-            terminal.Call("write_text", colorized);
-        }
-    }
-
-    /// <summary>
-    /// Cleans up Terminal + PTY for a removed agent.
-    /// </summary>
-    private void CleanupTerminalForAgent(string agentId)
-    {
-        if (_agentTerminals.TryGetValue(agentId, out var term) && term is Control termControl)
-        {
-            termControl.QueueFree();
-            _agentTerminals.Remove(agentId);
-            _fallbackTerminals.Remove(agentId);
-        }
-
-        // Clean up markdown label
-        if (_agentMarkdownLabels.TryGetValue(agentId, out var label))
-        {
-            label.QueueFree();
-            _agentMarkdownLabels.Remove(agentId);
-        }
-        _agentMarkdownBuffers.Remove(agentId);
-        _pendingOutput.Remove(agentId);
-
-        // Stop asciicast recording
-        if (_agentRecorders.TryGetValue(agentId, out var recorder))
-        {
-            _ = recorder.DisposeAsync();
-            _agentRecorders.Remove(agentId);
-        }
-    }
-
-    public void SelectAgent(string agentId)
-    {
-        _selectedAgentId = agentId;
-        if (_consolePanel == null || _consoleTitle == null) return;
-
-        _consoleTitle.Text = $"Console — {agentId}";
-        _consolePanel.Visible = true;
-        DebugLog($"SelectAgent: {agentId}, panel visible, has terminal: {_agentTerminals.ContainsKey(agentId)}");
-
-        // Create terminal on first click
-        if (!_agentTerminals.ContainsKey(agentId))
-            CreateTerminalForAgent(agentId);
-
-        // Ensure markdown label exists
-        if (!_agentMarkdownLabels.ContainsKey(agentId))
-            CreateMarkdownLabelForAgent(agentId);
-
-        // Hide all terminals, show the selected one
-        foreach (var (id, term) in _agentTerminals)
-        {
-            if (term is Control c)
-                c.Visible = id == agentId;
-        }
-
-        // Hide all markdown labels, show the selected one
-        foreach (var (id, label) in _agentMarkdownLabels)
-            label.Visible = id == agentId;
-
-        // Respect current tab
-        if (_terminalContainer != null) _terminalContainer.Visible = _showingTerminal;
-        if (_markdownContainer != null) _markdownContainer.Visible = !_showingTerminal;
-
-        // Refresh markdown for selected agent
-        if (!_showingTerminal)
-            RefreshMarkdown(agentId);
-    }
-
-    // Buffered output for agents whose terminal hasn't been created yet
-    private readonly Dictionary<string, List<string>> _pendingOutput = new();
-
-    public void AppendConsoleOutput(string agentId, string line)
-    {
-        // If terminal doesn't exist yet, buffer the output
-        if (!_agentTerminals.TryGetValue(agentId, out var term))
-        {
-            if (!_pendingOutput.TryGetValue(agentId, out var pending))
-            {
-                pending = new List<string>();
-                _pendingOutput[agentId] = pending;
-            }
-            pending.Add(line);
-
-            // Still accumulate for markdown
-            if (!_agentMarkdownBuffers.TryGetValue(agentId, out var buf))
-            {
-                buf = new System.Text.StringBuilder();
-                _agentMarkdownBuffers[agentId] = buf;
-            }
-            buf.AppendLine(line);
-            return;
-        }
-
-        // Write to terminal (GodotXterm or fallback RichTextLabel)
-        var isFallback = _fallbackTerminals.Contains(agentId);
-        WriteToTerminal((Control)term, isFallback, line + "\n");
-
-        // Record to asciicast
-        var text = ColorizeOutput(line) + "\r\n";
-        if (_agentRecorders.TryGetValue(agentId, out var recorder))
-            recorder.WriteOutput(text);
-
-        // Accumulate raw text for markdown rendering
-        if (!_agentMarkdownBuffers.TryGetValue(agentId, out var buffer))
-        {
-            buffer = new System.Text.StringBuilder();
-            _agentMarkdownBuffers[agentId] = buffer;
-        }
-        buffer.AppendLine(line);
-
-        // Live-refresh markdown if currently viewing rendered tab for this agent
-        if (!_showingTerminal && _selectedAgentId == agentId)
-            RefreshMarkdown(agentId);
-    }
-
-    /// <summary>
-    /// Adds ANSI color codes to pi text output for better readability.
-    /// </summary>
-    private static string ColorizeOutput(string text)
-    {
-        // Tool use lines
-        if (text.Contains("🔧") || text.Contains("tool_use"))
-            return $"\u001b[33m{text}\u001b[0m"; // yellow
-
-        // Thinking lines
-        if (text.Contains("💭"))
-            return $"\u001b[36m{text}\u001b[0m"; // cyan
-
-        // Headings (markdown ##)
-        if (text.TrimStart().StartsWith("##"))
-            return $"\u001b[1;32m{text}\u001b[0m"; // bold green
-
-        // Code blocks
-        if (text.TrimStart().StartsWith("```"))
-            return $"\u001b[90m{text}\u001b[0m"; // dim gray
-
-        // Bullet points
-        if (text.TrimStart().StartsWith("- ") || text.TrimStart().StartsWith("* "))
-            return $"\u001b[37m{text}\u001b[0m"; // bright white
-
-        // Error/warning
-        if (text.Contains("error") || text.Contains("Error"))
-            return $"\u001b[31m{text}\u001b[0m"; // red
-
-        return text;
-    }
-
-    /// <summary>
-    /// Populates the runtime dropdown from the loaded registry.
-    /// Call from Main._Ready() after HUD is initialized.
-    /// </summary>
-    public void SetRuntimes(IReadOnlyCollection<GiantIsopod.Contracts.Protocol.Runtime.RuntimeConfig> runtimes)
-    {
-        _providerIds.Clear();
-        if (_providerDropdown == null) return;
-        _providerDropdown.Clear();
-        foreach (var r in runtimes)
-        {
-            _providerIds.Add(r.Id);
-            _providerDropdown.AddItem(r.DisplayName ?? r.Id);
-        }
-        if (_providerDropdown.ItemCount > 0)
-            _providerDropdown.Selected = 0;
+        if (_genUIHost?.HasMethod("render_a2ui") == true)
+            _genUIHost.Call("render_a2ui", agentId, a2uiJson);
     }
 
     private string GetSelectedProviderId()
     {
-        if (_providerDropdown == null || _providerIds.Count == 0)
+        if (_runtimeDropdown == null || _providerIds.Count == 0)
             return "pi";
-        var idx = _providerDropdown.Selected;
+        var idx = _runtimeDropdown.Selected;
         return idx >= 0 && idx < _providerIds.Count ? _providerIds[idx] : _providerIds[0];
-    }
-
-    private void DebugLog(string message)
-    {
-        try
-        {
-            System.IO.File.AppendAllText(_consoleLogPath,
-                $"[{DateTime.Now:HH:mm:ss.fff}] {message}\n");
-        }
-        catch { /* ignore file errors */ }
     }
 }
 

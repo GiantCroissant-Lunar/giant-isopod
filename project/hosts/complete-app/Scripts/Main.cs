@@ -19,6 +19,7 @@ public partial class Main : Node2D
     private GodotViewportBridge? _viewportBridge;
     private HudController? _hud;
     private TaskGraphView? _taskGraphView;
+    private HudHotReload? _hotReload;
     private ILogger<Main>? _logger;
     private Node2D? _agentsNode;
     private AgentEcsWorld? _ecsWorld;
@@ -109,6 +110,9 @@ public partial class Main : Node2D
         };
         var hudRoot = GetNode<Control>("HUD/HUDRoot");
         hudRoot.AddChild(_taskGraphView);
+
+        // Hot-reload support (debug builds only)
+        _hotReload = new HudHotReload(_hud);
 
         QueueRedraw();
         CacheAgentProfiles();
@@ -319,10 +323,20 @@ public partial class Main : Node2D
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (@event is InputEventKey { Pressed: true, Keycode: Key.F5 })
+        if (@event is InputEventKey { Pressed: true } keyEvent)
         {
-            SubmitDemoTaskGraph();
-            GetViewport().SetInputAsHandled();
+            switch (keyEvent.Keycode)
+            {
+                case Key.F5:
+                    SubmitDemoTaskGraph();
+                    GetViewport().SetInputAsHandled();
+                    break;
+                case Key.F6:
+                    _hotReload?.ReloadHud();
+                    _logger?.LogInformation("HUD reloaded (F6)");
+                    GetViewport().SetInputAsHandled();
+                    break;
+            }
         }
     }
 
