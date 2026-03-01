@@ -56,19 +56,28 @@ no context window management, no compaction when conversations get long.
 - Segment-based execution: run in segments of N turns, check context between segments
 - Max-segments safety valve to prevent unbounded loops
 
-### 3. Status Block / Live Status (from spacebot)
-**Gap:** No centralized live status snapshot. The viewport gets individual events but there's
-no aggregated status block that can be injected into agent context.
+### 3. Live Status via Blackboard Enhancement (from spacebot, adapted)
+**Gap:** No aggregated live status snapshot. The viewport gets individual events but agents
+have no ambient awareness of what other agents are doing.
 
-**Borrow from:** `ref-projects/spacebot/src/agent/status.rs`
+**Approach:** Rather than a separate StatusBlock actor (spacebot's approach), leverage our
+existing `BlackboardActor` which already provides key-value pub/sub. The blackboard already
+has the right primitives — we just need auto-publish behavior and a render utility.
+
+**Borrow concept from:** `ref-projects/spacebot/src/agent/status.rs` (the *what* to track,
+not the *how* — we use our blackboard instead of a dedicated struct)
 
 **What to build:**
-- `AgentStatusActor` or extend `ViewportActor` with a `StatusBlock` that tracks:
-  - Active tasks per agent (with tool call counts)
-  - Recently completed items
-  - Active A2A conversations
-- Render method that produces a text block injectable into agent system prompts
-- Agents get ambient awareness of what other agents are doing
+- Auto-publish behavior: a small helper (or additions to `AgentActor`/`AgentTaskActor`) that
+  automatically publishes status signals to the blackboard on task events:
+  - `agent:{id}:current-task` — updated on TaskAssigned/TaskCompleted/TaskFailed
+  - `agent:{id}:state` — updated on AgentStateChanged
+  - `agent:{id}:a2a-peers` — updated on A2A conversation start/end
+  - `system:recently-completed` — rolling list of last N completed items
+- Render utility: a function that queries blackboard for `agent:*` keys and formats them
+  into a text block suitable for system prompt injection
+- Agents gain ambient awareness of each other without explicit messaging
+- No new actor needed — builds on existing BlackboardActor infrastructure
 
 ### 4. Cortex / Bulletin System (from spacebot)
 **Gap:** No periodic memory consolidation or bulletin generation. Agents query knowledge
@@ -115,7 +124,7 @@ and `ref-projects/persistent-swarm/.github/agents/orchestrator.agent.md`
 
 1. **Agent checkpoint/identity** — foundation for everything else
 2. **Worker state machine** — formal states + transitions in AgentActor
-3. **Status block** — aggregated live status
+3. **Blackboard live status** — auto-publish + render utility on existing blackboard
 4. **Context compaction** — token monitoring + compaction triggers
 5. **Cortex bulletin** — periodic memory consolidation
 6. **Hierarchical roles** — longer-term architectural evolution
@@ -129,7 +138,6 @@ Primary:
 
 New files:
 - `project/plugins/Plugin.Actors/AgentCheckpointActor.cs`
-- `project/plugins/Plugin.Actors/AgentStatusActor.cs`
 - `project/plugins/Plugin.Actors/CortexActor.cs`
 - `project/contracts/Contracts.Core/AgentIdentity.cs`
 - `project/contracts/Contracts.Core/AgentCheckpoint.cs`
