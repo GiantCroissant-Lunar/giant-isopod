@@ -18,6 +18,7 @@ public partial class Main : Node2D
     private AgentWorldSystem? _agentWorld;
     private GodotViewportBridge? _viewportBridge;
     private HudController? _hud;
+    private TaskGraphView? _taskGraphView;
     private ILogger<Main>? _logger;
     private Node2D? _agentsNode;
     private AgentEcsWorld? _ecsWorld;
@@ -80,6 +81,22 @@ public partial class Main : Node2D
         // Populate CLI provider dropdown
         _hud.SetProviders(cliProviders.All);
 
+        // Task graph DAG visualization — must live in HUD CanvasLayer for proper UI rendering
+        _taskGraphView = new TaskGraphView
+        {
+            AnchorLeft = 0,
+            AnchorTop = 0,
+            AnchorRight = 0,
+            AnchorBottom = 0,
+            OffsetLeft = 10,
+            OffsetTop = 80,
+            OffsetRight = 500,
+            OffsetBottom = 400,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        var hudRoot = GetNode<Control>("HUD/HUDRoot");
+        hudRoot.AddChild(_taskGraphView);
+
         QueueRedraw();
         CacheAgentProfiles();
 
@@ -90,11 +107,12 @@ public partial class Main : Node2D
     {
         if (_viewportBridge == null || _hud == null || _ecsWorld == null) return;
 
-        // 1. Drain actor events → update ECS + HUD
+        // 1. Drain actor events → update ECS + HUD + task graph view
         foreach (var evt in _viewportBridge.DrainEvents())
         {
             _hud.ApplyEvent(evt);
             ApplyEventToEcs(evt);
+            ApplyEventToTaskGraphView(evt);
         }
 
         // 2. Tick ECS systems (movement, animation, wander)
@@ -149,6 +167,28 @@ public partial class Main : Node2D
                     _ => Activity.Idle
                 };
                 _ecsWorld.SetAgentActivity(stateChanged.AgentId, activity);
+                break;
+        }
+    }
+
+    private void ApplyEventToTaskGraphView(ViewportEvent evt)
+    {
+        if (_taskGraphView == null) return;
+
+        switch (evt)
+        {
+            case TaskGraphSubmittedEvent submitted:
+                _taskGraphView.HandleGraphSubmitted(submitted.GraphId, submitted.Nodes, submitted.Edges);
+                break;
+
+            case TaskNodeStatusChangedEvent statusChanged:
+                _taskGraphView.HandleNodeStatusChanged(
+                    statusChanged.GraphId, statusChanged.TaskId,
+                    statusChanged.Status, statusChanged.AssignedAgentId);
+                break;
+
+            case TaskGraphCompletedEvent completed:
+                _taskGraphView.HandleGraphCompleted(completed.GraphId, completed.Results);
                 break;
         }
     }
@@ -262,6 +302,57 @@ public partial class Main : Node2D
                 Akka.Actor.ActorRefs.NoSender);
             _nextAgentIndex++;
         }
+    }
+
+    public override void _UnhandledInput(InputEvent @event)
+    {
+        if (@event is InputEventKey { Pressed: true, Keycode: Key.F5 })
+        {
+            SubmitDemoTaskGraph();
+            GetViewport().SetInputAsHandled();
+        }
+    }
+
+    private int _demoGraphIndex;
+
+    private void SubmitDemoTaskGraph()
+    {
+        if (_agentWorld == null) return;
+
+        _demoGraphIndex++;
+        var graphId = $"demo-{_demoGraphIndex}";
+
+        var nodes = new List<TaskNode>
+        {
+            new("analyze", "Analyze the request and extract requirements",
+                new HashSet<string> { "analysis" }),
+            new("research", "Research relevant documentation and prior art",
+                new HashSet<string> { "research" }),
+            new("plan", "Create implementation plan from analysis and research",
+                new HashSet<string> { "planning" }),
+            new("implement", "Write the code changes",
+                new HashSet<string> { "coding" }),
+            new("test", "Run tests and verify correctness",
+                new HashSet<string> { "testing" }),
+            new("review", "Review final output and summarize",
+                new HashSet<string> { "review" }),
+        };
+
+        var edges = new List<TaskEdge>
+        {
+            new("analyze", "plan"),
+            new("research", "plan"),
+            new("plan", "implement"),
+            new("implement", "test"),
+            new("test", "review"),
+        };
+
+        _logger?.LogInformation("Submitting demo task graph: {GraphId} ({NodeCount} nodes, {EdgeCount} edges)",
+            graphId, nodes.Count, edges.Count);
+
+        _agentWorld.TaskGraph.Tell(
+            new SubmitTaskGraph(graphId, nodes, edges),
+            Akka.Actor.ActorRefs.NoSender);
     }
 
     public override void _ExitTree()

@@ -12,14 +12,16 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class TaskGraphActor : UntypedActor, IWithTimers
 {
     private readonly IActorRef _dispatch;
+    private readonly IActorRef _viewport;
     private readonly ILogger<TaskGraphActor> _logger;
     private readonly Dictionary<string, GraphState> _graphs = new();
 
     public ITimerScheduler Timers { get; set; } = null!;
 
-    public TaskGraphActor(IActorRef dispatch, ILogger<TaskGraphActor> logger)
+    public TaskGraphActor(IActorRef dispatch, IActorRef viewport, ILogger<TaskGraphActor> logger)
     {
         _dispatch = dispatch;
+        _viewport = viewport;
         _logger = logger;
     }
 
@@ -56,6 +58,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
         _graphs[submit.GraphId] = state;
         Sender.Tell(new TaskGraphAccepted(submit.GraphId, submit.Nodes.Count, submit.Edges.Count));
+        _viewport.Tell(new NotifyTaskGraphSubmitted(submit.GraphId, submit.Nodes, submit.Edges));
         _logger.LogInformation("Task graph {GraphId} accepted: {Nodes} nodes, {Edges} edges",
             submit.GraphId, submit.Nodes.Count, submit.Edges.Count);
 
@@ -73,45 +76,71 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
     private void HandleTaskCompleted(TaskCompleted completed)
     {
-        foreach (var (graphId, state) in _graphs)
-        {
-            if (!state.Nodes.ContainsKey(completed.TaskId)) continue;
-
-            if (!completed.Success)
-            {
-                // Treat unsuccessful completion as failure
-                state.Status[completed.TaskId] = TaskNodeStatus.Failed;
-                _logger.LogWarning("Graph {GraphId}: task {TaskId} completed with Success=false",
-                    graphId, completed.TaskId);
-                CancelDependents(state, completed.TaskId);
-            }
-            else
-            {
-                state.Status[completed.TaskId] = TaskNodeStatus.Completed;
-                _logger.LogDebug("Graph {GraphId}: task {TaskId} completed", graphId, completed.TaskId);
-                DispatchReadyNodes(state);
-            }
-
-            CheckGraphCompletion(graphId, state);
+        if (!TryFindGraph(completed.TaskId, completed.GraphId, out var graphId, out var state))
             return;
+
+        if (!completed.Success)
+        {
+            state.Status[completed.TaskId] = TaskNodeStatus.Failed;
+            _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, completed.TaskId, TaskNodeStatus.Failed, completed.AgentId));
+            _logger.LogWarning("Graph {GraphId}: task {TaskId} completed with Success=false",
+                graphId, completed.TaskId);
+            CancelDependents(state, completed.TaskId);
         }
+        else
+        {
+            state.Status[completed.TaskId] = TaskNodeStatus.Completed;
+            _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, completed.TaskId, TaskNodeStatus.Completed, completed.AgentId));
+            _logger.LogDebug("Graph {GraphId}: task {TaskId} completed", graphId, completed.TaskId);
+            DispatchReadyNodes(state);
+        }
+
+        CheckGraphCompletion(graphId, state);
     }
 
     private void HandleTaskFailed(TaskFailed failed)
     {
-        foreach (var (graphId, state) in _graphs)
-        {
-            if (!state.Nodes.ContainsKey(failed.TaskId)) continue;
-
-            state.Status[failed.TaskId] = TaskNodeStatus.Failed;
-            _logger.LogWarning("Graph {GraphId}: task {TaskId} failed — {Reason}",
-                graphId, failed.TaskId, failed.Reason);
-
-            // Cancel all transitive dependents
-            CancelDependents(state, failed.TaskId);
-            CheckGraphCompletion(graphId, state);
+        if (!TryFindGraph(failed.TaskId, failed.GraphId, out var graphId, out var state))
             return;
+
+        state.Status[failed.TaskId] = TaskNodeStatus.Failed;
+        _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, failed.TaskId, TaskNodeStatus.Failed));
+        _logger.LogWarning("Graph {GraphId}: task {TaskId} failed — {Reason}",
+            graphId, failed.TaskId, failed.Reason);
+
+        CancelDependents(state, failed.TaskId);
+        CheckGraphCompletion(graphId, state);
+    }
+
+    /// <summary>
+    /// Resolves the owning graph for a task. Uses direct GraphId lookup when available,
+    /// falls back to scanning all graphs for backward compatibility.
+    /// </summary>
+    private bool TryFindGraph(string taskId, string? graphId, out string foundGraphId, out GraphState state)
+    {
+        // Direct lookup when GraphId is provided — O(1) instead of O(graphs)
+        if (graphId != null && _graphs.TryGetValue(graphId, out state!))
+        {
+            if (state.Nodes.ContainsKey(taskId))
+            {
+                foundGraphId = graphId;
+                return true;
+            }
+            _logger.LogWarning("GraphId {GraphId} does not contain task {TaskId}", graphId, taskId);
         }
+
+        // Fallback: scan all graphs (backward compat for messages without GraphId)
+        foreach (var (gid, gs) in _graphs)
+        {
+            if (!gs.Nodes.ContainsKey(taskId)) continue;
+            foundGraphId = gid;
+            state = gs;
+            return true;
+        }
+
+        foundGraphId = "";
+        state = null!;
+        return false;
     }
 
     private void DispatchReadyNodes(GraphState state)
@@ -127,11 +156,12 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
             // All deps satisfied — mark ready and dispatch
             state.Status[taskId] = TaskNodeStatus.Dispatched;
+            _viewport.Tell(new NotifyTaskNodeStatusChanged(state.GraphId, taskId, TaskNodeStatus.Dispatched));
             _logger.LogDebug("Graph {GraphId}: dispatching task {TaskId}", state.GraphId, taskId);
 
             var request = node.Budget is not null
-                ? new TaskRequestWithBudget(taskId, node.Description, node.RequiredCapabilities, node.Budget)
-                : new TaskRequest(taskId, node.Description, node.RequiredCapabilities);
+                ? new TaskRequestWithBudget(taskId, node.Description, node.RequiredCapabilities, node.Budget, state.GraphId)
+                : new TaskRequest(taskId, node.Description, node.RequiredCapabilities, state.GraphId);
 
             _dispatch.Tell(request);
         }
@@ -153,6 +183,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 if (state.Status[dep] is TaskNodeStatus.Pending or TaskNodeStatus.Ready)
                 {
                     state.Status[dep] = TaskNodeStatus.Cancelled;
+                    _viewport.Tell(new NotifyTaskNodeStatusChanged(state.GraphId, dep, TaskNodeStatus.Cancelled));
                     _logger.LogDebug("Graph {GraphId}: cancelled task {TaskId} (dependency {Dep} failed)",
                         state.GraphId, dep, failedTaskId);
                     queue.Enqueue(dep);
@@ -195,6 +226,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             kv => kv.Value == TaskNodeStatus.Completed);
 
         Timers.Cancel($"deadline-{graphId}");
+        _viewport.Tell(new TaskGraphCompleted(graphId, results));
         Context.Parent.Tell(new TaskGraphCompleted(graphId, results));
         Context.System.EventStream.Publish(new TaskGraphCompleted(graphId, results));
 

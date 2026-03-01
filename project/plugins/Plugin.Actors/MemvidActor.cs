@@ -1,5 +1,6 @@
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
+using GiantIsopod.Plugin.Process;
 
 namespace GiantIsopod.Plugin.Actors;
 
@@ -10,12 +11,12 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class MemvidActor : UntypedActor
 {
     private readonly string _agentId;
-    private readonly string _mv2Path;
+    private readonly MemvidClient _client;
 
-    public MemvidActor(string agentId, string mv2Path)
+    public MemvidActor(string agentId, string mv2Path, string memvidExecutable)
     {
         _agentId = agentId;
-        _mv2Path = mv2Path;
+        _client = new MemvidClient(agentId, mv2Path, memvidExecutable);
     }
 
     protected override void OnReceive(object message)
@@ -23,16 +24,63 @@ public sealed class MemvidActor : UntypedActor
         switch (message)
         {
             case StoreMemory store:
-                // TODO: Call MemvidClient.PutAsync via CliWrap
-                // memvid put --file {_mv2Path} --title "{store.Title}" < content
+                HandleStore(store);
                 break;
 
             case SearchMemory search:
-                // TODO: Call MemvidClient.SearchAsync via CliWrap
-                // memvid search --file {_mv2Path} "{search.Query}" --json -n {search.TopK}
-                // Parse response, reply with MemorySearchResult
-                Sender.Tell(new MemorySearchResult(search.AgentId, search.TaskRunId, []));
+                HandleSearch(search);
+                break;
+
+            case StoreCompleted:
+                // fire-and-forget confirmation; no reply needed
+                break;
+
+            case SearchCompleted completed:
+                completed.ReplyTo.Tell(new MemorySearchResult(
+                    completed.AgentId, completed.TaskRunId, completed.Hits));
+                break;
+
+            case MemvidOperationFailed failed:
+                if (failed.ReplyTo != null)
+                {
+                    failed.ReplyTo.Tell(new MemorySearchResult(
+                        failed.AgentId, failed.TaskRunId, []));
+                }
                 break;
         }
     }
+
+    private void HandleStore(StoreMemory store)
+    {
+        _client.PutAsync(store.Content, store.Title, store.Tags)
+            .ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    return (object)new MemvidOperationFailed(store.AgentId, null, t.Exception?.GetBaseException().Message ?? "unknown error", null);
+                if (t.IsCanceled)
+                    return (object)new MemvidOperationFailed(store.AgentId, null, "operation canceled", null);
+                return new StoreCompleted();
+            })
+            .PipeTo(Self);
+    }
+
+    private void HandleSearch(SearchMemory search)
+    {
+        var replyTo = Sender;
+        _client.SearchAsync(search.Query, search.TopK)
+            .ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    return (object)new MemvidOperationFailed(search.AgentId, search.TaskRunId, t.Exception?.GetBaseException().Message ?? "unknown error", replyTo);
+                if (t.IsCanceled)
+                    return (object)new MemvidOperationFailed(search.AgentId, search.TaskRunId, "operation canceled", replyTo);
+                return new SearchCompleted(search.AgentId, search.TaskRunId, t.Result, replyTo);
+            })
+            .PipeTo(Self);
+    }
+
+    // Internal messages for PipeTo async bridging
+    private sealed record StoreCompleted;
+    private sealed record SearchCompleted(string AgentId, string? TaskRunId, IReadOnlyList<MemoryHit> Hits, IActorRef ReplyTo);
+    private sealed record MemvidOperationFailed(string AgentId, string? TaskRunId, string Reason, IActorRef? ReplyTo);
 }

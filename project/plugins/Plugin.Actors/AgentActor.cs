@@ -159,12 +159,16 @@ public sealed class AgentActor : UntypedActor
 
             case TaskCompleted completed:
                 _activeTaskCount = Math.Max(0, _activeTaskCount - 1);
-                Context.Child("tasks").Forward(completed);
+                Context.Child("tasks").Tell(completed);
+                if (completed.GraphId != null)
+                    Context.System.ActorSelection("/user/taskgraph").Tell(completed);
                 break;
 
             case TaskFailed failed:
                 _activeTaskCount = Math.Max(0, _activeTaskCount - 1);
-                Context.Child("tasks").Forward(failed);
+                Context.Child("tasks").Tell(failed);
+                if (failed.GraphId != null)
+                    Context.System.ActorSelection("/user/taskgraph").Tell(failed);
                 break;
 
             case TaskBidRejected:

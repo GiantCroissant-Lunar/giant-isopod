@@ -198,7 +198,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         // Risk approval gate: Critical tasks require viewport approval before assignment
         if (budget?.Risk == RiskLevel.Critical)
         {
-            _pendingApprovals[taskId] = new PendingApproval(taskId, selectedAgentId, budget, session.OriginalSender);
+            _pendingApprovals[taskId] = new PendingApproval(taskId, selectedAgentId, budget, session.OriginalSender, session.Request.GraphId);
             var approval = new RiskApprovalRequired(taskId, RiskLevel.Critical, session.Request.Description);
             Context.System.EventStream.Publish(approval);
 
@@ -213,12 +213,12 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             return;
         }
 
-        AwardTask(taskId, selectedAgentId, budget, session.OriginalSender);
+        AwardTask(taskId, selectedAgentId, budget, session.OriginalSender, session.Request.GraphId);
     }
 
-    private void AwardTask(string taskId, string agentId, TaskBudget? budget, IActorRef originalSender)
+    private void AwardTask(string taskId, string agentId, TaskBudget? budget, IActorRef originalSender, string? graphId = null)
     {
-        var assignment = new TaskAssigned(taskId, agentId, budget);
+        var assignment = new TaskAssigned(taskId, agentId, budget, graphId);
         _agentSupervisor.Tell(assignment);
         originalSender.Tell(assignment);
     }
@@ -238,7 +238,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
         Timers.Cancel($"approval-{taskId}");
         _logger.LogInformation("Task {TaskId} risk approved — assigning to {AgentId}", taskId, pending.AgentId);
-        AwardTask(taskId, pending.AgentId, pending.Budget, pending.OriginalSender);
+        AwardTask(taskId, pending.AgentId, pending.Budget, pending.OriginalSender, pending.GraphId);
     }
 
     private void HandleRiskDenied(string taskId, string reason)
@@ -281,7 +281,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
     private sealed record BidWindowClosed(string TaskId);
     private sealed record ApprovalTimedOut(string TaskId);
-    private sealed record PendingApproval(string TaskId, string AgentId, TaskBudget? Budget, IActorRef OriginalSender);
+    private sealed record PendingApproval(string TaskId, string AgentId, TaskBudget? Budget, IActorRef OriginalSender, string? GraphId = null);
 }
 
 /// <summary>

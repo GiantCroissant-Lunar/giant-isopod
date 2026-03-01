@@ -45,6 +45,7 @@ public sealed class AgentWorldSystem : IDisposable
         MemorySupervisor = _system.ActorOf(
             Props.Create(() => new MemorySupervisorActor(
                 config.MemoryBasePath,
+                config.MemvidExecutable,
                 loggerFactory.CreateLogger<MemorySupervisorActor>())),
             "memory");
 
@@ -65,16 +66,17 @@ public sealed class AgentWorldSystem : IDisposable
                 loggerFactory.CreateLogger<DispatchActor>())),
             "dispatch");
 
-        TaskGraph = _system.ActorOf(
-            Props.Create(() => new TaskGraphActor(
-                Dispatch,
-                loggerFactory.CreateLogger<TaskGraphActor>())),
-            "taskgraph");
-
+        // Viewport must be created before TaskGraph so it can receive notifications
         Viewport = _system.ActorOf(
             Props.Create(() => new ViewportActor(
                 loggerFactory.CreateLogger<ViewportActor>())),
             "viewport");
+
+        TaskGraph = _system.ActorOf(
+            Props.Create(() => new TaskGraphActor(
+                Dispatch, Viewport,
+                loggerFactory.CreateLogger<TaskGraphActor>())),
+            "taskgraph");
 
         _logger.LogInformation("Actor system started");
     }

@@ -47,6 +47,21 @@ public sealed class GodotViewportBridge : IViewportBridge
         _eventQueue.Enqueue(new ProcessOutputEvent(agentId, line));
     }
 
+    public void PublishTaskGraphSubmitted(string graphId, IReadOnlyList<TaskNode> nodes, IReadOnlyList<TaskEdge> edges)
+    {
+        _eventQueue.Enqueue(new TaskGraphSubmittedEvent(graphId, nodes, edges));
+    }
+
+    public void PublishTaskNodeStatusChanged(string graphId, string taskId, TaskNodeStatus status, string? agentId = null)
+    {
+        _eventQueue.Enqueue(new TaskNodeStatusChangedEvent(graphId, taskId, status, agentId));
+    }
+
+    public void PublishTaskGraphCompleted(string graphId, IReadOnlyDictionary<string, bool> results)
+    {
+        _eventQueue.Enqueue(new TaskGraphCompletedEvent(graphId, results));
+    }
+
     /// <summary>
     /// Called from Godot _Process to drain events on the main thread.
     /// </summary>
@@ -65,3 +80,8 @@ public record GenUIRequestEvent(string AgentId, string A2UIJson) : ViewportEvent
 public record ProcessStartedEvent(string AgentId, int ProcessId) : ViewportEvent(AgentId);
 public record ProcessExitedEvent(string AgentId, int ExitCode) : ViewportEvent(AgentId);
 public record ProcessOutputEvent(string AgentId, string Line) : ViewportEvent(AgentId);
+
+// Task graph visualization events (AgentId = "" since these are graph-level, not agent-level)
+public record TaskGraphSubmittedEvent(string GraphId, IReadOnlyList<TaskNode> Nodes, IReadOnlyList<TaskEdge> Edges) : ViewportEvent("");
+public record TaskNodeStatusChangedEvent(string GraphId, string TaskId, TaskNodeStatus Status, string? AssignedAgentId) : ViewportEvent("");
+public record TaskGraphCompletedEvent(string GraphId, IReadOnlyDictionary<string, bool> Results) : ViewportEvent("");
