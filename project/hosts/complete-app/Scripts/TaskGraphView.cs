@@ -9,6 +9,7 @@ namespace GiantIsopod.Hosts.CompleteApp;
 /// </summary>
 public partial class TaskGraphView : Control
 {
+    private string? _activeGraphId;
     private GraphEdit? _graphEdit;
     private Label? _titleLabel;
 
@@ -53,7 +54,7 @@ public partial class TaskGraphView : Control
     {
         if (what == NotificationResized && _graphEdit != null)
         {
-            _graphEdit.Size = new Vector2(Size.X, Size.Y - 24);
+            _graphEdit.Size = new Vector2(Size.X, Mathf.Max(0, Size.Y - 24));
         }
     }
 
@@ -61,7 +62,9 @@ public partial class TaskGraphView : Control
     {
         if (_graphEdit == null) return;
 
-        // Clear previous graph if any for this graphId
+        // Clear previous graph before rendering new one
+        if (_activeGraphId != null && _activeGraphId != graphId)
+            ClearGraph(_activeGraphId);
         ClearGraph(graphId);
 
         var nodeDict = new Dictionary<string, GraphNode>();
@@ -96,6 +99,7 @@ public partial class TaskGraphView : Control
         }
 
         _graphNodes[graphId] = nodeDict;
+        _activeGraphId = graphId;
 
         if (_titleLabel != null)
             _titleLabel.Text = $"Task Graph: {graphId}";
