@@ -12,6 +12,7 @@ public sealed class AgentSupervisorActor : UntypedActor
 {
     private readonly IActorRef _registry;
     private readonly IActorRef _memorySupervisor;
+    private readonly IActorRef _knowledgeSupervisor;
     private readonly AgentWorldConfig _config;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<AgentSupervisorActor> _logger;
@@ -20,11 +21,13 @@ public sealed class AgentSupervisorActor : UntypedActor
     public AgentSupervisorActor(
         IActorRef registry,
         IActorRef memorySupervisor,
+        IActorRef knowledgeSupervisor,
         AgentWorldConfig config,
         ILoggerFactory loggerFactory)
     {
         _registry = registry;
         _memorySupervisor = memorySupervisor;
+        _knowledgeSupervisor = knowledgeSupervisor;
         _config = config;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<AgentSupervisorActor>();
@@ -60,6 +63,7 @@ public sealed class AgentSupervisorActor : UntypedActor
                         spawn.MemoryFilePath,
                         _registry,
                         _memorySupervisor,
+                        _knowledgeSupervisor,
                         _config,
                         _loggerFactory,
                         spawn.RuntimeId,

@@ -34,6 +34,10 @@ public sealed class MemorySupervisorActor : UntypedActor
             case SearchMemory search:
                 GetOrCreateMemoryActor(search.AgentId).Forward(search);
                 break;
+
+            case CommitMemory commit:
+                GetOrCreateMemoryActor(commit.AgentId).Forward(commit);
+                break;
         }
     }
 

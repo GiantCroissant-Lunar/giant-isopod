@@ -27,7 +27,7 @@ public record TaskRequest(string TaskId, string Description, IReadOnlySet<string
 public record TaskRequestWithBudget(
     string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities,
     TaskBudget Budget, string? GraphId = null) : TaskRequest(TaskId, Description, RequiredCapabilities, GraphId);
-public record TaskAssigned(string TaskId, string AgentId, TaskBudget? Budget = null, string? GraphId = null);
+public record TaskAssigned(string TaskId, string AgentId, string? Description = null, TaskBudget? Budget = null, string? GraphId = null);
 public record TaskCompleted(string TaskId, string AgentId, bool Success, string? Summary = null, string? GraphId = null);
 public record TaskFailed(string TaskId, string? Reason = null, IReadOnlySet<string>? UnmetCapabilities = null, string? GraphId = null);
 public record TaskTimedOut(string TaskId);
@@ -110,6 +110,10 @@ public record StoreKnowledge(string AgentId, string Content, string Category, ID
 public record QueryKnowledge(string AgentId, string Query, string? Category = null, int TopK = 10);
 public record KnowledgeResult(string AgentId, IReadOnlyList<KnowledgeEntry> Entries);
 public record KnowledgeEntry(string Content, string Category, double Relevance, IDictionary<string, string>? Tags, DateTimeOffset StoredAt);
+
+// ── Episodic memory commit ──
+
+public record CommitMemory(string AgentId);
 
 // ── GenUI (A2UI render requests) ──
 
