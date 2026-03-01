@@ -39,15 +39,15 @@ public partial class HudController : Control
     private Button? _tabRenderedBtn;
     private bool _showingTerminal = true;
 
-    private static readonly string ConsoleLogPath = System.IO.Path.Combine(
-        System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
-        "giant-isopod-console.log");
-    private static readonly string RecordingsDir = System.IO.Path.Combine(
-        System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
-        "giant-isopod-recordings");
+    private string _consoleLogPath = null!;
+    private string _recordingsDir = null!;
 
     public override void _Ready()
     {
+        var userDir = ProjectSettings.GlobalizePath("user://");
+        _consoleLogPath = System.IO.Path.Combine(userDir, "giant-isopod-console.log");
+        _recordingsDir = System.IO.Path.Combine(userDir, "recordings");
+
         _agentCountLabel = GetNode<Label>("%AgentCount");
         _versionLabel = GetNode<Label>("%VersionLabel");
         _agentList = GetNode<VBoxContainer>("%AgentList");
@@ -506,7 +506,7 @@ public partial class HudController : Control
             try
             {
                 var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
-                var castPath = System.IO.Path.Combine(RecordingsDir, $"{agentId}-{timestamp}.cast");
+                var castPath = System.IO.Path.Combine(_recordingsDir, $"{agentId}-{timestamp}.cast");
                 var recorder = new GiantIsopod.Plugin.Process.AsciicastRecorder(castPath, 120, 24);
                 _agentRecorders[agentId] = recorder;
                 recorder.WriteOutput($"\u001b[32m● Agent {agentId} connected\u001b[0m\r\n");
@@ -739,7 +739,7 @@ public partial class HudController : Control
     {
         try
         {
-            System.IO.File.AppendAllText(ConsoleLogPath,
+            System.IO.File.AppendAllText(_consoleLogPath,
                 $"[{DateTime.Now:HH:mm:ss.fff}] {message}\n");
         }
         catch { /* ignore file errors */ }
