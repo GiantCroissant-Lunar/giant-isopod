@@ -12,6 +12,8 @@ visualization pipeline, GodotXterm fallback terminal, and TaskGraphView (GraphEd
 
 Session 4 resolved all four session-3 handover priorities: F5 demo graph trigger,
 user:// recording paths, GodotXterm native libs, and MemvidActor CliWrap integration.
+Also addressed two rounds of PR #3 review comments (Dispose→node flags, IsCanceled,
+TaskRunId correlation, graph overlap fix).
 
 ## Branch & PR State
 
@@ -21,7 +23,7 @@ user:// recording paths, GodotXterm native libs, and MemvidActor CliWrap integra
 |--------|------|----|---------|--------|
 | `worktree-swarm-enhancements` | `main` | #1 | 10 | **Merged** |
 | `feat/risk-gate-and-memory` | `main` | #2 | 3 | **Merged** |
-| `feat/taskid-collision-and-dag-viz` | `main` | #3 | 13 | Sessions 3–4, PR pending |
+| `feat/taskid-collision-and-dag-viz` | `main` | #3 | 16 | **Merged** |
 
 Worktree path:
 - `C:\lunar-horse\yokan-projects\giant-isopod\.claude\worktrees\swarm-enhancements`
@@ -90,7 +92,24 @@ Without native libs, the app still runs — HudController falls back to RichText
 
 ## Remaining Work (Prioritized)
 
-### Next priorities
+### Next session: Generalize pi-specific naming (Agent Backend Abstraction)
+
+Current agent execution uses pi-specific names despite `CliAgentProcess` being
+provider-agnostic via cli-providers.json. Rename to generic terms:
+
+| Current (pi-specific) | Target (generic) | File |
+|------------------------|-------------------|------|
+| `_piConnected` | `_processConnected` | `AgentActor.cs:27,119,140,192` |
+| `StartPiProcess()` | `StartAgentProcess()` | `AgentRpcActor.cs:36,79` |
+| `SendToPiAsync()` | `SendToProcessAsync()` | `AgentRpcActor.cs:40,127` |
+| `IAgentProcess` | keep (already generic) | `Contracts.Core/IAgentProcess.cs` |
+| `CliAgentProcess` | keep (already generic) | `Plugin.Process/CliAgentProcess.cs` |
+
+Deeper refactor (future, separate PR): `IAgentProcess` → `IAgentBackend` abstraction
+covering CLI tools, SDK agents, HTTP/API agents, and in-process plugins. See MEMORY.md
+"Planned: Agent Backend Abstraction" section.
+
+### Later priorities
 
 1. Agent-to-agent communication (via blackboard or direct messaging)
 2. Fitness refinements (specialization depth, performance history)
