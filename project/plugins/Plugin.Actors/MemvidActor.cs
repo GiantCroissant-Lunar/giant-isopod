@@ -1,6 +1,7 @@
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
 using GiantIsopod.Plugin.Process;
+using Microsoft.Extensions.Logging;
 
 namespace GiantIsopod.Plugin.Actors;
 
@@ -12,11 +13,13 @@ public sealed class MemvidActor : UntypedActor
 {
     private readonly string _agentId;
     private readonly MemvidClient _client;
+    private readonly ILogger<MemvidActor> _logger;
 
-    public MemvidActor(string agentId, string mv2Path, string memvidExecutable)
+    public MemvidActor(string agentId, string mv2Path, string memvidExecutable, ILogger<MemvidActor> logger)
     {
         _agentId = agentId;
         _client = new MemvidClient(agentId, mv2Path, memvidExecutable);
+        _logger = logger;
     }
 
     protected override void OnReceive(object message)
@@ -31,8 +34,8 @@ public sealed class MemvidActor : UntypedActor
                 HandleSearch(search);
                 break;
 
-            case StoreCompleted:
-                // fire-and-forget confirmation; no reply needed
+            case StoreCompleted completed:
+                _logger.LogDebug("Stored memory for {AgentId}: {Title}", _agentId, completed.Title);
                 break;
 
             case SearchCompleted completed:
@@ -41,6 +44,7 @@ public sealed class MemvidActor : UntypedActor
                 break;
 
             case MemvidOperationFailed failed:
+                _logger.LogWarning("Memory operation failed for {AgentId}: {Reason}", failed.AgentId, failed.Reason);
                 if (failed.ReplyTo != null)
                 {
                     failed.ReplyTo.Tell(new MemorySearchResult(
@@ -59,7 +63,7 @@ public sealed class MemvidActor : UntypedActor
                     return (object)new MemvidOperationFailed(store.AgentId, null, t.Exception?.GetBaseException().Message ?? "unknown error", null);
                 if (t.IsCanceled)
                     return (object)new MemvidOperationFailed(store.AgentId, null, "operation canceled", null);
-                return new StoreCompleted();
+                return new StoreCompleted(store.Title ?? "untitled");
             })
             .PipeTo(Self);
     }
@@ -80,7 +84,7 @@ public sealed class MemvidActor : UntypedActor
     }
 
     // Internal messages for PipeTo async bridging
-    private sealed record StoreCompleted;
+    private sealed record StoreCompleted(string Title);
     private sealed record SearchCompleted(string AgentId, string? TaskRunId, IReadOnlyList<MemoryHit> Hits, IActorRef ReplyTo);
     private sealed record MemvidOperationFailed(string AgentId, string? TaskRunId, string Reason, IActorRef? ReplyTo);
 }

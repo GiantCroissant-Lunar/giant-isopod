@@ -113,6 +113,24 @@ tasks:
           --namespace "{{.HUD_NS}}"
           --output "{{.HUD_OUTPUT}}"
 
+  # ── Memory sidecar ──
+
+  memory:install:
+    desc: Install memory-sidecar Python package (editable)
+    cmds:
+      - uv pip install -e ".[dev]"
+    dir: memory-sidecar
+
+  memory:index:
+    desc: Index the project codebase into SQLite with vector embeddings
+    cmds:
+      - memory-sidecar index project/ --db data/memory/codebase.sqlite
+
+  memory:search:
+    desc: Search the codebase index (usage — task memory:search -- "your query")
+    cmds:
+      - memory-sidecar search "{{.CLI_ARGS}}" --db data/memory/codebase.sqlite
+
   # ── .NET / Godot ──
 
   build:

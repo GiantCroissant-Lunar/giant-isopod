@@ -1,5 +1,6 @@
 using Akka.Actor;
 using Akka.Configuration;
+using GiantIsopod.Plugin.Process;
 using Microsoft.Extensions.Logging;
 
 namespace GiantIsopod.Plugin.Actors;
@@ -14,6 +15,7 @@ public sealed class AgentWorldSystem : IDisposable
 
     public IActorRef Registry { get; }
     public IActorRef MemorySupervisor { get; }
+    public IActorRef KnowledgeSupervisor { get; }
     public IActorRef Blackboard { get; }
     public IActorRef AgentSupervisor { get; }
     public IActorRef Dispatch { get; }
@@ -47,8 +49,18 @@ public sealed class AgentWorldSystem : IDisposable
             Props.Create(() => new MemorySupervisorActor(
                 config.MemoryBasePath,
                 config.MemvidExecutable,
-                loggerFactory.CreateLogger<MemorySupervisorActor>())),
+                loggerFactory)),
             "memory");
+
+        var sidecarClient = new MemorySidecarClient(
+            config.MemoryBasePath,
+            config.MemorySidecarExecutable);
+
+        KnowledgeSupervisor = _system.ActorOf(
+            Props.Create(() => new KnowledgeSupervisorActor(
+                sidecarClient,
+                loggerFactory)),
+            "knowledge");
 
         Blackboard = _system.ActorOf(
             Props.Create(() => new BlackboardActor(
@@ -120,4 +132,5 @@ public record AgentWorldConfig
     public Dictionary<string, string> RuntimeEnvironment { get; init; } = new();
 
     public string MemvidExecutable { get; init; } = "memvid";
+    public string MemorySidecarExecutable { get; init; } = "memory-sidecar";
 }
