@@ -1,13 +1,14 @@
-# Handover: Swarm Enhancements (Sessions 1–2)
+# Handover: Swarm Enhancements (Sessions 1–3)
 
 Date: 2026-03-01
 
 ## Session Summary
 
-Two sessions implemented swarm enhancements across two repos. Session 1 designed ADRs
-and built the core actors. Session 2 wired budget flow, integrated ModernSatsuma,
-added GraphTimedOut handling, addressed 18 Copilot review comments, created the risk
-approval gate + revised ADR-003 memory architecture in a stacked PR.
+Sessions 1–2 implemented core swarm actors, budget flow, ModernSatsuma DAG, risk gate,
+and ADR-003 memory architecture. PRs #1 and #2 merged to main.
+
+Session 3 fixed cross-graph TaskId collisions (review comment #7), added viewport DAG
+visualization pipeline, GodotXterm fallback terminal, and TaskGraphView (GraphEdit).
 
 ## Branch & PR State
 
@@ -15,67 +16,29 @@ approval gate + revised ADR-003 memory architecture in a stacked PR.
 
 | Branch | Base | PR | Commits | Status |
 |--------|------|----|---------|--------|
-| `worktree-swarm-enhancements` | `main` | [#1](https://github.com/GiantCroissant-Lunar/giant-isopod/pull/1) | 10 | Review fixes pushed, ready to merge |
-| `feat/risk-gate-and-memory` | `worktree-swarm-enhancements` | [#2](https://github.com/GiantCroissant-Lunar/giant-isopod/pull/2) | 3 | Stacked on PR #1, merge after #1 |
+| `worktree-swarm-enhancements` | `main` | #1 | 10 | **Merged** |
+| `feat/risk-gate-and-memory` | `main` | #2 | 3 | **Merged** |
+| `feat/taskid-collision-and-dag-viz` | `main` | — | 8 | Session 3 work, pending PR |
 
-Worktree paths:
-- PR #1: `C:\lunar-horse\yokan-projects\giant-isopod\.claude\worktrees\swarm-enhancements`
-- PR #2: `C:\lunar-horse\yokan-projects\giant-isopod\.claude\worktrees\risk-and-memory`
+Worktree path (session 3):
+- `C:\lunar-horse\yokan-projects\giant-isopod\.claude\worktrees\swarm-enhancements`
 
 ### modern-satsuma
 
-```
-main: c393c89  (has pre-existing unstaged refactor changes)
-branch: feat/topological-sort @ 32c7e06  (2 commits: RFC-007 + TopologicalSort impl)
-```
-
 Packed as `Plate.ModernSatsuma 0.2.0-topological` in local NuGet feed.
-To merge when ready: `git -C /c/lunar-horse/plate-projects/modern-satsuma checkout main && git merge feat/topological-sort`
 
-## Merge Order
-
-```
-1. gh pr merge 1 --merge    (worktree-swarm-enhancements → main)
-2. gh pr merge 2 --merge    (feat/risk-gate-and-memory → main, after #1 lands)
-3. Optionally merge modern-satsuma feat/topological-sort → main
-```
-
-## What PR #1 Contains (10 commits)
+## What Session 3 Contains (8 commits on `feat/taskid-collision-and-dag-viz`)
 
 | Commit | Type | What |
 |--------|------|------|
-| `12b44ed` | feat | 30+ new message types: task graph, blackboard, budgets, market, working memory |
-| `28ea0ee` | feat | TaskGraphActor + BlackboardActor, wired into bootstrap |
-| `363ce3f` | feat | Market-first dispatch + budget enforcement in DispatchActor |
-| `c7a02d7` | docs | Session handover doc |
-| `eda41e8` | feat | Budget flow end-to-end: TaskAssigned carries Budget, SetTokenBudget wired |
-| `e919b05` | feat | GraphTimedOut handler in TaskGraphActor |
-| `6d963f8` | feat | ModernSatsuma TopologicalSort integration |
-| `eef5957` | fix | Review: crash bugs (dict mutation, duplicate TaskId), Success flag, timer cancel |
-| `0f33a0a` | fix | Review: Sender routing, bid validation, Watch on subscribe, per-task token tracking |
-| `dc1a1ab` | docs | Handover doc updated |
-
-## What PR #2 Contains (3 commits, stacked on #1)
-
-| Commit | Type | What |
-|--------|------|------|
-| `f18d0b8` | docs | Cherry-picked ADR docs (002–005) into branch |
-| `6b12f01` | docs | ADR-003 revised: four-layer memory (working → shared → episodic → long-term) |
-| `2dfdd61` | feat | Risk approval gate in DispatchActor (Critical tasks paused for viewport approval) |
-
-## Copilot Review — 18 Comments on PR #1
-
-All 18 addressed. Summary of fixes:
-
-**Crash bugs**: Dict mutation during iteration (#13), duplicate TaskId crash (#6)
-**Logic bugs**: Sender misrouting in DispatchActor (#1/#12), Success flag ignored (#14), missing Watch (#8)
-**Design**: Per-task token tracking (#3), bid validation (#16)
-**Cleanup**: Unused using (#2), null-coalesce (#9), misleading comment (#10), unused var (#15), timer cancel (#17)
-**Docs**: Handover updated (#4/#5/#11/#18)
-
-**Not addressed** (review comment #7): Cross-graph TaskId collision. TaskIds can collide
-across active graphs. Low risk for now (graph submitters control IDs), but worth prefixing
-with GraphId in a future pass.
+| `926affd` | fix | Add `GraphId` field to TaskRequest, TaskAssigned, TaskCompleted, TaskFailed |
+| `9c3991c` | fix | Route completions to TaskGraphActor with GraphId; TryFindGraph O(1) lookup |
+| `7237df7` | feat | Notify* messages + IViewportBridge task graph methods (default no-op) |
+| `0fead8d` | feat | TaskGraphActor emits viewport notifications; Viewport created before TaskGraph |
+| `fa77c98` | feat | TaskGraphView: GraphEdit DAG with topological layout + status colors |
+| `8e29751` | fix | Move TaskGraphView to HUD CanvasLayer; add RichTextLabel terminal fallback |
+| `c35ad03` | fix | ClassDB-based GodotXterm detection (insufficient — class registered without lib) |
+| `7192fb6` | fix | Probe Terminal.HasMethod("write") for reliable native lib detection |
 
 ## Actor Tree
 
@@ -87,41 +50,46 @@ ActorSystem "agent-world"
 ├── /user/agents            ← AgentSupervisorActor (ForwardToAgent routing)
 │   └── /user/agents/{id}   ← AgentActor (bidding, working memory, task count)
 │       ├── /rpc            ← AgentRpcActor (per-task token tracking)
-│       └── /tasks          ← AgentTaskActor (deadline enforcement, budget reports)
-├── /user/dispatch          ← DispatchActor (market-first + risk gate)
-├── /user/taskgraph         ← TaskGraphActor (ModernSatsuma DAG, wave dispatch)
-└── /user/viewport          ← ViewportActor (observer bridge to Godot)
+│       └── /tasks          ← AgentTaskActor (deadline enforcement, budget reports, GraphId tracking)
+├── /user/dispatch          ← DispatchActor (market-first + risk gate, GraphId propagation)
+├── /user/taskgraph         ← TaskGraphActor (ModernSatsuma DAG, wave dispatch, viewport notifications)
+└── /user/viewport          ← ViewportActor (observer bridge to Godot, task graph events)
 ```
-
-## Memory Architecture (Revised ADR-003)
-
-| Layer | Actor | Scope | Lifetime | Implementation |
-|-------|-------|-------|----------|----------------|
-| Working | `AgentActor` dict | Per-agent | Per-task | Done |
-| Shared | `/user/blackboard` | Cross-agent | Session | Done |
-| Episodic | `/user/memory/{id}` | Per-agent, per-task | Task run | Stub (needs CliWrap) |
-| Long-term | `/user/knowledge/{id}` | Per-agent | Persistent | Future (embedded DB) |
 
 ## Remaining Work (Prioritized)
 
 ### Next session priorities
 
-1. **Address review comment #7** — prefix TaskIds with GraphId or validate uniqueness
-   across active graphs in TaskGraphActor.
-2. **Memvid CliWrap integration** — wire MemvidActor to actual `memvid put`/`search`
+1. **TaskGraphView not visible** — TaskGraphView is wired and renders in the HUD
+   CanvasLayer, but it is hidden by default (`Visible = false`) and only shows when
+   a `SubmitTaskGraph` message is received. There is currently **no UI to submit a
+   task graph**. Options:
+   - Add a "Submit Test Graph" button to HUD that sends a sample SubmitTaskGraph
+   - Wire a keyboard shortcut (e.g. F5) to submit a demo DAG
+   - Wait until a real orchestrator/planner submits graphs programmatically
+
+2. **Asciicast recordings in user home** — `.cast` files are written to
+   `%USERPROFILE%\giant-isopod-recordings\` (hardcoded in HudController line 44).
+   Should be moved to `user://recordings/` (Godot user data dir) or made
+   configurable via AgentWorldConfig.
+
+3. **GodotXterm native libs missing** — `addons/godot_xterm/lib/` is empty.
+   The RichTextLabel fallback works, but for proper terminal rendering, download
+   or build the GodotXterm native binaries for Windows x86_64 and place them in
+   `project/hosts/complete-app/addons/godot_xterm/lib/`.
+
+4. **Memvid CliWrap integration** — wire MemvidActor to actual `memvid put`/`search`
    CLI calls. Scope per-task (episodic memory).
-3. **Viewport integration** — publish task graph state + market events to IViewportBridge
-   so Godot UI can visualize DAG progress.
 
 ### Later
 
-4. Agent-to-agent communication (via blackboard or direct messaging)
-5. Fitness refinements (specialization depth, performance history)
-6. Persistence (serialize GraphState to disk or embedded DB)
-7. Long-term knowledge store (SQLite/LiteDB, KnowledgeStoreActor)
-8. Per-provider token parsing (replace char-based approximation)
-9. Consensus voting (multi-agent approval)
-10. GOAP planning (planner → DAG → TaskGraphActor)
+5. Agent-to-agent communication (via blackboard or direct messaging)
+6. Fitness refinements (specialization depth, performance history)
+7. Persistence (serialize GraphState to disk or embedded DB)
+8. Long-term knowledge store (SQLite/LiteDB, KnowledgeStoreActor)
+9. Per-provider token parsing (replace char-based approximation)
+10. Consensus voting (multi-agent approval)
+11. GOAP planning (planner → DAG → TaskGraphActor)
 
 ## Key Design Decisions
 
@@ -136,3 +104,30 @@ ActorSystem "agent-world"
   → Long-term (embedded DB, future). See revised ADR-003.
 - **Budget end-to-end**: TaskAssigned carries Budget. AgentActor wires SetTokenBudget
   to /rpc. Per-task token tracking via dictionary in AgentRpcActor.
+- **GraphId threading (session 3)**: All task lifecycle messages carry optional GraphId.
+  TaskGraphActor.TryFindGraph does O(1) direct lookup when GraphId is present, with
+  fallback scan for backward compatibility. Fixes cross-graph TaskId collision.
+- **Viewport DAG pipeline**: TaskGraphActor → NotifyTaskGraphSubmitted/NotifyTaskNodeStatusChanged
+  → ViewportActor → IViewportBridge (default no-op) → GodotViewportBridge event queue →
+  Main._Process() drain → TaskGraphView (GraphEdit with topological layer layout).
+- **GodotXterm fallback**: HudController probes Terminal.HasMethod("write") after scene
+  instantiation. If native lib is missing, falls back to RichTextLabel-based console.
+  ClassDB.ClassExists("Terminal") is unreliable (class registered from .gdextension metadata
+  even when DLL is absent).
+
+## Key File Paths (Session 3)
+
+| File | Role |
+|------|------|
+| `project/contracts/Contracts.Core/Messages.cs` | GraphId on task messages + Notify* records |
+| `project/contracts/Contracts.Core/IViewportBridge.cs` | 3 default no-op task graph methods |
+| `project/plugins/Plugin.Actors/TaskGraphActor.cs` | TryFindGraph, viewport notifications |
+| `project/plugins/Plugin.Actors/AgentTaskActor.cs` | GraphId storage + enrichment |
+| `project/plugins/Plugin.Actors/AgentActor.cs` | Routes graph-tagged completions to /user/taskgraph |
+| `project/plugins/Plugin.Actors/DispatchActor.cs` | GraphId through bid/approval pipeline |
+| `project/plugins/Plugin.Actors/ViewportActor.cs` | Handles Notify* + TaskGraphCompleted |
+| `project/plugins/Plugin.Actors/AgentWorldSystem.cs` | Viewport created before TaskGraph |
+| `project/hosts/complete-app/Scripts/GodotViewportBridge.cs` | 3 new event records |
+| `project/hosts/complete-app/Scripts/TaskGraphView.cs` | **New** — GraphEdit DAG visualization |
+| `project/hosts/complete-app/Scripts/HudController.cs` | Fallback terminal + WriteToTerminal |
+| `project/hosts/complete-app/Scripts/Main.cs` | TaskGraphView in HUDRoot + drain loop |
