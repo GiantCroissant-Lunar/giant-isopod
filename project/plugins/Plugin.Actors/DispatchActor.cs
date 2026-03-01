@@ -9,6 +9,7 @@ namespace GiantIsopod.Plugin.Actors;
 /// orchestrator fallback. Queries the skill registry for capable agents,
 /// broadcasts TaskAvailable, collects bids, selects winner.
 /// Falls back to first-match if no bids arrive within the bid window.
+/// Critical-risk tasks require viewport approval before assignment.
 /// </summary>
 public sealed class DispatchActor : UntypedActor, IWithTimers
 {
@@ -18,6 +19,9 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
     /// <summary>Active bid sessions keyed by TaskId.</summary>
     private readonly Dictionary<string, BidSession> _bidSessions = new();
+
+    /// <summary>Resolved assignments awaiting risk approval, keyed by TaskId.</summary>
+    private readonly Dictionary<string, PendingApproval> _pendingApprovals = new();
 
     private static readonly TimeSpan DefaultBidWindow = TimeSpan.FromMilliseconds(500);
 
@@ -47,6 +51,14 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
             case BidWindowClosed closed:
                 ResolveBidSession(closed.TaskId);
+                break;
+
+            case RiskApproved approved:
+                HandleRiskApproved(approved.TaskId);
+                break;
+
+            case RiskDenied denied:
+                HandleRiskDenied(denied.TaskId, denied.Reason);
                 break;
         }
     }
@@ -131,6 +143,9 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         if (!_bidSessions.Remove(taskId, out var session))
             return;
 
+        string selectedAgentId;
+        TaskBudget? budget;
+
         if (session.Bids.Count > 0)
         {
             // Select winner: highest fitness, then lowest load, then shortest duration
@@ -140,16 +155,14 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
                 .ThenBy(b => b.EstimatedDuration)
                 .First();
 
+            selectedAgentId = winner.AgentId;
+            budget = (session.Request as TaskRequestWithBudget)?.Budget;
+
             _logger.LogInformation("Task {TaskId} awarded to {AgentId} via bid (fitness={Fitness:F2}, {BidCount} bids)",
-                taskId, winner.AgentId, winner.Fitness, session.Bids.Count);
+                taskId, selectedAgentId, winner.Fitness, session.Bids.Count);
 
-            // Notify winner and losers — preserve budget from original request
-            var budget = (session.Request as TaskRequestWithBudget)?.Budget;
-            var assignment = new TaskAssigned(taskId, winner.AgentId, budget);
-            _agentSupervisor.Tell(assignment);
-            session.OriginalSender.Tell(assignment);
-
-            foreach (var loser in session.Bids.Where(b => b.AgentId != winner.AgentId))
+            // Reject losers immediately
+            foreach (var loser in session.Bids.Where(b => b.AgentId != selectedAgentId))
             {
                 _agentSupervisor.Tell(new ForwardToAgent(loser.AgentId, new TaskBidRejected(taskId, loser.AgentId)));
             }
@@ -158,12 +171,53 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         {
             // Fallback: first-match assignment (original behavior)
             _logger.LogWarning("No bids received for task {TaskId}, using first-match fallback", taskId);
-            var selectedAgent = session.CapableAgents[0];
-            var fallbackBudget = (session.Request as TaskRequestWithBudget)?.Budget;
-            var fallbackAssignment = new TaskAssigned(taskId, selectedAgent, fallbackBudget);
-            _agentSupervisor.Tell(fallbackAssignment);
-            session.OriginalSender.Tell(fallbackAssignment);
+            selectedAgentId = session.CapableAgents[0];
+            budget = (session.Request as TaskRequestWithBudget)?.Budget;
         }
+
+        // Risk approval gate: Critical tasks require viewport approval before assignment
+        if (budget?.Risk == RiskLevel.Critical)
+        {
+            _pendingApprovals[taskId] = new PendingApproval(taskId, selectedAgentId, budget, session.OriginalSender);
+            var approval = new RiskApprovalRequired(taskId, RiskLevel.Critical, session.Request.Description);
+            Context.System.EventStream.Publish(approval);
+            _logger.LogWarning("Task {TaskId} requires risk approval (Critical) — assignment to {AgentId} held",
+                taskId, selectedAgentId);
+            return;
+        }
+
+        AwardTask(taskId, selectedAgentId, budget, session.OriginalSender);
+    }
+
+    private void AwardTask(string taskId, string agentId, TaskBudget? budget, IActorRef originalSender)
+    {
+        var assignment = new TaskAssigned(taskId, agentId, budget);
+        _agentSupervisor.Tell(assignment);
+        originalSender.Tell(assignment);
+    }
+
+    private void HandleRiskApproved(string taskId)
+    {
+        if (!_pendingApprovals.Remove(taskId, out var pending))
+        {
+            _logger.LogDebug("Risk approval for unknown task {TaskId}, ignoring", taskId);
+            return;
+        }
+
+        _logger.LogInformation("Task {TaskId} risk approved — assigning to {AgentId}", taskId, pending.AgentId);
+        AwardTask(taskId, pending.AgentId, pending.Budget, pending.OriginalSender);
+    }
+
+    private void HandleRiskDenied(string taskId, string reason)
+    {
+        if (!_pendingApprovals.Remove(taskId, out var pending))
+        {
+            _logger.LogDebug("Risk denial for unknown task {TaskId}, ignoring", taskId);
+            return;
+        }
+
+        _logger.LogWarning("Task {TaskId} risk denied: {Reason}", taskId, reason);
+        pending.OriginalSender.Tell(new TaskFailed(taskId, $"Risk denied: {reason}"));
     }
 
     private sealed class BidSession
@@ -182,6 +236,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
     }
 
     private sealed record BidWindowClosed(string TaskId);
+    private sealed record PendingApproval(string TaskId, string AgentId, TaskBudget? Budget, IActorRef OriginalSender);
 }
 
 /// <summary>
