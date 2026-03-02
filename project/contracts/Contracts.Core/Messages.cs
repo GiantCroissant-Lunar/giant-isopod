@@ -52,7 +52,7 @@ public record RiskDenied(string TaskId, string Reason);
 
 // ── Task graph (DAG) ──
 
-public record TaskNode(string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities, TaskBudget? Budget = null);
+public record TaskNode(string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities, TaskBudget? Budget = null, IReadOnlyList<string>? RequiredValidators = null, int MaxValidationAttempts = 2);
 public record TaskEdge(string FromTaskId, string ToTaskId);
 public record SubmitTaskGraph(string GraphId, IReadOnlyList<TaskNode> Nodes, IReadOnlyList<TaskEdge> Edges, TaskBudget? GraphBudget = null);
 public record TaskGraphAccepted(string GraphId, int NodeCount, int EdgeCount);
@@ -61,7 +61,7 @@ public record TaskReadyForDispatch(string GraphId, string TaskId, string Descrip
 public record TaskNodeCompleted(string GraphId, string TaskId, bool Success, string? Summary = null);
 public record TaskGraphCompleted(string GraphId, IReadOnlyDictionary<string, bool> Results);
 
-public enum TaskNodeStatus { Pending, Ready, Dispatched, Completed, Failed, Cancelled, WaitingForSubtasks, Synthesizing }
+public enum TaskNodeStatus { Pending, Ready, Dispatched, Completed, Failed, Cancelled, WaitingForSubtasks, Synthesizing, Validating }
 
 // ── Task graph viewport notifications ──
 
@@ -196,6 +196,30 @@ public record ProposedSubplan(
 public record TaskDecompositionAccepted(string ParentTaskId, IReadOnlyList<string> SubtaskIds, string? GraphId = null);
 public record TaskDecompositionRejected(string ParentTaskId, string Reason, string? GraphId = null);
 public record SubtasksCompleted(string ParentTaskId, IReadOnlyList<TaskCompleted> Results, string? GraphId = null);
+
+// ── Validator framework (ADR-011) ──
+
+public enum ValidatorKind { Script, AgentReview }
+
+public record ValidatorSpec(
+    string Name, ValidatorKind Kind, ArtifactType AppliesTo,
+    string Command, string? Rubric = null,
+    IReadOnlyDictionary<string, string>? Config = null);
+
+public record RegisterValidator(ValidatorSpec Spec);
+public record ValidatorRegistered(string Name);
+
+public record ValidateArtifact(
+    string ArtifactId, ArtifactRef Artifact,
+    string? TaskId = null,
+    IReadOnlyList<string>? RequiredValidators = null);
+
+public record ValidationComplete(
+    string ArtifactId, IReadOnlyList<ValidatorResult> Results);
+
+public record RevisionRequested(
+    string TaskId, string ArtifactId,
+    IReadOnlyList<ValidatorResult> Failures, int AttemptNumber);
 
 // ── Workspace lifecycle (ADR-010) ──
 
