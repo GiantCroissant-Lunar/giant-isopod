@@ -1,10 +1,10 @@
-"""Tests for memory_sidecar.flows.codebase — chunking and filtering logic."""
+"""Tests for memory_sidecar.flows.codebase — filtering and walking logic."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from memory_sidecar.flows.codebase import _should_include, _split_simple
+from memory_sidecar.flows.codebase import _should_include, _walk_source_files
 
 
 class TestShouldInclude:
@@ -57,85 +57,76 @@ class TestShouldInclude:
         path, root = self._path("src/core/utils/helpers.ts")
         assert _should_include(path, root) is True
 
+    def test_excludes_artifacts_directory(self):
+        path, root = self._path("build/_artifacts/nuget/pkg.json")
+        assert _should_include(path, root) is False
 
-class TestSplitSimple:
-    """Tests for the _split_simple text chunker."""
+    def test_excludes_addons_directory(self):
+        path, root = self._path("addons/plugin/script.py")
+        assert _should_include(path, root) is False
 
-    def test_small_content_single_chunk(self):
-        content = "hello world"
-        chunks = _split_simple(content, chunk_size=100, chunk_overlap=10)
 
-        assert len(chunks) == 1
-        assert chunks[0]["text"] == "hello world"
-        assert chunks[0]["location"] == "0:0"
+class TestWalkSourceFiles:
+    """Tests for the _walk_source_files directory walker."""
 
-    def test_exact_chunk_size_single_chunk(self):
-        content = "x" * 100
-        chunks = _split_simple(content, chunk_size=100, chunk_overlap=10)
+    def test_finds_code_files(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("print('hello')")
+        (tmp_path / "src" / "lib.cs").write_text("class Lib {}")
 
-        assert len(chunks) == 1
+        files = _walk_source_files(tmp_path)
+        names = {f.name for f in files}
+        assert names == {"main.py", "lib.cs"}
 
-    def test_large_content_produces_multiple_chunks(self):
-        content = "line\n" * 300  # 1500 chars
-        chunks = _split_simple(content, chunk_size=500, chunk_overlap=100)
+    def test_prunes_hidden_directories(self, tmp_path):
+        hidden = tmp_path / ".git"
+        hidden.mkdir()
+        (hidden / "config.py").write_text("secret")
 
-        assert len(chunks) > 1
+        files = _walk_source_files(tmp_path)
+        assert len(files) == 0
 
-    def test_chunks_have_sequential_indices(self):
-        content = "word " * 500  # 2500 chars
-        chunks = _split_simple(content, chunk_size=500, chunk_overlap=100)
+    def test_prunes_node_modules(self, tmp_path):
+        nm = tmp_path / "node_modules" / "pkg"
+        nm.mkdir(parents=True)
+        (nm / "index.js").write_text("module.exports = {}")
+        (tmp_path / "app.js").write_text("const x = 1")
 
-        for i, chunk in enumerate(chunks):
-            idx = int(chunk["location"].split(":")[0])
-            assert idx == i
+        files = _walk_source_files(tmp_path)
+        names = {f.name for f in files}
+        assert names == {"app.js"}
 
-    def test_chunks_preserve_all_content(self):
-        # Verify no content is lost (allowing for overlap)
-        content = "abcdefghij\n" * 100  # 1100 chars
-        chunks = _split_simple(content, chunk_size=200, chunk_overlap=50)
+    def test_prunes_artifacts(self, tmp_path):
+        arts = tmp_path / "build" / "_artifacts" / "nuget"
+        arts.mkdir(parents=True)
+        (arts / "pkg.json").write_text("{}")
+        (tmp_path / "src.py").write_text("x = 1")
 
-        # Each character should appear in at least one chunk
-        all_text = "".join(c["text"] for c in chunks)
-        for char in set(content):
-            if char.strip():  # skip whitespace-only
-                assert char in all_text
+        files = _walk_source_files(tmp_path)
+        names = {f.name for f in files}
+        assert names == {"src.py"}
 
-    def test_whitespace_only_chunks_skipped(self):
-        content = "text\n" + " " * 500 + "\nmore text"
-        chunks = _split_simple(content, chunk_size=100, chunk_overlap=10)
+    def test_excludes_non_code_extensions(self, tmp_path):
+        (tmp_path / "image.png").write_text("binary")
+        (tmp_path / "readme.txt").write_text("text")
+        (tmp_path / "code.py").write_text("x = 1")
 
-        for chunk in chunks:
-            assert chunk["text"].strip(), "Whitespace-only chunks should be skipped"
+        files = _walk_source_files(tmp_path)
+        names = {f.name for f in files}
+        assert names == {"code.py"}
 
-    def test_newline_aware_splitting(self):
-        # With newlines, chunks should try to break at newline boundaries
-        lines = ["x" * 80 + "\n" for _ in range(20)]
-        content = "".join(lines)
-        chunks = _split_simple(content, chunk_size=500, chunk_overlap=100)
+    def test_deterministic_order(self, tmp_path):
+        for name in ["c.py", "a.py", "b.py"]:
+            (tmp_path / name).write_text(f"# {name}")
 
-        # At least one chunk should end with a newline (newline-aware boundary)
-        any_newline_boundary = any(c["text"].endswith("\n") for c in chunks[:-1])
-        assert any_newline_boundary, "Splitter should prefer newline boundaries"
+        files = _walk_source_files(tmp_path)
+        names = [f.name for f in files]
+        assert names == ["a.py", "b.py", "c.py"]
 
-    def test_overlap_is_applied(self):
-        content = "a" * 1000
-        chunks_no_overlap = _split_simple(content, chunk_size=300, chunk_overlap=0)
-        chunks_with_overlap = _split_simple(content, chunk_size=300, chunk_overlap=100)
+    def test_excludes_hidden_files(self, tmp_path):
+        (tmp_path / ".secret.py").write_text("secret = 'key'")
+        (tmp_path / "visible.py").write_text("x = 1")
 
-        # With overlap, we expect more chunks (since each step advances less)
-        assert len(chunks_with_overlap) >= len(chunks_no_overlap)
-
-    def test_location_format(self):
-        content = "x" * 500
-        chunks = _split_simple(content, chunk_size=200, chunk_overlap=50)
-
-        for chunk in chunks:
-            parts = chunk["location"].split(":")
-            assert len(parts) == 2
-            assert parts[0].isdigit()
-            assert parts[1].isdigit()
-
-    def test_empty_content(self):
-        chunks = _split_simple("", chunk_size=100, chunk_overlap=10)
-        assert len(chunks) == 1
-        assert chunks[0]["text"] == ""
+        files = _walk_source_files(tmp_path)
+        names = {f.name for f in files}
+        assert names == {"visible.py"}

@@ -37,17 +37,16 @@ CODE_EXTENSIONS = frozenset(
     }
 )
 
+# Directories to skip during codebase indexing.
+# Hidden directories (starting with ".") are always excluded separately.
 EXCLUDED_PATTERNS = frozenset(
     {
-        ".*",
         "bin",
         "obj",
         "node_modules",
         "target",
         "__pycache__",
-        ".git",
-        ".godot",
-        "build/_artifacts",
+        "_artifacts",
         "addons",
     }
 )

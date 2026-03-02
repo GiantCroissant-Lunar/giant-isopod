@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 
+from memory_sidecar.chunking import CHUNKER_VERSION, chunk_file
 from memory_sidecar.config import CODE_EXTENSIONS, DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, EXCLUDED_PATTERNS
 from memory_sidecar.embed import embed_texts
-from memory_sidecar.storage import connect, delete_stale_chunks, init_codebase_schema, upsert_code_chunk
+from memory_sidecar.storage import (
+    connect,
+    delete_stale_chunks,
+    get_metadata,
+    init_codebase_schema,
+    init_metadata_schema,
+    purge_all_code_chunks,
+    set_metadata,
+    upsert_code_chunk,
+)
 
-# Map file extensions to Tree-sitter language names (for future CocoIndex integration)
+logger = logging.getLogger(__name__)
+
+# Map file extensions to Tree-sitter language names
 _EXT_MAP = {
     ".py": "python",
     ".cs": "c_sharp",
@@ -36,25 +50,17 @@ def _should_include(path: Path, source_root: Path) -> bool:
     return path.suffix.lower() in CODE_EXTENSIONS
 
 
-def _split_simple(content: str, chunk_size: int, chunk_overlap: int) -> list[dict]:
-    """Simple recursive text splitter (fallback until CocoIndex Tree-sitter is wired)."""
-    if len(content) <= chunk_size:
-        return [{"text": content, "location": "0:0"}]
-    chunks = []
-    start = 0
-    idx = 0
-    while start < len(content):
-        end = min(start + chunk_size, len(content))
-        if end < len(content):
-            nl = content.rfind("\n", start, end)
-            if nl > start:
-                end = nl + 1
-        text = content[start:end]
-        if text.strip():
-            chunks.append({"text": text, "location": f"{idx}:{start}"})
-            idx += 1
-        start = end - chunk_overlap if end < len(content) else end
-    return chunks
+def _walk_source_files(source_root: Path) -> list[Path]:
+    """Walk source tree, pruning excluded directories in-place for performance."""
+    result: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(source_root):
+        # Prune excluded dirs in-place to prevent descent
+        dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDED_PATTERNS and not d.startswith("."))
+        for fname in sorted(filenames):
+            file_path = Path(dirpath) / fname
+            if _should_include(file_path, source_root):
+                result.append(file_path)
+    return result
 
 
 def index_codebase(
@@ -73,10 +79,24 @@ def index_codebase(
         raise FileNotFoundError(f"Source path not found: {source_root}")
 
     conn = connect(Path(db_path))
+    init_metadata_schema(conn)
     init_codebase_schema(conn)
 
-    stats = {"files_processed": 0, "chunks_indexed": 0, "chunks_deleted": 0}
-    files = sorted(p for p in source_root.rglob("*") if p.is_file() and _should_include(p, source_root))
+    stats = {"files_processed": 0, "chunks_indexed": 0, "chunks_deleted": 0, "chunks_purged": 0}
+
+    # Check chunker version — purge all chunks on mismatch to avoid stale vec0 entries
+    stored_version = get_metadata(conn, "chunker_version")
+    if stored_version != CHUNKER_VERSION:
+        purged = purge_all_code_chunks(conn)
+        if purged:
+            logger.info(
+                "Chunker version changed (%s -> %s), purged %d stale chunks", stored_version, CHUNKER_VERSION, purged
+            )
+            stats["chunks_purged"] = purged
+        set_metadata(conn, "chunker_version", CHUNKER_VERSION)
+        conn.commit()
+
+    files = _walk_source_files(source_root)
 
     pending: list[tuple[str, str, str | None, str]] = []  # (filename, location, lang, code)
     pending_texts: list[str] = []
@@ -91,7 +111,8 @@ def index_codebase(
         if not content.strip():
             continue
 
-        chunks = _split_simple(content, chunk_size, chunk_overlap)
+        ts_lang = _EXT_MAP.get(file_path.suffix.lower())
+        chunks = chunk_file(content, ts_lang, chunk_size, chunk_overlap)
         keep = {c["location"] for c in chunks}
         stats["chunks_deleted"] += delete_stale_chunks(conn, rel, keep)
         stats["files_processed"] += 1
