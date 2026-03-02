@@ -117,6 +117,40 @@ def init_knowledge_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def init_metadata_schema(conn: sqlite3.Connection) -> None:
+    """Create a simple key-value metadata table."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+
+
+def get_metadata(conn: sqlite3.Connection, key: str) -> str | None:
+    """Get a metadata value by key, or None if not set."""
+    row = conn.execute("SELECT value FROM metadata WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def set_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Set a metadata key-value pair (upsert)."""
+    conn.execute(
+        "INSERT INTO metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+
+
+def purge_all_code_chunks(conn: sqlite3.Connection) -> int:
+    """Delete all code chunks and their vec0 embeddings. Returns count deleted."""
+    count = conn.execute("SELECT COUNT(*) FROM code_chunks").fetchone()[0]
+    if _has_vec:
+        conn.execute("DELETE FROM code_chunks_vec")
+    conn.execute("DELETE FROM code_chunks")
+    return count
+
+
 def _serialize_vec(vec: list[float]) -> bytes:
     """Serialize a float vector to bytes for sqlite-vec."""
     return struct.pack(f"{len(vec)}f", *vec)
