@@ -37,6 +37,9 @@ CODE_EXTENSIONS = frozenset(
     }
 )
 
+# ── Document file patterns (for Docling conversion) ──
+DOC_EXTENSIONS = frozenset({".pdf", ".docx", ".pptx", ".xlsx", ".html"})
+
 # Directories to skip during codebase indexing.
 # Hidden directories (starting with ".") are always excluded separately.
 EXCLUDED_PATTERNS = frozenset(

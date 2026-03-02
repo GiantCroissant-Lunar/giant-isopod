@@ -8,3 +8,7 @@
 
 # Track agent-browser skill folder
 !agent-browser/
+
+# Track memory skill (local, not installed)
+!memory/
+!memory/**
