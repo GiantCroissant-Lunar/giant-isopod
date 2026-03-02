@@ -1,6 +1,7 @@
 using Friflo.Engine.ECS;
 using Friflo.Engine.ECS.Systems;
 using GiantIsopod.Contracts.ECS;
+using Xunit;
 
 namespace GiantIsopod.Plugin.ECS.Tests;
 
@@ -25,7 +26,7 @@ public class MovementSystemTests
             new Movement { HasTarget = false });
 
         _movement.DeltaTime = 0.016f;
-        _root.Update();
+        _root.Update(default);
 
         ref var pos = ref entity.GetComponent<WorldPosition>();
         Assert.Equal(100, pos.X);
@@ -40,7 +41,7 @@ public class MovementSystemTests
             new Movement { HasTarget = true, TargetTileX = 10, TargetTileY = 6 });
 
         _movement.DeltaTime = 0.1f;
-        _root.Update();
+        _root.Update(default);
 
         ref var pos = ref entity.GetComponent<WorldPosition>();
         // Target pixel is 10*16+8 = 168. Agent should have moved right (X increased)
@@ -56,7 +57,7 @@ public class MovementSystemTests
             new Movement { HasTarget = true, TargetTileX = 10, TargetTileY = 6 });
 
         _movement.DeltaTime = 0.016f;
-        _root.Update();
+        _root.Update(default);
 
         ref var pos = ref entity.GetComponent<WorldPosition>();
         ref var mov = ref entity.GetComponent<Movement>();
@@ -78,7 +79,7 @@ public class MovementSystemTests
             new Movement { HasTarget = true, TargetTileX = 10, TargetTileY = 6 });
 
         _movement.DeltaTime = 0.016f;
-        _root.Update();
+        _root.Update(default);
 
         ref var mov = ref entity.GetComponent<Movement>();
         Assert.False(mov.HasTarget);
@@ -93,7 +94,7 @@ public class MovementSystemTests
             new Movement { HasTarget = true, TargetTileX = 10, TargetTileY = 6 });
 
         _movement.DeltaTime = 0.016f;
-        _root.Update();
+        _root.Update(default);
 
         ref var mov = ref entity.GetComponent<Movement>();
         // Moving straight right: VelocityX should be ~64 (MoveSpeed), VelocityY ~0
@@ -110,7 +111,7 @@ public class MovementSystemTests
             new Movement { HasTarget = true, TargetTileX = 20, TargetTileY = 20 });
 
         _movement.DeltaTime = 0.016f;
-        _root.Update();
+        _root.Update(default);
 
         ref var mov = ref entity.GetComponent<Movement>();
         var speed = MathF.Sqrt(mov.VelocityX * mov.VelocityX + mov.VelocityY * mov.VelocityY);
@@ -128,7 +129,7 @@ public class MovementSystemTests
             new Movement { HasTarget = false });
 
         _movement.DeltaTime = 0.1f;
-        _root.Update();
+        _root.Update(default);
 
         ref var pos1 = ref e1.GetComponent<WorldPosition>();
         ref var pos2 = ref e2.GetComponent<WorldPosition>();

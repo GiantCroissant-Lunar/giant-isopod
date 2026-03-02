@@ -1,5 +1,6 @@
 using GiantIsopod.Contracts.Core;
 using GiantIsopod.Contracts.Protocol.AgUi;
+using Xunit;
 
 namespace GiantIsopod.Plugin.Protocol.Tests;
 
