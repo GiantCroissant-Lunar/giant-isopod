@@ -8,6 +8,7 @@ namespace GiantIsopod.Plugin.Actors.Tests;
 
 public class ArtifactRegistryActorTests : TestKit
 {
+    private static readonly TimeSpan NoMessageTimeout = TimeSpan.FromMilliseconds(500);
     private readonly IActorRef _registry;
 
     public ArtifactRegistryActorTests()
@@ -142,6 +143,14 @@ public class ArtifactRegistryActorTests : TestKit
     }
 
     [Fact]
+    public void UpdateValidation_UnknownArtifact_ReturnsFailure()
+    {
+        _registry.Tell(new UpdateValidation("missing-artifact", new ValidatorResult("compile", true)), TestActor);
+        var failure = ExpectMsg<Status.Failure>();
+        Assert.IsType<KeyNotFoundException>(failure.Cause);
+    }
+
+    [Fact]
     public void BlessArtifact_PublishesToEventStream()
     {
         _registry.Tell(new RegisterArtifact(MakeArtifact()), TestActor);
@@ -158,6 +167,34 @@ public class ArtifactRegistryActorTests : TestKit
         // EventStream publication
         var pub = ExpectMsg<ArtifactBlessed>();
         Assert.Equal("art-001", pub.ArtifactId);
+    }
+
+    [Fact]
+    public void BlessArtifact_UnknownArtifact_ReturnsFailure()
+    {
+        _registry.Tell(new BlessArtifact("missing-artifact"), TestActor);
+        var failure = ExpectMsg<Status.Failure>();
+        Assert.IsType<KeyNotFoundException>(failure.Cause);
+    }
+
+    [Fact]
+    public void BlessArtifact_RepeatedBless_DoesNotRepublishToEventStream()
+    {
+        _registry.Tell(new RegisterArtifact(MakeArtifact()), TestActor);
+        ExpectMsg<ArtifactRegistered>();
+
+        var streamProbe = CreateTestProbe();
+        Sys.EventStream.Subscribe(streamProbe.Ref, typeof(ArtifactBlessed));
+
+        _registry.Tell(new BlessArtifact("art-001"), TestActor);
+        var firstReply = ExpectMsg<ArtifactBlessed>();
+        Assert.Equal("art-001", firstReply.ArtifactId);
+        streamProbe.ExpectMsg<ArtifactBlessed>();
+
+        _registry.Tell(new BlessArtifact("art-001"), TestActor);
+        var secondReply = ExpectMsg<ArtifactBlessed>();
+        Assert.Equal("art-001", secondReply.ArtifactId);
+        streamProbe.ExpectNoMsg(NoMessageTimeout);
     }
 
     [Fact]

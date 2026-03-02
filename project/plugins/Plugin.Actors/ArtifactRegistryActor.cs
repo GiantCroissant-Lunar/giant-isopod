@@ -75,6 +75,7 @@ public sealed class ArtifactRegistryActor : UntypedActor
         if (!_artifacts.TryGetValue(update.ArtifactId, out var existing))
         {
             _logger.LogWarning("UpdateValidation for unknown artifact {ArtifactId}", update.ArtifactId);
+            Sender.Tell(new Status.Failure(new KeyNotFoundException($"Artifact not found: {update.ArtifactId}")));
             return;
         }
 
@@ -94,16 +95,20 @@ public sealed class ArtifactRegistryActor : UntypedActor
         if (!_artifacts.ContainsKey(bless.ArtifactId))
         {
             _logger.LogWarning("BlessArtifact for unknown artifact {ArtifactId}", bless.ArtifactId);
+            Sender.Tell(new Status.Failure(new KeyNotFoundException($"Artifact not found: {bless.ArtifactId}")));
             return;
         }
 
-        _blessed.Add(bless.ArtifactId);
+        var addedToBlessed = _blessed.Add(bless.ArtifactId);
 
         _logger.LogDebug("Blessed artifact {ArtifactId}", bless.ArtifactId);
 
         var blessed = new ArtifactBlessed(bless.ArtifactId);
         Sender.Tell(blessed);
-        Context.System.EventStream.Publish(blessed);
+        if (addedToBlessed)
+        {
+            Context.System.EventStream.Publish(blessed);
+        }
     }
 
     private void IndexArtifact(ArtifactRef art)
