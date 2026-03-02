@@ -248,6 +248,26 @@ public sealed class AgentActor : UntypedActor
                 }
                 break;
 
+            case SubtasksCompleted subtasksCompleted:
+                var synthesisPrompt = PromptBuilder.BuildSynthesisPrompt(
+                    subtasksCompleted.ParentTaskId, subtasksCompleted.Results);
+                _rpcActor?.Tell(new SendPrompt(_agentId, synthesisPrompt));
+                _logger.LogInformation("Agent {AgentId} received {Count} subtask results for synthesis of {TaskId}",
+                    _agentId, subtasksCompleted.Results.Count, subtasksCompleted.ParentTaskId);
+                break;
+
+            case TaskDecompositionAccepted accepted:
+                _logger.LogInformation("Agent {AgentId} decomposition accepted for {TaskId}: {Count} subtasks",
+                    _agentId, accepted.ParentTaskId, accepted.SubtaskIds.Count);
+                break;
+
+            case TaskDecompositionRejected rejected:
+                _logger.LogWarning("Agent {AgentId} decomposition rejected for {TaskId}: {Reason}",
+                    _agentId, rejected.ParentTaskId, rejected.Reason);
+                _rpcActor?.Tell(new SendPrompt(_agentId,
+                    $"Your proposed subtask decomposition for task {rejected.ParentTaskId} was rejected: {rejected.Reason}. Please complete the task directly."));
+                break;
+
             case TaskBidRejected:
                 // No action needed — bid lost
                 break;
