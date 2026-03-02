@@ -12,6 +12,31 @@ namespace GiantIsopod.Plugin.Actors;
 public static class PromptBuilder
 {
     /// <summary>
+    /// Builds a synthesis prompt from completed subtask results, instructing the agent
+    /// to produce a final deliverable for the parent task.
+    /// </summary>
+    public static string BuildSynthesisPrompt(string parentTaskId, IReadOnlyList<TaskCompleted> results)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("<synthesis-request>");
+        sb.Append("  <parent-task id=\"").Append(SecurityElement.Escape(parentTaskId)).AppendLine("\" />");
+        sb.AppendLine("  <subtask-results>");
+        foreach (var result in results)
+        {
+            sb.Append("    <result task-id=\"").Append(SecurityElement.Escape(result.TaskId)).Append('"');
+            sb.Append(" success=\"").Append(result.Success.ToString(CultureInfo.InvariantCulture).ToLowerInvariant()).Append('"');
+            sb.Append(" agent=\"").Append(SecurityElement.Escape(result.AgentId)).Append("\">");
+            if (result.Summary != null)
+                sb.Append(SecurityElement.Escape(result.Summary));
+            sb.AppendLine("</result>");
+        }
+        sb.AppendLine("  </subtask-results>");
+        sb.AppendLine("  <instruction>Synthesize the above subtask results into a final deliverable for the parent task. Produce a concise summary and include any artifacts.</instruction>");
+        sb.Append("</synthesis-request>");
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Builds an enriched prompt with knowledge context preceding the task description.
     /// Entries are formatted as structured XML blocks preserving category and relevance metadata.
     /// </summary>
