@@ -420,7 +420,11 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             return;
         }
 
-        var pending = state.PendingValidation[taskId];
+        if (!state.PendingValidation.TryGetValue(taskId, out var pending))
+        {
+            _logger.LogWarning("ValidationComplete for task {TaskId} with no pending validation entry", taskId);
+            return;
+        }
         pending.AllResults.AddRange(validation.Results);
         pending.RemainingArtifacts--;
 
@@ -470,8 +474,9 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 var failureSummary = string.Join("; ", failures.Select(f => $"{f.ValidatorName}: {f.Details}"));
                 var revisedDesc = $"{node?.Description ?? "task"} [REVISION {attempts}: validation failed — {failureSummary}]";
 
-                var request = new TaskRequest(taskId, revisedDesc,
-                    node?.RequiredCapabilities ?? new HashSet<string>(), graphId);
+                TaskRequest request = node?.Budget != null
+                    ? new TaskRequestWithBudget(taskId, revisedDesc, node.RequiredCapabilities, node.Budget, graphId)
+                    : new TaskRequest(taskId, revisedDesc, node?.RequiredCapabilities ?? new HashSet<string>(), graphId);
                 _dispatch.Tell(request);
             }
             else

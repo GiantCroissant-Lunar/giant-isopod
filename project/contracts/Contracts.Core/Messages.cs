@@ -215,7 +215,7 @@ public record ValidateArtifact(
     IReadOnlyList<string>? RequiredValidators = null);
 
 public record ValidationComplete(
-    string ArtifactId, IReadOnlyList<ValidatorResult> Results);
+    string ArtifactId, IReadOnlyList<ValidatorResult> Results, string? TaskId = null);
 
 public record RevisionRequested(
     string TaskId, string ArtifactId,

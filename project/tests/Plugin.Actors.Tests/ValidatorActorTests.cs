@@ -75,8 +75,8 @@ public class ValidatorActorTests : TestKit
     [Fact]
     public void ScriptValidator_FailingCommand_ReturnsFail()
     {
-        // Use bash -c "exit 1" to reliably return non-zero exit code
-        var spec = ScriptSpec("fail-check", ArtifactType.Code, "bash -c exit\\ 1");
+        // Use `false` (standard Unix command) to reliably return non-zero exit code
+        var spec = ScriptSpec("fail-check", ArtifactType.Code, "false");
         _validator.Tell(new RegisterValidator(spec), TestActor);
         ExpectMsg<ValidatorRegistered>();
 

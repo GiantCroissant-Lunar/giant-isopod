@@ -69,7 +69,7 @@ public sealed class ValidatorActor : UntypedActor
 
         if (applicable.Count == 0)
         {
-            sender.Tell(new ValidationComplete(msg.ArtifactId, Array.Empty<ValidatorResult>()));
+            sender.Tell(new ValidationComplete(msg.ArtifactId, Array.Empty<ValidatorResult>(), msg.TaskId));
             return;
         }
 
@@ -139,7 +139,7 @@ public sealed class ValidatorActor : UntypedActor
         foreach (var vr in pending.Results)
             _artifactRegistry.Tell(new UpdateValidation(result.ArtifactId, vr));
 
-        pending.Requester.Tell(new ValidationComplete(result.ArtifactId, pending.Results));
+        pending.Requester.Tell(new ValidationComplete(result.ArtifactId, pending.Results, pending.TaskId));
     }
 
     private List<ValidatorSpec> GetApplicableValidators(ArtifactType type, IReadOnlyList<string>? requiredValidators)
@@ -158,13 +158,16 @@ public sealed class ValidatorActor : UntypedActor
     {
         using var cts = new CancellationTokenSource(ScriptTimeout);
 
-        // Split command into executable and args (simple space split — first token is executable)
-        var parts = command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        // Split command into tokens; artifactUri is appended as a distinct element so CliWrap
+        // escapes it properly (handles spaces and shell metacharacters without injection risk).
+        var parts = command.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var exe = parts[0];
-        var args = parts.Length > 1 ? $"{parts[1]} {artifactUri}" : artifactUri;
+        var argTokens = parts.Length > 1
+            ? [..parts[1..], artifactUri]
+            : (string[])[artifactUri];
 
         var result = await Cli.Wrap(exe)
-            .WithArguments(args)
+            .WithArguments(argTokens)
             .WithValidation(CommandResultValidation.None)
             .ExecuteBufferedAsync(cts.Token);
 
