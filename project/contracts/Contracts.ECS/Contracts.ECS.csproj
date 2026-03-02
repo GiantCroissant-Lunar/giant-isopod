@@ -8,7 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Friflo.Engine.ECS" Version="3.0.0-preview.13" />
+    <!-- Friflo ECS for IComponent interface -->
+    <PackageReference Include="Friflo.Engine.ECS" Version="1.4.0" />
   </ItemGroup>
 
   <ItemGroup>

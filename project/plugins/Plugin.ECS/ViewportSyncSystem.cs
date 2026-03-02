@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using Friflo.Engine.ECS;
-using Friflo.Engine.ECS.Systems;
 using GiantIsopod.Contracts.Core;
 using GiantIsopod.Contracts.ECS;
 
@@ -8,9 +7,9 @@ namespace GiantIsopod.Plugin.ECS;
 
 /// <summary>
 /// Drains actor system messages from a thread-safe queue and updates ECS components.
-/// This is the bridge between Akka.NET (async) and Friflo ECS (frame-driven).
+/// This is the bridge between Akka.NET (async) and ECS (frame-driven).
 /// </summary>
-public class ViewportSyncSystem : QuerySystem<ActivityState, AgentLink>
+public class ViewportSyncSystem : ISystem
 {
     private readonly ConcurrentQueue<AgentStateChanged> _stateQueue = new();
     private readonly Dictionary<string, int> _agentIndexMap = new();
@@ -29,7 +28,7 @@ public class ViewportSyncSystem : QuerySystem<ActivityState, AgentLink>
         _agentIndexMap[agentId] = entityIndex;
     }
 
-    protected override void OnUpdate()
+    public void Update(EntityStore store)
     {
         while (_stateQueue.TryDequeue(out var change))
         {
@@ -37,14 +36,21 @@ public class ViewportSyncSystem : QuerySystem<ActivityState, AgentLink>
                 continue;
 
             // Find and update the matching entity's ActivityState
-            Query.ForEachEntity((ref ActivityState state, ref AgentLink link, Entity _) =>
+            var query = store.Query<ActivityState, AgentLink>();
+            foreach (var (states, links, _) in query.Chunks)
             {
-                if (link.AgentIndex == index)
+                for (int i = 0; i < states.Length; i++)
                 {
-                    state.Current = MapState(change.State);
-                    state.StateTime = 0f;
+                    ref var state = ref states[i];
+                    ref var link = ref links[i];
+
+                    if (link.AgentIndex == index)
+                    {
+                        state.Current = MapState(change.State);
+                        state.StateTime = 0f;
+                    }
                 }
-            });
+            }
         }
     }
 

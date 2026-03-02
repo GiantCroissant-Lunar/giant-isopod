@@ -1,21 +1,20 @@
 using Friflo.Engine.ECS;
-using Friflo.Engine.ECS.Systems;
 using GiantIsopod.Contracts.Core;
 using GiantIsopod.Contracts.ECS;
 
 namespace GiantIsopod.Plugin.ECS;
 
 /// <summary>
-/// Manages the Friflo ECS world for agent visualization.
+/// Manages the ECS world for agent visualization using pure Friflo ECS.
 /// Creates/destroys entities from viewport events, ticks movement and animation systems.
 /// </summary>
 public sealed class AgentEcsWorld
 {
     private readonly EntityStore _store;
-    private readonly SystemRoot _systems;
     private readonly MovementSystem _movement;
     private readonly AnimationSystem _animation;
     private readonly WanderSystem _wander;
+    private readonly ViewportSyncSystem _viewportSync;
 
     // Agent ID → Entity lookup
     private readonly Dictionary<string, Entity> _agentEntities = new();
@@ -27,13 +26,7 @@ public sealed class AgentEcsWorld
         _movement = new MovementSystem();
         _animation = new AnimationSystem();
         _wander = new WanderSystem();
-
-        _systems = new SystemRoot(_store, "AgentWorld")
-        {
-            _movement,
-            _animation,
-            _wander,
-        };
+        _viewportSync = new ViewportSyncSystem();
     }
 
     public void Tick(float delta)
@@ -41,7 +34,11 @@ public sealed class AgentEcsWorld
         _movement.DeltaTime = delta;
         _animation.DeltaTime = delta;
         _wander.DeltaTime = delta;
-        _systems.Update(default);
+
+        _movement.Update(_store);
+        _wander.Update(_store);
+        _animation.Update(_store);
+        _viewportSync.Update(_store);
     }
 
     public Entity? SpawnAgent(string agentId, AgentVisualInfo info)
@@ -51,15 +48,16 @@ public sealed class AgentEcsWorld
         var paletteIndex = (int)((uint)agentId.GetHashCode() % 6);
         var rng = new Random(agentId.GetHashCode());
 
-        var entity = _store.CreateEntity(
-            new AgentIdentity { AgentId = agentId, DisplayName = info.DisplayName },
-            new WorldPosition { X = 100 + rng.Next(600), Y = 80 + rng.Next(300) },
-            new Movement(),
-            new ActivityState { Current = Activity.Idle },
-            new AgentVisual { PaletteIndex = paletteIndex, Facing = Direction.Down },
-            new AgentLink { AgentIndex = _agentEntities.Count });
+        var entity = _store.CreateEntity();
+        entity.AddComponent(new AgentIdentity { AgentId = agentId, DisplayName = info.DisplayName });
+        entity.AddComponent(new WorldPosition { X = 100 + rng.Next(600), Y = 80 + rng.Next(300) });
+        entity.AddComponent(new Movement());
+        entity.AddComponent(new ActivityState { Current = Activity.Idle });
+        entity.AddComponent(new AgentVisual { PaletteIndex = paletteIndex, Facing = Direction.Down });
+        entity.AddComponent(new AgentLink { AgentIndex = _agentEntities.Count });
 
         _agentEntities[agentId] = entity;
+        _viewportSync.RegisterAgent(agentId, _agentEntities.Count - 1);
         return entity;
     }
 
@@ -86,12 +84,35 @@ public sealed class AgentEcsWorld
     public void ForEachAgent(Action<string, WorldPosition, AgentVisual, ActivityState, AgentIdentity> callback)
     {
         var query = _store.Query<WorldPosition, AgentVisual, ActivityState, AgentIdentity>();
-        query.ForEachEntity((ref WorldPosition pos, ref AgentVisual vis, ref ActivityState act, ref AgentIdentity id, Entity _) =>
+        foreach (var (positions, visuals, states, identities, _) in query.Chunks)
         {
-            callback(id.AgentId, pos, vis, act, id);
-        });
+            for (int i = 0; i < positions.Length; i++)
+            {
+                ref var pos = ref positions[i];
+                ref var vis = ref visuals[i];
+                ref var act = ref states[i];
+                ref var id = ref identities[i];
+                callback(id.AgentId, pos, vis, act, id);
+            }
+        }
     }
 
     public int AgentCount => _agentEntities.Count;
     public IReadOnlyCollection<string> AgentIds => _agentEntities.Keys;
+
+    /// <summary>
+    /// Enqueues a state change from the actor system to be processed by ViewportSyncSystem.
+    /// </summary>
+    public void EnqueueStateChange(AgentStateChanged change)
+    {
+        _viewportSync.EnqueueStateChange(change);
+    }
+}
+
+/// <summary>
+/// Simple system interface for Friflo ECS systems.
+/// </summary>
+public interface ISystem
+{
+    void Update(EntityStore store);
 }

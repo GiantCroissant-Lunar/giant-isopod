@@ -89,27 +89,3 @@ public struct SeatAssignment : IComponent
     public int SeatTileY;
     public bool IsSeated;
 }
-
-/// <summary>
-/// Currently active skill being used (for HUD display).
-/// </summary>
-public struct ActiveSkill : IComponent
-{
-    public int SkillNameIndex;
-}
-
-/// <summary>
-/// Visual indicator for memory store/recall activity.
-/// </summary>
-public struct MemoryIndicator : IComponent
-{
-    public MemoryActivity Activity;
-    public float FadeTimer;
-}
-
-public enum MemoryActivity : byte
-{
-    None,
-    Storing,
-    Recalling
-}
