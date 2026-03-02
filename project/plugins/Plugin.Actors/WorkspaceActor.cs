@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Akka.Actor;
 using CliWrap;
 using CliWrap.Buffered;
@@ -20,6 +21,8 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
     private readonly Queue<(string TaskId, IActorRef Requester)> _mergeQueue = new();
     private bool _merging;
 
+    private static readonly Regex SafeTaskIdRegex = new(@"^[A-Za-z0-9._-]+$", RegexOptions.Compiled);
+    private static readonly TimeSpan GitCommandTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan StaleThreshold = TimeSpan.FromHours(1);
 
@@ -58,7 +61,10 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
                 break;
 
             case ReleaseResult result:
-                result.Requester.Tell(new WorkspaceReleased(result.TaskId));
+                if (result.Success)
+                    result.Requester.Tell(new WorkspaceReleased(result.TaskId));
+                else
+                    _logger.LogWarning("Workspace release failed for task {TaskId}: {Error}", result.TaskId, result.Error);
                 break;
 
             case MergeResult result:
@@ -85,7 +91,20 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
             return;
         }
 
-        var worktreePath = Path.Combine(_anchorRepoPath, ".worktrees", msg.TaskId);
+        if (string.IsNullOrWhiteSpace(msg.TaskId) || !SafeTaskIdRegex.IsMatch(msg.TaskId))
+        {
+            sender.Tell(new AllocationFailed(msg.TaskId, "Invalid task id"));
+            return;
+        }
+
+        var worktreesRoot = Path.GetFullPath(Path.Combine(_anchorRepoPath, ".worktrees"));
+        var worktreePath = Path.GetFullPath(Path.Combine(worktreesRoot, msg.TaskId));
+        if (!worktreePath.StartsWith(worktreesRoot + Path.DirectorySeparatorChar))
+        {
+            sender.Tell(new AllocationFailed(msg.TaskId, "Invalid task id path"));
+            return;
+        }
+
         var branchName = $"swarm/{msg.TaskId}";
 
         RunGitAsync("worktree", "add", worktreePath, "-b", branchName, msg.BaseRef)
@@ -128,7 +147,12 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
         }
 
         ReleaseWorktreeAsync(ws.Workspace)
-            .ContinueWith(_ => (object)new ReleaseResult(msg.TaskId, sender))
+            .ContinueWith(t =>
+                (object)new ReleaseResult(
+                    msg.TaskId,
+                    sender,
+                    t.IsCompletedSuccessfully && t.Result.Success,
+                    t.IsCompletedSuccessfully ? t.Result.Error : (t.Exception?.GetBaseException()?.Message ?? "Operation cancelled")))
             .PipeTo(Self);
     }
 
@@ -159,9 +183,9 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
 
         var (taskId, requester) = _mergeQueue.Dequeue();
 
-        if (!_workspaces.TryGetValue(taskId, out var ws))
+        if (!_workspaces.TryGetValue(taskId, out var ws) || ws.Workspace.Status != WorkspaceStatus.Committed)
         {
-            // Already released; try next
+            // Already released or in invalid state; try next
             Self.Tell(MergeQueueTick.Instance);
             return;
         }
@@ -184,6 +208,15 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
                 await RunGitInAsync(ws.WorktreePath, "rebase", "--abort");
                 var conflictFiles = ParseConflictFiles(rebase.Stderr);
                 return new MergeResult(taskId, Success: false, Sha: null, ConflictFiles: conflictFiles, Requester: requester);
+            }
+
+            // Ensure anchor repo is on integration branch before merging
+            var switchResult = await RunGitAsync("switch", _integrationBranch);
+            if (switchResult.ExitCode != 0)
+            {
+                return new MergeResult(taskId, Success: false, Sha: null,
+                    ConflictFiles: new[] { $"Failed to switch to {_integrationBranch}: {switchResult.Stderr}" },
+                    Requester: requester);
             }
 
             // Fast-forward merge into integration branch from the anchor repo
@@ -252,11 +285,14 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
         }
     }
 
-    private async Task ReleaseWorktreeAsync(Workspace ws)
+    private async Task<(bool Success, string? Error)> ReleaseWorktreeAsync(Workspace ws)
     {
-        await RunGitAsync("worktree", "remove", "--force", ws.WorktreePath);
-        await RunGitAsync("branch", "-D", ws.BranchName);
-        await RunGitAsync("worktree", "prune");
+        var remove = await RunGitAsync("worktree", "remove", "--force", ws.WorktreePath);
+        var deleteBranch = await RunGitAsync("branch", "-D", ws.BranchName);
+        var prune = await RunGitAsync("worktree", "prune");
+        var ok = remove.ExitCode == 0 && deleteBranch.ExitCode == 0 && prune.ExitCode == 0;
+        var err = ok ? null : $"{remove.Stderr} {deleteBranch.Stderr} {prune.Stderr}".Trim();
+        return (ok, err);
     }
 
     private Task<GitResult> RunGitAsync(params string[] args)
@@ -264,11 +300,12 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
 
     private async Task<GitResult> RunGitInAsync(string workDir, params string[] args)
     {
+        using var cts = new CancellationTokenSource(GitCommandTimeout);
         var result = await Cli.Wrap("git")
             .WithArguments(args)
             .WithWorkingDirectory(workDir)
             .WithValidation(CommandResultValidation.None)
-            .ExecuteBufferedAsync();
+            .ExecuteBufferedAsync(cts.Token);
 
         if (result.ExitCode != 0)
         {
@@ -294,7 +331,7 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
     internal sealed record WorkspaceEntry(Workspace Workspace, DateTimeOffset AllocatedAt);
 
     private sealed record AllocateResult(string TaskId, string WorktreePath, string BranchName, string BaseRef, bool Success, string? Error, IActorRef Requester);
-    private sealed record ReleaseResult(string TaskId, IActorRef Requester);
+    private sealed record ReleaseResult(string TaskId, IActorRef Requester, bool Success, string? Error);
     private sealed record MergeResult(string TaskId, bool Success, string? Sha, IReadOnlyList<string>? ConflictFiles, IActorRef Requester);
     private sealed record MergeQueueTick
     {
