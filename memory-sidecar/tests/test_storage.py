@@ -7,7 +7,6 @@ import struct
 
 import pytest
 
-import memory_sidecar.storage as storage_mod
 from memory_sidecar.storage import (
     _serialize_vec,
     delete_stale_chunks,
@@ -179,60 +178,36 @@ class TestVecUnavailableGuards:
         return conn
 
     def test_upsert_code_chunk_without_vec(self):
+        # Plain connection without sqlite-vec — _conn_has_vec returns False
         conn = self._setup_codebase_db()
-        saved = storage_mod._has_vec
-        storage_mod._has_vec = False
-        try:
-            upsert_code_chunk(conn, "f.py", "0:0", "python", "print('hi')", [0.0] * 10)
-            row = conn.execute("SELECT code FROM code_chunks WHERE filename='f.py'").fetchone()
-            assert row is not None
-            assert row[0] == "print('hi')"
-        finally:
-            storage_mod._has_vec = saved
+        upsert_code_chunk(conn, "f.py", "0:0", "python", "print('hi')", [0.0] * 10)
+        row = conn.execute("SELECT code FROM code_chunks WHERE filename='f.py'").fetchone()
+        assert row is not None
+        assert row[0] == "print('hi')"
 
     def test_search_code_without_vec_returns_empty(self):
         conn = self._setup_codebase_db()
-        saved = storage_mod._has_vec
-        storage_mod._has_vec = False
-        try:
-            results = search_code(conn, [0.0] * 10)
-            assert results == []
-        finally:
-            storage_mod._has_vec = saved
+        results = search_code(conn, [0.0] * 10)
+        assert results == []
 
     def test_insert_knowledge_without_vec(self):
         conn = self._setup_knowledge_db()
-        saved = storage_mod._has_vec
-        storage_mod._has_vec = False
-        try:
-            row_id = insert_knowledge(conn, "some fact", "pattern", None, [0.0] * 10)
-            assert row_id is not None
-            row = conn.execute("SELECT content FROM knowledge WHERE id=?", (row_id,)).fetchone()
-            assert row[0] == "some fact"
-        finally:
-            storage_mod._has_vec = saved
+        row_id = insert_knowledge(conn, "some fact", "pattern", None, [0.0] * 10)
+        assert row_id is not None
+        row = conn.execute("SELECT content FROM knowledge WHERE id=?", (row_id,)).fetchone()
+        assert row[0] == "some fact"
 
     def test_search_knowledge_without_vec_returns_empty(self):
         conn = self._setup_knowledge_db()
-        saved = storage_mod._has_vec
-        storage_mod._has_vec = False
-        try:
-            results = search_knowledge(conn, [0.0] * 10)
-            assert results == []
-        finally:
-            storage_mod._has_vec = saved
+        results = search_knowledge(conn, [0.0] * 10)
+        assert results == []
 
     def test_delete_stale_chunks_without_vec(self):
         conn = self._setup_codebase_db()
-        saved = storage_mod._has_vec
-        storage_mod._has_vec = False
-        try:
-            upsert_code_chunk(conn, "f.py", "0:0", "python", "code", [0.0] * 10)
-            conn.commit()
-            deleted = delete_stale_chunks(conn, "f.py", set())
-            assert deleted == 1
-        finally:
-            storage_mod._has_vec = saved
+        upsert_code_chunk(conn, "f.py", "0:0", "python", "code", [0.0] * 10)
+        conn.commit()
+        deleted = delete_stale_chunks(conn, "f.py", set())
+        assert deleted == 1
 
 
 class TestMetadata:

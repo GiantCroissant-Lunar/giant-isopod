@@ -11,19 +11,24 @@ from typing import Any
 
 from memory_sidecar.config import EMBED_DIMENSIONS
 
-_has_vec = False
-
 
 def _ensure_vec(conn: sqlite3.Connection) -> bool:
-    """Try to load sqlite-vec extension. Returns True if available."""
-    global _has_vec
+    """Try to load sqlite-vec extension into *conn*. Returns True if available."""
     try:
         import sqlite_vec
 
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
-        _has_vec = True
+        return True
+    except Exception:
+        return False
+
+
+def _conn_has_vec(conn: sqlite3.Connection) -> bool:
+    """Check whether the given connection has vec0 available."""
+    try:
+        conn.execute("SELECT vec_version()")
         return True
     except Exception:
         return False
@@ -52,7 +57,7 @@ def init_codebase_schema(conn: sqlite3.Connection) -> None:
             UNIQUE(filename, location)
         )
     """)
-    if _has_vec:
+    if _conn_has_vec(conn):
         conn.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS code_chunks_vec USING vec0(
                 id INTEGER PRIMARY KEY,
@@ -75,7 +80,7 @@ def init_knowledge_schema(conn: sqlite3.Connection) -> None:
             updated_at TEXT NOT NULL
         )
     """)
-    if _has_vec:
+    if _conn_has_vec(conn):
         conn.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_vec USING vec0(
                 id INTEGER PRIMARY KEY,
@@ -145,7 +150,7 @@ def set_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
 def purge_all_code_chunks(conn: sqlite3.Connection) -> int:
     """Delete all code chunks and their vec0 embeddings. Returns count deleted."""
     count = conn.execute("SELECT COUNT(*) FROM code_chunks").fetchone()[0]
-    if _has_vec:
+    if _conn_has_vec(conn):
         conn.execute("DELETE FROM code_chunks_vec")
     conn.execute("DELETE FROM code_chunks")
     return count
@@ -175,7 +180,7 @@ def upsert_code_chunk(
         (filename, location, language, code, now),
     )
     row_id = cur.fetchone()[0]
-    if _has_vec:
+    if _conn_has_vec(conn):
         conn.execute(
             "INSERT OR REPLACE INTO code_chunks_vec (id, embedding) VALUES (?, ?)",
             (row_id, _serialize_vec(embedding)),
@@ -188,7 +193,7 @@ def search_code(
     top_k: int = 10,
 ) -> list[dict[str, Any]]:
     """Search code chunks by vector similarity."""
-    if not _has_vec:
+    if not _conn_has_vec(conn):
         return []
     rows = conn.execute(
         """SELECT v.id, v.distance, c.filename, c.location, c.language, c.code
@@ -217,7 +222,7 @@ def insert_knowledge(
         (content, category, tags_json, now, now),
     )
     row_id = cur.lastrowid
-    if _has_vec:
+    if _conn_has_vec(conn):
         conn.execute(
             "INSERT INTO knowledge_vec (id, embedding) VALUES (?, ?)",
             (row_id, _serialize_vec(embedding)),
@@ -232,7 +237,7 @@ def search_knowledge(
     top_k: int = 10,
 ) -> list[dict[str, Any]]:
     """Search knowledge entries by vector similarity, optionally filtered by category."""
-    if not _has_vec:
+    if not _conn_has_vec(conn):
         return []
     # sqlite-vec does not support arbitrary WHERE predicates alongside MATCH + k = ?,
     # so we over-fetch and post-filter by category in Python.
@@ -352,7 +357,7 @@ def delete_stale_chunks(conn: sqlite3.Connection, filename: str, keep_locations:
     if not ids:
         return 0
     id_ph = ",".join("?" for _ in ids)
-    if _has_vec:
+    if _conn_has_vec(conn):
         conn.execute(f"DELETE FROM code_chunks_vec WHERE id IN ({id_ph})", ids)  # noqa: S608
     conn.execute(f"DELETE FROM code_chunks WHERE id IN ({id_ph})", ids)  # noqa: S608
     return len(ids)
