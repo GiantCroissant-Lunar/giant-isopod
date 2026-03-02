@@ -144,6 +144,17 @@ tasks:
     cmds:
       - memory-sidecar search "{{.CLI_ARGS}}" --db data/memory/codebase.sqlite
 
+  memory:install-docs:
+    desc: Install memory-sidecar with document conversion support (Docling)
+    cmds:
+      - uv pip install -e ".[docs]"
+    dir: memory-sidecar
+
+  memory:index-docs:
+    desc: Index documents from a docs folder (usage — task memory:index-docs -- path/to/docs)
+    cmds:
+      - memory-sidecar index-docs "{{.CLI_ARGS}}" --db data/memory/codebase.sqlite
+
   # ── .NET / Godot ──
 
   build:
