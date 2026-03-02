@@ -7,6 +7,7 @@ dependencies = [
     "click>=8.1",
     "fastembed>=0.5",
     "sqlite-vec>=0.1",
+    "tree-sitter-language-pack>=0.7",
 ]
 
 [project.optional-dependencies]

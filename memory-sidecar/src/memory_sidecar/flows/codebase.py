@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from memory_sidecar.chunking import split_simple
+from memory_sidecar.chunking import chunk_file
 from memory_sidecar.config import CODE_EXTENSIONS, DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, EXCLUDED_PATTERNS
 from memory_sidecar.embed import embed_texts
 from memory_sidecar.storage import connect, delete_stale_chunks, init_codebase_schema, upsert_code_chunk
@@ -84,7 +84,8 @@ def index_codebase(
         if not content.strip():
             continue
 
-        chunks = split_simple(content, chunk_size, chunk_overlap)
+        ts_lang = _EXT_MAP.get(file_path.suffix.lower())
+        chunks = chunk_file(content, ts_lang, chunk_size, chunk_overlap)
         keep = {c["location"] for c in chunks}
         stats["chunks_deleted"] += delete_stale_chunks(conn, rel, keep)
         stats["files_processed"] += 1

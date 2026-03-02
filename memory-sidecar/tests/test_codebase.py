@@ -1,10 +1,9 @@
-"""Tests for memory_sidecar.flows.codebase — filtering, walking, and chunking logic."""
+"""Tests for memory_sidecar.flows.codebase — filtering and walking logic."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from memory_sidecar.chunking import split_simple
 from memory_sidecar.flows.codebase import _should_include, _walk_source_files
 
 
@@ -123,86 +122,3 @@ class TestWalkSourceFiles:
         files = _walk_source_files(tmp_path)
         names = [f.name for f in files]
         assert names == ["a.py", "b.py", "c.py"]
-
-
-class TestSplitSimple:
-    """Tests for the split_simple text chunker."""
-
-    def test_small_content_single_chunk(self):
-        content = "hello world"
-        chunks = split_simple(content, chunk_size=100, chunk_overlap=10)
-
-        assert len(chunks) == 1
-        assert chunks[0]["text"] == "hello world"
-        assert chunks[0]["location"] == "0:0"
-
-    def test_exact_chunk_size_single_chunk(self):
-        content = "x" * 100
-        chunks = split_simple(content, chunk_size=100, chunk_overlap=10)
-
-        assert len(chunks) == 1
-
-    def test_large_content_produces_multiple_chunks(self):
-        content = "line\n" * 300  # 1500 chars
-        chunks = split_simple(content, chunk_size=500, chunk_overlap=100)
-
-        assert len(chunks) > 1
-
-    def test_chunks_have_sequential_indices(self):
-        content = "word " * 500  # 2500 chars
-        chunks = split_simple(content, chunk_size=500, chunk_overlap=100)
-
-        for i, chunk in enumerate(chunks):
-            idx = int(chunk["location"].split(":")[0])
-            assert idx == i
-
-    def test_chunks_preserve_all_content(self):
-        # Verify no content is lost (allowing for overlap)
-        content = "abcdefghij\n" * 100  # 1100 chars
-        chunks = split_simple(content, chunk_size=200, chunk_overlap=50)
-
-        # Each character should appear in at least one chunk
-        all_text = "".join(c["text"] for c in chunks)
-        for char in set(content):
-            if char.strip():  # skip whitespace-only
-                assert char in all_text
-
-    def test_whitespace_only_chunks_skipped(self):
-        content = "text\n" + " " * 500 + "\nmore text"
-        chunks = split_simple(content, chunk_size=100, chunk_overlap=10)
-
-        for chunk in chunks:
-            assert chunk["text"].strip(), "Whitespace-only chunks should be skipped"
-
-    def test_newline_aware_splitting(self):
-        # With newlines, chunks should try to break at newline boundaries
-        lines = ["x" * 80 + "\n" for _ in range(20)]
-        content = "".join(lines)
-        chunks = split_simple(content, chunk_size=500, chunk_overlap=100)
-
-        # At least one chunk should end with a newline (newline-aware boundary)
-        any_newline_boundary = any(c["text"].endswith("\n") for c in chunks[:-1])
-        assert any_newline_boundary, "Splitter should prefer newline boundaries"
-
-    def test_overlap_is_applied(self):
-        content = "a" * 1000
-        chunks_no_overlap = split_simple(content, chunk_size=300, chunk_overlap=0)
-        chunks_with_overlap = split_simple(content, chunk_size=300, chunk_overlap=100)
-
-        # With overlap, we expect more chunks (since each step advances less)
-        assert len(chunks_with_overlap) >= len(chunks_no_overlap)
-
-    def test_location_format(self):
-        content = "x" * 500
-        chunks = split_simple(content, chunk_size=200, chunk_overlap=50)
-
-        for chunk in chunks:
-            parts = chunk["location"].split(":")
-            assert len(parts) == 2
-            assert parts[0].isdigit()
-            assert parts[1].isdigit()
-
-    def test_empty_content(self):
-        chunks = split_simple("", chunk_size=100, chunk_overlap=10)
-        assert len(chunks) == 1
-        assert chunks[0]["text"] == ""
