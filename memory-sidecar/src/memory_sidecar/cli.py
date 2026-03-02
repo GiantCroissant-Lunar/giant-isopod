@@ -56,6 +56,29 @@ def search(query_text: str, db: str | None, top_k: int, json_out: bool):
             click.echo("---")
 
 
+@main.command("index-docs")
+@click.argument("docs_path")
+@click.option("--db", default=None, help="SQLite database path")
+@click.option("--chunk-size", default=1000, help="Max chunk size in characters")
+@click.option("--chunk-overlap", default=300, help="Overlap between chunks")
+@click.option("--batch-size", default=32, help="Embedding batch size")
+def index_docs(docs_path: str, db: str | None, chunk_size: int, chunk_overlap: int, batch_size: int):
+    """Index a documents directory (PDF, DOCX, PPTX, etc.) via Docling conversion."""
+    try:
+        import docling  # noqa: F401
+    except ImportError:
+        click.echo("Docling not installed. Run: uv pip install -e '.[docs]'", err=True)
+        raise SystemExit(1) from None
+
+    from memory_sidecar.config import codebase_db_path
+    from memory_sidecar.flows.documents import index_documents
+
+    db_path = db or str(codebase_db_path())
+    click.echo(f"Indexing documents {docs_path} -> {db_path}")
+    stats = index_documents(docs_path, db_path, chunk_size, chunk_overlap, batch_size)
+    click.echo(json.dumps(stats, indent=2))
+
+
 @main.command()
 @click.argument("text")
 def embed(text: str):
