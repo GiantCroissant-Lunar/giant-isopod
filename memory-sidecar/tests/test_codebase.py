@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from memory_sidecar.flows.codebase import _should_include, _split_simple
+from memory_sidecar.chunking import split_simple as _split_simple
+from memory_sidecar.flows.codebase import _should_include
 
 
 class TestShouldInclude:
