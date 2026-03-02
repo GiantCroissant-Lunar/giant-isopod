@@ -27,7 +27,7 @@ public record TaskRequest(string TaskId, string Description, IReadOnlySet<string
 public record TaskRequestWithBudget(
     string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities,
     TaskBudget Budget, string? GraphId = null) : TaskRequest(TaskId, Description, RequiredCapabilities, GraphId);
-public record TaskAssigned(string TaskId, string AgentId, string? Description = null, TaskBudget? Budget = null, string? GraphId = null);
+public record TaskAssigned(string TaskId, string AgentId, string? Description = null, TaskBudget? Budget = null, string? GraphId = null, string? WorkspacePath = null);
 public record TaskCompleted(string TaskId, string AgentId, bool Success, string? Summary = null, string? GraphId = null, IReadOnlyList<ArtifactRef>? Artifacts = null, ProposedSubplan? Subplan = null);
 public record TaskFailed(string TaskId, string? Reason = null, IReadOnlySet<string>? UnmetCapabilities = null, string? GraphId = null);
 public record TaskTimedOut(string TaskId);
@@ -196,6 +196,28 @@ public record ProposedSubplan(
 public record TaskDecompositionAccepted(string ParentTaskId, IReadOnlyList<string> SubtaskIds, string? GraphId = null);
 public record TaskDecompositionRejected(string ParentTaskId, string Reason, string? GraphId = null);
 public record SubtasksCompleted(string ParentTaskId, IReadOnlyList<TaskCompleted> Results, string? GraphId = null);
+
+// ── Workspace lifecycle (ADR-010) ──
+
+public enum WorkspaceStatus { Active, Committed, Merged, Released }
+
+public record Workspace(
+    string TaskId,
+    string WorktreePath,
+    string BranchName,
+    string BaseRef,
+    WorkspaceStatus Status);
+
+public record AllocateWorkspace(string TaskId, string BaseRef);
+public record WorkspaceAllocated(string TaskId, string WorktreePath, string BranchName);
+public record AllocationFailed(string TaskId, string Reason);
+
+public record ReleaseWorkspace(string TaskId);
+public record WorkspaceReleased(string TaskId);
+
+public record RequestMerge(string TaskId);
+public record MergeSucceeded(string TaskId, string MergeCommitSha);
+public record MergeConflict(string TaskId, IReadOnlyList<string> ConflictingFiles);
 
 // ── Viewport bridge ──
 
