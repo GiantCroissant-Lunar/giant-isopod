@@ -3,8 +3,7 @@ on:
   pull_request_review_comment:
     types: [created]
 
-engine: claude
-model: claude-sonnet-4-6
+engine: copilot
 
 permissions:
   contents: read
@@ -21,7 +20,7 @@ safe-outputs:
     max: 10
   assign-to-agent:
     name: "copilot"
-    model: "claude-sonnet-4-6"
+    model: "auto"
     max: 1
     target: "triggering"
     github-token: ${{ secrets.GH_AW_AGENT_TOKEN }}
