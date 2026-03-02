@@ -136,6 +136,43 @@ public record QueryAgentCards(IReadOnlySet<string>? RequiredCapabilities = null)
 public record AgentCardsResult(IReadOnlyList<AgentCardInfo> Cards);
 public record AgentCardInfo(string AgentId, string Name, string? Description = null, IReadOnlyList<string>? Skills = null);
 
+// ── Artifact registry ──
+
+public enum ArtifactType { Code, Doc, Image, Audio, Model3D, App, Dataset, Config }
+
+public record ArtifactProvenance(
+    string TaskId,
+    string AgentId,
+    DateTimeOffset CreatedAt,
+    IReadOnlyList<string>? InputArtifactIds = null);
+
+public record ValidatorResult(string ValidatorName, bool Passed, string? Details = null);
+
+public record ArtifactRef(
+    string ArtifactId,
+    ArtifactType Type,
+    string Format,
+    string Uri,
+    string? ContentHash,
+    ArtifactProvenance Provenance,
+    IReadOnlyDictionary<string, string>? Metadata = null,
+    IReadOnlyList<ValidatorResult>? Validators = null);
+
+public record RegisterArtifact(ArtifactRef Artifact);
+public record ArtifactRegistered(string ArtifactId);
+
+public record GetArtifact(string ArtifactId);
+public record GetArtifactsByTask(string TaskId);
+public record GetArtifactsByType(ArtifactType Type);
+public record ArtifactResult(ArtifactRef? Artifact);
+public record ArtifactListResult(IReadOnlyList<ArtifactRef> Artifacts);
+
+public record UpdateValidation(string ArtifactId, ValidatorResult Result);
+public record ArtifactValidationUpdated(string ArtifactId);
+
+public record BlessArtifact(string ArtifactId);
+public record ArtifactBlessed(string ArtifactId);
+
 // ── Viewport bridge ──
 
 public record SetViewportBridge(IViewportBridge Bridge);

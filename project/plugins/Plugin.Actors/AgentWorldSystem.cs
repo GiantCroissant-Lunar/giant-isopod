@@ -21,6 +21,7 @@ public sealed class AgentWorldSystem : IDisposable
     public IActorRef Dispatch { get; }
     public IActorRef TaskGraph { get; }
     public IActorRef Viewport { get; }
+    public IActorRef Artifacts { get; }
     public IActorRef A2A { get; }
 
     public AgentWorldSystem(AgentWorldConfig config, ILoggerFactory loggerFactory)
@@ -90,6 +91,11 @@ public sealed class AgentWorldSystem : IDisposable
                 Dispatch, Viewport,
                 loggerFactory.CreateLogger<TaskGraphActor>())),
             "taskgraph");
+
+        Artifacts = _system.ActorOf(
+            Props.Create(() => new ArtifactRegistryActor(
+                loggerFactory.CreateLogger<ArtifactRegistryActor>())),
+            "artifacts");
 
         A2A = _system.ActorOf(
             Props.Create(() => new A2AActor(
