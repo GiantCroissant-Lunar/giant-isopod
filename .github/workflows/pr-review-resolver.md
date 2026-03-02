@@ -18,14 +18,8 @@ safe-outputs:
     max: 30
   resolve-pull-request-review-thread:
     max: 30
-  assign-to-agent:
-    name: "copilot"
-    model: "auto"
-    max: 1
-    target: "triggering"
-    github-token: ${{ secrets.GH_AW_AGENT_TOKEN }}
   add-comment:
-    max: 1
+    max: 2
     hide-older-comments: true
 ---
 
@@ -49,9 +43,9 @@ Batch-process **all** unresolved review threads on the pull request:
 
 ## Decision Framework
 
-### When to ASSIGN TO AGENT (code change needed)
+### When code changes are needed
 
-Use `assign-to-agent` when **any** unresolved comment requires a concrete code change. Collect ALL actionable comments into a single `custom-instructions` block so the agent can fix everything in one pass.
+Use `add-comment` to post a single comment that mentions `@copilot` with a summary of all required fixes. Do NOT use `assign-to-agent` (it creates new issues). Collect ALL actionable comments into one comment so Copilot can address everything in one pass.
 
 A comment needs code changes when:
 
@@ -60,10 +54,17 @@ A comment needs code changes when:
 - The reviewer identifies **missing tests** or **missing error handling**
 - The comment contains a concrete, actionable improvement with a clear expected outcome
 
-The `custom-instructions` should list each fix:
-1. The exact reviewer comment
-2. The file path and line range
-3. What fix is expected
+The comment should follow this format:
+
+```
+@copilot Please address the following review comments:
+
+1. **[file:line]** — description of the fix needed
+2. **[file:line]** — description of the fix needed
+...
+```
+
+After posting the `add-comment`, reply to each individual review thread acknowledging it will be addressed, then resolve the thread.
 
 ### When to REPLY AND RESOLVE (no code change needed)
 
@@ -79,9 +80,9 @@ Use `reply-to-pull-request-review-comment` followed by `resolve-pull-request-rev
 ## Important Guidelines
 
 - Process ALL unresolved threads in one run — do not stop after the first one
-- Batch all code-change requests into a single `assign-to-agent` call
+- Batch all code-change requests into a single `add-comment` mentioning `@copilot` — do NOT create issues
 - Always be respectful and professional in replies
 - When resolving without code changes, clearly explain the reasoning so the reviewer understands
-- When uncertain whether a change is needed, err on the side of assigning to agent (make the change)
+- When uncertain whether a change is needed, err on the side of mentioning `@copilot` to make the change
 - Reference project conventions when relevant: Conventional Commits, C#/.NET patterns, Godot 4.6 API
 - Do not resolve comments that express blocking concerns — leave those for human discussion
