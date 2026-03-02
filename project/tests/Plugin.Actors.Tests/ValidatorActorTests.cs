@@ -110,6 +110,23 @@ public class ValidatorActorTests : TestKit
         Assert.Equal("v1", result.Results[0].ValidatorName);
     }
 
+    [Fact]
+    public void ValidateArtifact_MissingRequiredValidator_ReturnsFailure()
+    {
+        _validator.Tell(new RegisterValidator(ScriptSpec("v1", ArtifactType.Code, "echo")), TestActor);
+        ExpectMsg<ValidatorRegistered>();
+
+        var artifact = MakeArtifact("art-missing");
+        // Request v2 which is not registered
+        _validator.Tell(new ValidateArtifact("art-missing", artifact,
+            RequiredValidators: new[] { "v2" }), TestActor);
+
+        var result = ExpectMsg<ValidationComplete>(TimeSpan.FromSeconds(10));
+        Assert.Single(result.Results);
+        Assert.False(result.Results[0].Passed);
+        Assert.Equal("v2", result.Results[0].ValidatorName);
+    }
+
     // ── UpdateValidation forwarding ──
 
     [Fact]

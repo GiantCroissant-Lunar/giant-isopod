@@ -394,24 +394,36 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
     private void HandleValidationComplete(ValidationComplete validation)
     {
-        // Find the task that owns this artifact
         string? taskId = null;
         string? graphId = null;
         GraphState? state = null;
 
-        foreach (var (gid, gs) in _graphs)
+        // Fast path: use TaskId from the message to avoid scanning all graphs
+        if (validation.TaskId is { } hintedTaskId &&
+            TryFindGraphByTask(hintedTaskId, out var hintedGraphId, out var hintedState) &&
+            hintedState.PendingValidation.ContainsKey(hintedTaskId))
         {
-            foreach (var (tid, pv) in gs.PendingValidation)
+            taskId = hintedTaskId;
+            graphId = hintedGraphId;
+            state = hintedState;
+        }
+        else
+        {
+            // Fallback: scan all graphs for the artifact (backward compat)
+            foreach (var (gid, gs) in _graphs)
             {
-                if (pv.Completed.Artifacts?.Any(a => a.ArtifactId == validation.ArtifactId) == true)
+                foreach (var (tid, pv) in gs.PendingValidation)
                 {
-                    taskId = tid;
-                    graphId = gid;
-                    state = gs;
-                    break;
+                    if (pv.Completed.Artifacts?.Any(a => a.ArtifactId == validation.ArtifactId) == true)
+                    {
+                        taskId = tid;
+                        graphId = gid;
+                        state = gs;
+                        break;
+                    }
                 }
+                if (taskId != null) break;
             }
-            if (taskId != null) break;
         }
 
         if (taskId == null || graphId == null || state == null)
