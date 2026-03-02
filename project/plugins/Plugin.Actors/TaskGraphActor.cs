@@ -17,17 +17,19 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     private readonly IActorRef _agentSupervisor;
     private readonly IActorRef _viewport;
     private readonly IActorRef _workspace;
+    private readonly IActorRef _validator;
     private readonly ILogger<TaskGraphActor> _logger;
     private readonly Dictionary<string, GraphState> _graphs = new();
 
     public ITimerScheduler Timers { get; set; } = null!;
 
-    public TaskGraphActor(IActorRef dispatch, IActorRef agentSupervisor, IActorRef viewport, IActorRef workspace, ILogger<TaskGraphActor> logger)
+    public TaskGraphActor(IActorRef dispatch, IActorRef agentSupervisor, IActorRef viewport, IActorRef workspace, IActorRef validator, ILogger<TaskGraphActor> logger)
     {
         _dispatch = dispatch;
         _agentSupervisor = agentSupervisor;
         _viewport = viewport;
         _workspace = workspace;
+        _validator = validator;
         _logger = logger;
     }
 
@@ -57,6 +59,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
             case MergeConflict conflict:
                 HandleMergeConflict(conflict);
+                break;
+
+            case ValidationComplete validation:
+                HandleValidationComplete(validation);
                 break;
         }
     }
@@ -109,18 +115,30 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             // Agent proposed a decomposition — validate and insert subtasks
             HandleDecomposition(graphId, state, completed);
         }
+        else if (completed.Artifacts is { Count: > 0 })
+        {
+            // Check if validation is needed
+            var node = state.Nodes.GetValueOrDefault(completed.TaskId);
+            var requiredValidators = node?.RequiredValidators;
+
+            // Gate on validation before merge/completion
+            state.PendingValidation[completed.TaskId] = new PendingValidationEntry(
+                completed, completed.Artifacts.Count, new List<ValidatorResult>());
+            state.Status[completed.TaskId] = TaskNodeStatus.Validating;
+            _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, completed.TaskId, TaskNodeStatus.Validating, completed.AgentId));
+            _logger.LogDebug("Graph {GraphId}: task {TaskId} has {Count} artifacts, sending to validation",
+                graphId, completed.TaskId, completed.Artifacts.Count);
+
+            foreach (var artifact in completed.Artifacts)
+            {
+                _validator.Tell(new ValidateArtifact(
+                    artifact.ArtifactId, artifact,
+                    completed.TaskId, requiredValidators));
+            }
+            return; // Wait for ValidationComplete messages
+        }
         else
         {
-            var hasCodeArtifacts = completed.Artifacts?.Any(a => a.Type == ArtifactType.Code) == true;
-            if (hasCodeArtifacts)
-            {
-                // Request merge before completing — TaskGraphActor will handle MergeSucceeded/MergeConflict
-                state.PendingMerge[completed.TaskId] = completed;
-                _logger.LogDebug("Graph {GraphId}: task {TaskId} has code artifacts, requesting merge", graphId, completed.TaskId);
-                _workspace.Tell(new RequestMerge(completed.TaskId));
-                return; // Don't check completion yet — wait for merge result
-            }
-
             CompleteTaskNode(graphId, state, completed);
         }
 
@@ -374,6 +392,101 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         CheckGraphCompletion(graphId, state);
     }
 
+    private void HandleValidationComplete(ValidationComplete validation)
+    {
+        // Find the task that owns this artifact
+        string? taskId = null;
+        string? graphId = null;
+        GraphState? state = null;
+
+        foreach (var (gid, gs) in _graphs)
+        {
+            foreach (var (tid, pv) in gs.PendingValidation)
+            {
+                if (pv.Completed.Artifacts?.Any(a => a.ArtifactId == validation.ArtifactId) == true)
+                {
+                    taskId = tid;
+                    graphId = gid;
+                    state = gs;
+                    break;
+                }
+            }
+            if (taskId != null) break;
+        }
+
+        if (taskId == null || graphId == null || state == null)
+        {
+            _logger.LogWarning("ValidationComplete for unknown artifact {ArtifactId}", validation.ArtifactId);
+            return;
+        }
+
+        var pending = state.PendingValidation[taskId];
+        pending.AllResults.AddRange(validation.Results);
+        pending.RemainingArtifacts--;
+
+        if (pending.RemainingArtifacts > 0)
+            return; // Still waiting for more artifacts
+
+        // All artifacts validated — check results
+        state.PendingValidation.Remove(taskId);
+        var failures = pending.AllResults.Where(r => !r.Passed).ToList();
+
+        if (failures.Count == 0)
+        {
+            _logger.LogDebug("Graph {GraphId}: task {TaskId} passed all validation", graphId, taskId);
+
+            // Proceed to merge (if code artifacts) or complete
+            var hasCodeArtifacts = pending.Completed.Artifacts?.Any(a => a.Type == ArtifactType.Code) == true;
+            if (hasCodeArtifacts)
+            {
+                state.PendingMerge[taskId] = pending.Completed;
+                _logger.LogDebug("Graph {GraphId}: task {TaskId} has code artifacts, requesting merge", graphId, taskId);
+                _workspace.Tell(new RequestMerge(taskId));
+            }
+            else
+            {
+                CompleteTaskNode(graphId, state, pending.Completed);
+                CheckGraphCompletion(graphId, state);
+            }
+        }
+        else
+        {
+            // Validation failed — check retry budget
+            var attempts = state.ValidationAttempts.GetValueOrDefault(taskId, 0) + 1;
+            state.ValidationAttempts[taskId] = attempts;
+
+            var node = state.Nodes.GetValueOrDefault(taskId);
+            var maxAttempts = node?.MaxValidationAttempts ?? 2;
+
+            if (attempts < maxAttempts)
+            {
+                _logger.LogWarning("Graph {GraphId}: task {TaskId} failed validation (attempt {Attempt}/{Max}), re-dispatching",
+                    graphId, taskId, attempts, maxAttempts);
+
+                // Re-dispatch with failure feedback
+                state.Status[taskId] = TaskNodeStatus.Dispatched;
+                _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, taskId, TaskNodeStatus.Dispatched));
+
+                var failureSummary = string.Join("; ", failures.Select(f => $"{f.ValidatorName}: {f.Details}"));
+                var revisedDesc = $"{node?.Description ?? "task"} [REVISION {attempts}: validation failed — {failureSummary}]";
+
+                var request = new TaskRequest(taskId, revisedDesc,
+                    node?.RequiredCapabilities ?? new HashSet<string>(), graphId);
+                _dispatch.Tell(request);
+            }
+            else
+            {
+                _logger.LogWarning("Graph {GraphId}: task {TaskId} failed validation after {Max} attempts, marking failed",
+                    graphId, taskId, maxAttempts);
+
+                state.Status[taskId] = TaskNodeStatus.Failed;
+                _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, taskId, TaskNodeStatus.Failed));
+                CancelDependents(state, taskId);
+                CheckGraphCompletion(graphId, state);
+            }
+        }
+    }
+
     /// <summary>Find graph by task ID without a GraphId hint (for merge callbacks).</summary>
     private bool TryFindGraphByTask(string taskId, out string graphId, out GraphState state)
     {
@@ -498,10 +611,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         {
             var status = state.Status[taskId];
             if (status is TaskNodeStatus.Pending or TaskNodeStatus.Ready or TaskNodeStatus.Dispatched
-                or TaskNodeStatus.WaitingForSubtasks or TaskNodeStatus.Synthesizing)
+                or TaskNodeStatus.WaitingForSubtasks or TaskNodeStatus.Synthesizing or TaskNodeStatus.Validating)
             {
                 state.Status[taskId] = status is TaskNodeStatus.Dispatched
-                    or TaskNodeStatus.WaitingForSubtasks or TaskNodeStatus.Synthesizing
+                    or TaskNodeStatus.WaitingForSubtasks or TaskNodeStatus.Synthesizing or TaskNodeStatus.Validating
                     ? TaskNodeStatus.Failed
                     : TaskNodeStatus.Cancelled;
             }
@@ -554,6 +667,8 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         public Dictionary<string, string> AssignedAgent { get; } = new();
         public Dictionary<string, TaskCompleted> CompletedResults { get; } = new();
         public Dictionary<string, TaskCompleted> PendingMerge { get; } = new();
+        public Dictionary<string, PendingValidationEntry> PendingValidation { get; } = new();
+        public Dictionary<string, int> ValidationAttempts { get; } = new();
 
         /// <summary>
         /// Builds graph state from a SubmitTaskGraph message.
@@ -632,4 +747,18 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     }
 
     private record GraphTimedOut(string GraphId);
+
+    internal sealed class PendingValidationEntry
+    {
+        public TaskCompleted Completed { get; }
+        public int RemainingArtifacts { get; set; }
+        public List<ValidatorResult> AllResults { get; }
+
+        public PendingValidationEntry(TaskCompleted completed, int remainingArtifacts, List<ValidatorResult> allResults)
+        {
+            Completed = completed;
+            RemainingArtifacts = remainingArtifacts;
+            AllResults = allResults;
+        }
+    }
 }
