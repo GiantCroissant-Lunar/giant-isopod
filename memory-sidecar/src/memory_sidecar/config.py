@@ -48,6 +48,7 @@ EXCLUDED_PATTERNS = frozenset(
         ".git",
         ".godot",
         "build/_artifacts",
+        "addons",
     }
 )
 

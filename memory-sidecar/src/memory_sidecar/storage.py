@@ -64,7 +64,7 @@ def init_codebase_schema(conn: sqlite3.Connection) -> None:
 
 
 def init_knowledge_schema(conn: sqlite3.Connection) -> None:
-    """Create the knowledge entries table with virtual vec0 table for vectors."""
+    """Create the knowledge entries table with virtual vec0 table for vectors and FTS5 for full-text."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS knowledge (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,7 +82,38 @@ def init_knowledge_schema(conn: sqlite3.Connection) -> None:
                 embedding FLOAT[{EMBED_DIMENSIONS}]
             )
         """)
+    # Check if FTS table already exists before creating it
+    fts_exists = (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_fts'").fetchone() is not None
+    )
+    # FTS5 full-text index for keyword search
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+            content, category, content='knowledge', content_rowid='id'
+        )
+    """)
+    # Triggers to keep FTS5 in sync with the knowledge table
+    conn.executescript("""
+        CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge BEGIN
+            INSERT INTO knowledge_fts(rowid, content, category)
+            VALUES (new.id, new.content, new.category);
+        END;
+        CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge BEGIN
+            INSERT INTO knowledge_fts(knowledge_fts, rowid, content, category)
+            VALUES ('delete', old.id, old.content, old.category);
+        END;
+        CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge BEGIN
+            INSERT INTO knowledge_fts(knowledge_fts, rowid, content, category)
+            VALUES ('delete', old.id, old.content, old.category);
+            INSERT INTO knowledge_fts(rowid, content, category)
+            VALUES (new.id, new.content, new.category);
+        END;
+    """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge(category)")
+    if not fts_exists:
+        # Rebuild FTS5 index only on first creation to pick up any pre-existing rows
+        # that were inserted before the FTS5 table/triggers existed.
+        conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES ('rebuild')")
     conn.commit()
 
 
@@ -192,6 +223,85 @@ def search_knowledge(
         }
         for r in rows
     ]
+
+
+def search_knowledge_fts(
+    conn: sqlite3.Connection,
+    query_text: str,
+    category: str | None = None,
+    top_k: int = 10,
+) -> list[dict[str, Any]]:
+    """Search knowledge entries using FTS5 full-text search."""
+    # Escape double-quotes in query to prevent FTS5 syntax errors
+    escaped = query_text.replace('"', '""')
+    fts_query = f'"{escaped}"'
+    if category:
+        rows = conn.execute(
+            """SELECT kn.id, rank, kn.content, kn.category, kn.tags, kn.stored_at
+               FROM knowledge_fts fts
+               JOIN knowledge kn ON kn.id = fts.rowid
+               WHERE knowledge_fts MATCH ? AND kn.category = ?
+               ORDER BY rank
+               LIMIT ?""",
+            (fts_query, category, top_k),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT kn.id, rank, kn.content, kn.category, kn.tags, kn.stored_at
+               FROM knowledge_fts fts
+               JOIN knowledge kn ON kn.id = fts.rowid
+               WHERE knowledge_fts MATCH ?
+               ORDER BY rank
+               LIMIT ?""",
+            (fts_query, top_k),
+        ).fetchall()
+    return [
+        {
+            "id": r[0],
+            "content": r[2],
+            "category": r[3],
+            "tags": json.loads(r[4]) if r[4] else None,
+            "stored_at": r[5],
+            "relevance": 0.0,  # FTS rank is negative; normalized during RRF merge
+        }
+        for r in rows
+    ]
+
+
+def search_knowledge_hybrid(
+    conn: sqlite3.Connection,
+    query_embedding: list[float],
+    query_text: str,
+    category: str | None = None,
+    top_k: int = 10,
+    rrf_k: int = 60,
+) -> list[dict[str, Any]]:
+    """Hybrid search combining vector similarity and FTS5 with reciprocal rank fusion.
+
+    Uses RRF formula: score(d) = sum(1 / (k + rank_i)) across both result lists.
+    The rrf_k constant (default 60) controls how much lower-ranked results contribute.
+    """
+    vec_results = search_knowledge(conn, query_embedding, category, top_k * 2)
+    fts_results = search_knowledge_fts(conn, query_text, category, top_k * 2)
+
+    # Build RRF scores keyed by (content, category) as a stable identifier
+    scores: dict[str, float] = {}
+    entries: dict[str, dict[str, Any]] = {}
+
+    for rank, entry in enumerate(vec_results):
+        key = f"{entry['stored_at']}:{entry['content'][:80]}"
+        scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
+        entries[key] = entry
+
+    for rank, entry in enumerate(fts_results):
+        key = f"{entry['stored_at']}:{entry['content'][:80]}"
+        scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
+        if key not in entries:
+            entries[key] = entry
+
+    # Sort by RRF score descending, take top_k
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+    return [{**entries[key], "relevance": score} for key, score in ranked]
 
 
 def delete_stale_chunks(conn: sqlite3.Connection, filename: str, keep_locations: set[str]) -> int:

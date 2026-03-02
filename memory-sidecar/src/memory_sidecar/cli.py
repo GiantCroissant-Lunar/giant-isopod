@@ -96,13 +96,14 @@ def store(content: str, agent: str, category: str, tag: tuple[str, ...], db: str
 @click.option("--top-k", default=10, help="Number of results")
 @click.option("--db", default=None, help="SQLite database path")
 @click.option("--json-output", "json_out", is_flag=True, help="Output as JSON")
-def query(query_text: str, agent: str, category: str | None, top_k: int, db: str | None, json_out: bool):
+@click.option("--hybrid/--no-hybrid", default=True, help="Use hybrid (vector + FTS5) search (default: hybrid)")
+def query(query_text: str, agent: str, category: str | None, top_k: int, db: str | None, json_out: bool, hybrid: bool):
     """Search an agent's knowledge base by semantic similarity."""
     from memory_sidecar.config import knowledge_db_path
     from memory_sidecar.flows.knowledge import query as query_knowledge
 
     db_path = db or str(knowledge_db_path(agent))
-    results = query_knowledge(db_path, query_text, category, top_k)
+    results = query_knowledge(db_path, query_text, category, top_k, hybrid=hybrid)
     if json_out:
         click.echo(json.dumps(results, indent=2))
     else:
