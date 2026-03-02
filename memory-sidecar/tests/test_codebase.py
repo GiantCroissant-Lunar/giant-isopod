@@ -1,10 +1,11 @@
-"""Tests for memory_sidecar.flows.codebase — chunking and filtering logic."""
+"""Tests for memory_sidecar.flows.codebase — filtering logic and chunking."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from memory_sidecar.flows.codebase import _should_include, _split_simple
+from memory_sidecar.chunking import split_simple
+from memory_sidecar.flows.codebase import _should_include
 
 
 class TestShouldInclude:
@@ -59,11 +60,11 @@ class TestShouldInclude:
 
 
 class TestSplitSimple:
-    """Tests for the _split_simple text chunker."""
+    """Tests for the split_simple text chunker."""
 
     def test_small_content_single_chunk(self):
         content = "hello world"
-        chunks = _split_simple(content, chunk_size=100, chunk_overlap=10)
+        chunks = split_simple(content, chunk_size=100, chunk_overlap=10)
 
         assert len(chunks) == 1
         assert chunks[0]["text"] == "hello world"
@@ -71,19 +72,19 @@ class TestSplitSimple:
 
     def test_exact_chunk_size_single_chunk(self):
         content = "x" * 100
-        chunks = _split_simple(content, chunk_size=100, chunk_overlap=10)
+        chunks = split_simple(content, chunk_size=100, chunk_overlap=10)
 
         assert len(chunks) == 1
 
     def test_large_content_produces_multiple_chunks(self):
         content = "line\n" * 300  # 1500 chars
-        chunks = _split_simple(content, chunk_size=500, chunk_overlap=100)
+        chunks = split_simple(content, chunk_size=500, chunk_overlap=100)
 
         assert len(chunks) > 1
 
     def test_chunks_have_sequential_indices(self):
         content = "word " * 500  # 2500 chars
-        chunks = _split_simple(content, chunk_size=500, chunk_overlap=100)
+        chunks = split_simple(content, chunk_size=500, chunk_overlap=100)
 
         for i, chunk in enumerate(chunks):
             idx = int(chunk["location"].split(":")[0])
@@ -92,7 +93,7 @@ class TestSplitSimple:
     def test_chunks_preserve_all_content(self):
         # Verify no content is lost (allowing for overlap)
         content = "abcdefghij\n" * 100  # 1100 chars
-        chunks = _split_simple(content, chunk_size=200, chunk_overlap=50)
+        chunks = split_simple(content, chunk_size=200, chunk_overlap=50)
 
         # Each character should appear in at least one chunk
         all_text = "".join(c["text"] for c in chunks)
@@ -102,7 +103,7 @@ class TestSplitSimple:
 
     def test_whitespace_only_chunks_skipped(self):
         content = "text\n" + " " * 500 + "\nmore text"
-        chunks = _split_simple(content, chunk_size=100, chunk_overlap=10)
+        chunks = split_simple(content, chunk_size=100, chunk_overlap=10)
 
         for chunk in chunks:
             assert chunk["text"].strip(), "Whitespace-only chunks should be skipped"
@@ -111,7 +112,7 @@ class TestSplitSimple:
         # With newlines, chunks should try to break at newline boundaries
         lines = ["x" * 80 + "\n" for _ in range(20)]
         content = "".join(lines)
-        chunks = _split_simple(content, chunk_size=500, chunk_overlap=100)
+        chunks = split_simple(content, chunk_size=500, chunk_overlap=100)
 
         # At least one chunk should end with a newline (newline-aware boundary)
         any_newline_boundary = any(c["text"].endswith("\n") for c in chunks[:-1])
@@ -119,15 +120,15 @@ class TestSplitSimple:
 
     def test_overlap_is_applied(self):
         content = "a" * 1000
-        chunks_no_overlap = _split_simple(content, chunk_size=300, chunk_overlap=0)
-        chunks_with_overlap = _split_simple(content, chunk_size=300, chunk_overlap=100)
+        chunks_no_overlap = split_simple(content, chunk_size=300, chunk_overlap=0)
+        chunks_with_overlap = split_simple(content, chunk_size=300, chunk_overlap=100)
 
         # With overlap, we expect more chunks (since each step advances less)
         assert len(chunks_with_overlap) >= len(chunks_no_overlap)
 
     def test_location_format(self):
         content = "x" * 500
-        chunks = _split_simple(content, chunk_size=200, chunk_overlap=50)
+        chunks = split_simple(content, chunk_size=200, chunk_overlap=50)
 
         for chunk in chunks:
             parts = chunk["location"].split(":")
@@ -136,6 +137,6 @@ class TestSplitSimple:
             assert parts[1].isdigit()
 
     def test_empty_content(self):
-        chunks = _split_simple("", chunk_size=100, chunk_overlap=10)
+        chunks = split_simple("", chunk_size=100, chunk_overlap=10)
         assert len(chunks) == 1
         assert chunks[0]["text"] == ""
