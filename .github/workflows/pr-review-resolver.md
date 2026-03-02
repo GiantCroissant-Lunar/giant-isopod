@@ -18,8 +18,11 @@ safe-outputs:
     max: 30
   resolve-pull-request-review-thread:
     max: 30
+  push-to-pull-request-branch:
+    target: "triggering"
+    max: 1
   add-comment:
-    max: 2
+    max: 1
     hide-older-comments: true
 ---
 
@@ -39,13 +42,13 @@ Batch-process **all** unresolved review threads on the pull request:
 2. Identify every **unresolved** review thread (not yet resolved)
 3. Skip comments from the PR author (self-reviews) and bot summary comments (top-level walkthrough comments, not inline code reviews)
 4. For each unresolved inline review comment, read the comment text and surrounding code context, then decide the appropriate action using the Decision Framework below
-5. After processing all threads, post a summary comment listing what was resolved, what was assigned, and what was skipped
+5. After processing all threads, post a summary comment listing what was fixed, what was resolved, and what was skipped
 
 ## Decision Framework
 
 ### When code changes are needed
 
-Use `add-comment` to post a single comment that mentions `@copilot` with a summary of all required fixes. Do NOT use `assign-to-agent` (it creates new issues). Collect ALL actionable comments into one comment so Copilot can address everything in one pass.
+Use `push-to-pull-request-branch` to make fixes directly on the PR branch. Read the relevant files, apply the fixes, and push. Collect ALL actionable comments and fix them in a single push.
 
 A comment needs code changes when:
 
@@ -54,17 +57,7 @@ A comment needs code changes when:
 - The reviewer identifies **missing tests** or **missing error handling**
 - The comment contains a concrete, actionable improvement with a clear expected outcome
 
-The comment should follow this format:
-
-```
-@copilot Please address the following review comments:
-
-1. **[file:line]** — description of the fix needed
-2. **[file:line]** — description of the fix needed
-...
-```
-
-After posting the `add-comment`, reply to each individual review thread acknowledging it will be addressed, then resolve the thread.
+After pushing the fixes, reply to each review thread explaining what was changed, then resolve the thread.
 
 ### When to REPLY AND RESOLVE (no code change needed)
 
@@ -80,9 +73,9 @@ Use `reply-to-pull-request-review-comment` followed by `resolve-pull-request-rev
 ## Important Guidelines
 
 - Process ALL unresolved threads in one run — do not stop after the first one
-- Batch all code-change requests into a single `add-comment` mentioning `@copilot` — do NOT create issues
+- Batch all code fixes into a single `push-to-pull-request-branch` — do NOT create issues or sub-PRs
 - Always be respectful and professional in replies
 - When resolving without code changes, clearly explain the reasoning so the reviewer understands
-- When uncertain whether a change is needed, err on the side of mentioning `@copilot` to make the change
+- When uncertain whether a change is needed, err on the side of making the fix
 - Reference project conventions when relevant: Conventional Commits, C#/.NET patterns, Godot 4.6 API
 - Do not resolve comments that express blocking concerns — leave those for human discussion
