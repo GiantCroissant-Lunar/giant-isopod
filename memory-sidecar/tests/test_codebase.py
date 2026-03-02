@@ -1,11 +1,11 @@
-"""Tests for memory_sidecar.flows.codebase — filtering logic and chunking."""
+"""Tests for memory_sidecar.flows.codebase — filtering, walking, and chunking logic."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from memory_sidecar.chunking import split_simple
-from memory_sidecar.flows.codebase import _should_include
+from memory_sidecar.flows.codebase import _should_include, _walk_source_files
 
 
 class TestShouldInclude:
@@ -57,6 +57,72 @@ class TestShouldInclude:
     def test_deeply_nested_valid_file(self):
         path, root = self._path("src/core/utils/helpers.ts")
         assert _should_include(path, root) is True
+
+    def test_excludes_artifacts_directory(self):
+        path, root = self._path("build/_artifacts/nuget/pkg.json")
+        assert _should_include(path, root) is False
+
+    def test_excludes_addons_directory(self):
+        path, root = self._path("addons/plugin/script.py")
+        assert _should_include(path, root) is False
+
+
+class TestWalkSourceFiles:
+    """Tests for the _walk_source_files directory walker."""
+
+    def test_finds_code_files(self, tmp_path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("print('hello')")
+        (tmp_path / "src" / "lib.cs").write_text("class Lib {}")
+
+        files = _walk_source_files(tmp_path)
+        names = {f.name for f in files}
+        assert names == {"main.py", "lib.cs"}
+
+    def test_prunes_hidden_directories(self, tmp_path):
+        hidden = tmp_path / ".git"
+        hidden.mkdir()
+        (hidden / "config.py").write_text("secret")
+
+        files = _walk_source_files(tmp_path)
+        assert len(files) == 0
+
+    def test_prunes_node_modules(self, tmp_path):
+        nm = tmp_path / "node_modules" / "pkg"
+        nm.mkdir(parents=True)
+        (nm / "index.js").write_text("module.exports = {}")
+        (tmp_path / "app.js").write_text("const x = 1")
+
+        files = _walk_source_files(tmp_path)
+        names = {f.name for f in files}
+        assert names == {"app.js"}
+
+    def test_prunes_artifacts(self, tmp_path):
+        arts = tmp_path / "build" / "_artifacts" / "nuget"
+        arts.mkdir(parents=True)
+        (arts / "pkg.json").write_text("{}")
+        (tmp_path / "src.py").write_text("x = 1")
+
+        files = _walk_source_files(tmp_path)
+        names = {f.name for f in files}
+        assert names == {"src.py"}
+
+    def test_excludes_non_code_extensions(self, tmp_path):
+        (tmp_path / "image.png").write_text("binary")
+        (tmp_path / "readme.txt").write_text("text")
+        (tmp_path / "code.py").write_text("x = 1")
+
+        files = _walk_source_files(tmp_path)
+        names = {f.name for f in files}
+        assert names == {"code.py"}
+
+    def test_deterministic_order(self, tmp_path):
+        for name in ["c.py", "a.py", "b.py"]:
+            (tmp_path / name).write_text(f"# {name}")
+
+        files = _walk_source_files(tmp_path)
+        names = [f.name for f in files]
+        assert names == ["a.py", "b.py", "c.py"]
 
 
 class TestSplitSimple:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from memory_sidecar.chunking import split_simple
@@ -37,6 +38,18 @@ def _should_include(path: Path, source_root: Path) -> bool:
     return path.suffix.lower() in CODE_EXTENSIONS
 
 
+def _walk_source_files(source_root: Path) -> list[Path]:
+    """Walk source tree, pruning excluded directories in-place for performance."""
+    result: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(source_root):
+        # Prune excluded dirs in-place to prevent descent
+        dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDED_PATTERNS and not d.startswith("."))
+        for fname in sorted(filenames):
+            if Path(fname).suffix.lower() in CODE_EXTENSIONS:
+                result.append(Path(dirpath) / fname)
+    return result
+
+
 def index_codebase(
     source_path: str,
     db_path: str,
@@ -56,7 +69,7 @@ def index_codebase(
     init_codebase_schema(conn)
 
     stats = {"files_processed": 0, "chunks_indexed": 0, "chunks_deleted": 0}
-    files = sorted(p for p in source_root.rglob("*") if p.is_file() and _should_include(p, source_root))
+    files = _walk_source_files(source_root)
 
     pending: list[tuple[str, str, str | None, str]] = []  # (filename, location, lang, code)
     pending_texts: list[str] = []
