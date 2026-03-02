@@ -99,13 +99,13 @@ public sealed class ArtifactRegistryActor : UntypedActor
             return;
         }
 
-        var isFirstBlessing = _blessed.Add(bless.ArtifactId);
+        var addedToBlessed = _blessed.Add(bless.ArtifactId);
 
         _logger.LogDebug("Blessed artifact {ArtifactId}", bless.ArtifactId);
 
         var blessed = new ArtifactBlessed(bless.ArtifactId);
         Sender.Tell(blessed);
-        if (isFirstBlessing)
+        if (addedToBlessed)
         {
             Context.System.EventStream.Publish(blessed);
         }

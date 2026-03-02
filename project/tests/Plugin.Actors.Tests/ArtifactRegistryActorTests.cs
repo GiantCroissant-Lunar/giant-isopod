@@ -8,6 +8,7 @@ namespace GiantIsopod.Plugin.Actors.Tests;
 
 public class ArtifactRegistryActorTests : TestKit
 {
+    private static readonly TimeSpan NoMessageTimeout = TimeSpan.FromMilliseconds(500);
     private readonly IActorRef _registry;
 
     public ArtifactRegistryActorTests()
@@ -182,15 +183,18 @@ public class ArtifactRegistryActorTests : TestKit
         _registry.Tell(new RegisterArtifact(MakeArtifact()), TestActor);
         ExpectMsg<ArtifactRegistered>();
 
-        Sys.EventStream.Subscribe(TestActor, typeof(ArtifactBlessed));
+        var streamProbe = CreateTestProbe();
+        Sys.EventStream.Subscribe(streamProbe.Ref, typeof(ArtifactBlessed));
 
         _registry.Tell(new BlessArtifact("art-001"), TestActor);
-        ExpectMsg<ArtifactBlessed>();
-        ExpectMsg<ArtifactBlessed>();
+        var firstReply = ExpectMsg<ArtifactBlessed>();
+        Assert.Equal("art-001", firstReply.ArtifactId);
+        streamProbe.ExpectMsg<ArtifactBlessed>();
 
         _registry.Tell(new BlessArtifact("art-001"), TestActor);
-        ExpectMsg<ArtifactBlessed>();
-        ExpectNoMsg();
+        var secondReply = ExpectMsg<ArtifactBlessed>();
+        Assert.Equal("art-001", secondReply.ArtifactId);
+        streamProbe.ExpectNoMsg(NoMessageTimeout);
     }
 
     [Fact]
