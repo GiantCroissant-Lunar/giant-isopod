@@ -110,10 +110,11 @@ def upsert_code_chunk(
         (filename, location, language, code, now),
     )
     row_id = cur.fetchone()[0]
-    conn.execute(
-        "INSERT OR REPLACE INTO code_chunks_vec (id, embedding) VALUES (?, ?)",
-        (row_id, _serialize_vec(embedding)),
-    )
+    if _has_vec:
+        conn.execute(
+            "INSERT OR REPLACE INTO code_chunks_vec (id, embedding) VALUES (?, ?)",
+            (row_id, _serialize_vec(embedding)),
+        )
 
 
 def search_code(
@@ -122,6 +123,8 @@ def search_code(
     top_k: int = 10,
 ) -> list[dict[str, Any]]:
     """Search code chunks by vector similarity."""
+    if not _has_vec:
+        return []
     rows = conn.execute(
         """SELECT v.id, v.distance, c.filename, c.location, c.language, c.code
            FROM code_chunks_vec v
@@ -149,10 +152,11 @@ def insert_knowledge(
         (content, category, tags_json, now, now),
     )
     row_id = cur.lastrowid
-    conn.execute(
-        "INSERT INTO knowledge_vec (id, embedding) VALUES (?, ?)",
-        (row_id, _serialize_vec(embedding)),
-    )
+    if _has_vec:
+        conn.execute(
+            "INSERT INTO knowledge_vec (id, embedding) VALUES (?, ?)",
+            (row_id, _serialize_vec(embedding)),
+        )
     return row_id
 
 
@@ -163,6 +167,8 @@ def search_knowledge(
     top_k: int = 10,
 ) -> list[dict[str, Any]]:
     """Search knowledge entries by vector similarity, optionally filtered by category."""
+    if not _has_vec:
+        return []
     # sqlite-vec does not support arbitrary WHERE predicates alongside MATCH + k = ?,
     # so we over-fetch and post-filter by category in Python.
     effective_top_k = top_k * 3 if category else top_k
@@ -202,6 +208,7 @@ def delete_stale_chunks(conn: sqlite3.Connection, filename: str, keep_locations:
     if not ids:
         return 0
     id_ph = ",".join("?" for _ in ids)
-    conn.execute(f"DELETE FROM code_chunks_vec WHERE id IN ({id_ph})", ids)  # noqa: S608
+    if _has_vec:
+        conn.execute(f"DELETE FROM code_chunks_vec WHERE id IN ({id_ph})", ids)  # noqa: S608
     conn.execute(f"DELETE FROM code_chunks WHERE id IN ({id_ph})", ids)  # noqa: S608
     return len(ids)

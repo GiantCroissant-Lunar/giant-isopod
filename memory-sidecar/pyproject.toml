@@ -9,6 +9,9 @@ dependencies = [
     "sqlite-vec>=0.1",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
+
 [project.scripts]
 memory-sidecar = "memory_sidecar.cli:main"
 
@@ -30,3 +33,6 @@ ignore = ["S101"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["memory_sidecar"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
