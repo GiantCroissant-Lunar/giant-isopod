@@ -22,6 +22,7 @@ public sealed class AgentWorldSystem : IDisposable
     public IActorRef TaskGraph { get; }
     public IActorRef Viewport { get; }
     public IActorRef Artifacts { get; }
+    public IActorRef Workspace { get; }
     public IActorRef A2A { get; }
 
     public AgentWorldSystem(AgentWorldConfig config, ILoggerFactory loggerFactory)
@@ -74,9 +75,20 @@ public sealed class AgentWorldSystem : IDisposable
                 loggerFactory)),
             "agents");
 
+        // Workspace must be created before Dispatch and TaskGraph (they depend on it)
+        var anchorRepoPath = !string.IsNullOrEmpty(config.AnchorRepoPath)
+            ? config.AnchorRepoPath
+            : config.RuntimeWorkingDirectory;
+
+        Workspace = _system.ActorOf(
+            Props.Create(() => new WorkspaceActor(
+                anchorRepoPath, "main",
+                loggerFactory.CreateLogger<WorkspaceActor>())),
+            "workspace");
+
         Dispatch = _system.ActorOf(
             Props.Create(() => new DispatchActor(
-                Registry, AgentSupervisor,
+                Registry, AgentSupervisor, Workspace,
                 loggerFactory.CreateLogger<DispatchActor>())),
             "dispatch");
 
@@ -88,7 +100,7 @@ public sealed class AgentWorldSystem : IDisposable
 
         TaskGraph = _system.ActorOf(
             Props.Create(() => new TaskGraphActor(
-                Dispatch, AgentSupervisor, Viewport,
+                Dispatch, AgentSupervisor, Viewport, Workspace,
                 loggerFactory.CreateLogger<TaskGraphActor>())),
             "taskgraph");
 
@@ -133,6 +145,9 @@ public record AgentWorldConfig
 
     /// <summary>Working directory for agent runtimes.</summary>
     public string RuntimeWorkingDirectory { get; init; } = "";
+
+    /// <summary>Anchor repo path for workspace worktrees. Defaults to RuntimeWorkingDirectory.</summary>
+    public string AnchorRepoPath { get; init; } = "";
 
     /// <summary>Extra environment variables merged into all agent runtimes (e.g. API keys).</summary>
     public Dictionary<string, string> RuntimeEnvironment { get; init; } = new();

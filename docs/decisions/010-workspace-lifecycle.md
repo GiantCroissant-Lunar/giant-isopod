@@ -1,7 +1,7 @@
 # ADR-010: Workspace Lifecycle (Worktree-per-Task)
 
 Date: 2026-03-02
-Status: Proposed
+Status: Accepted
 Depends On: ADR-004, ADR-008
 
 ## Context

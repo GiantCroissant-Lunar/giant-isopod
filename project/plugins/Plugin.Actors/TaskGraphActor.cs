@@ -16,16 +16,18 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     private readonly IActorRef _dispatch;
     private readonly IActorRef _agentSupervisor;
     private readonly IActorRef _viewport;
+    private readonly IActorRef _workspace;
     private readonly ILogger<TaskGraphActor> _logger;
     private readonly Dictionary<string, GraphState> _graphs = new();
 
     public ITimerScheduler Timers { get; set; } = null!;
 
-    public TaskGraphActor(IActorRef dispatch, IActorRef agentSupervisor, IActorRef viewport, ILogger<TaskGraphActor> logger)
+    public TaskGraphActor(IActorRef dispatch, IActorRef agentSupervisor, IActorRef viewport, IActorRef workspace, ILogger<TaskGraphActor> logger)
     {
         _dispatch = dispatch;
         _agentSupervisor = agentSupervisor;
         _viewport = viewport;
+        _workspace = workspace;
         _logger = logger;
     }
 
@@ -47,6 +49,14 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
             case GraphTimedOut timedOut:
                 HandleGraphTimedOut(timedOut);
+                break;
+
+            case MergeSucceeded merged:
+                HandleMergeSucceeded(merged);
+                break;
+
+            case MergeConflict conflict:
+                HandleMergeConflict(conflict);
                 break;
         }
     }
@@ -101,12 +111,17 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         }
         else
         {
-            state.Status[completed.TaskId] = TaskNodeStatus.Completed;
-            state.CompletedResults[completed.TaskId] = completed;
-            _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, completed.TaskId, TaskNodeStatus.Completed, completed.AgentId));
-            _logger.LogDebug("Graph {GraphId}: task {TaskId} completed", graphId, completed.TaskId);
-            DispatchReadyNodes(state);
-            CheckSubtasksCompleted(graphId, state, completed.TaskId);
+            var hasCodeArtifacts = completed.Artifacts?.Any(a => a.Type == ArtifactType.Code) == true;
+            if (hasCodeArtifacts)
+            {
+                // Request merge before completing — TaskGraphActor will handle MergeSucceeded/MergeConflict
+                state.PendingMerge[completed.TaskId] = completed;
+                _logger.LogDebug("Graph {GraphId}: task {TaskId} has code artifacts, requesting merge", graphId, completed.TaskId);
+                _workspace.Tell(new RequestMerge(completed.TaskId));
+                return; // Don't check completion yet — wait for merge result
+            }
+
+            CompleteTaskNode(graphId, state, completed);
         }
 
         CheckGraphCompletion(graphId, state);
@@ -317,6 +332,65 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             new SubtasksCompleted(parentId, childResults, graphId)));
     }
 
+    private void CompleteTaskNode(string graphId, GraphState state, TaskCompleted completed)
+    {
+        state.Status[completed.TaskId] = TaskNodeStatus.Completed;
+        state.CompletedResults[completed.TaskId] = completed;
+        _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, completed.TaskId, TaskNodeStatus.Completed, completed.AgentId));
+        _logger.LogDebug("Graph {GraphId}: task {TaskId} completed", graphId, completed.TaskId);
+        DispatchReadyNodes(state);
+        CheckSubtasksCompleted(graphId, state, completed.TaskId);
+    }
+
+    private void HandleMergeSucceeded(MergeSucceeded merged)
+    {
+        if (!TryFindGraphByTask(merged.TaskId, out var graphId, out var state))
+            return;
+
+        if (!state.PendingMerge.Remove(merged.TaskId, out var completed))
+            return;
+
+        _logger.LogInformation("Graph {GraphId}: task {TaskId} merged (sha: {Sha})", graphId, merged.TaskId, merged.MergeCommitSha);
+        CompleteTaskNode(graphId, state, completed);
+        _workspace.Tell(new ReleaseWorkspace(merged.TaskId));
+        CheckGraphCompletion(graphId, state);
+    }
+
+    private void HandleMergeConflict(MergeConflict conflict)
+    {
+        if (!TryFindGraphByTask(conflict.TaskId, out var graphId, out var state))
+            return;
+
+        state.PendingMerge.Remove(conflict.TaskId);
+
+        _logger.LogWarning("Graph {GraphId}: task {TaskId} merge conflict on [{Files}]",
+            graphId, conflict.TaskId, string.Join(", ", conflict.ConflictingFiles));
+
+        // Fail the task — conflict resolution subtask is future work
+        state.Status[conflict.TaskId] = TaskNodeStatus.Failed;
+        _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, conflict.TaskId, TaskNodeStatus.Failed));
+        CancelDependents(state, conflict.TaskId);
+        _workspace.Tell(new ReleaseWorkspace(conflict.TaskId));
+        CheckGraphCompletion(graphId, state);
+    }
+
+    /// <summary>Find graph by task ID without a GraphId hint (for merge callbacks).</summary>
+    private bool TryFindGraphByTask(string taskId, out string graphId, out GraphState state)
+    {
+        foreach (var (gid, gs) in _graphs)
+        {
+            if (gs.Nodes.ContainsKey(taskId))
+            {
+                graphId = gid;
+                state = gs;
+                return true;
+            }
+        }
+        graphId = "";
+        state = null!;
+        return false;
+    }
+
     private void HandleTaskFailed(TaskFailed failed)
     {
         if (!TryFindGraph(failed.TaskId, failed.GraphId, out var graphId, out var state))
@@ -479,6 +553,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         public Dictionary<string, StopCondition?> StopConditions { get; } = new();
         public Dictionary<string, string> AssignedAgent { get; } = new();
         public Dictionary<string, TaskCompleted> CompletedResults { get; } = new();
+        public Dictionary<string, TaskCompleted> PendingMerge { get; } = new();
 
         /// <summary>
         /// Builds graph state from a SubmitTaskGraph message.
