@@ -63,10 +63,10 @@ public partial class HudController : Control
         var hudRoot = _sceneLoader.LoadScene(SwarmHudScene, this);
 
         // Load sub-scenes into their slots
-        var topBarSlot = hudRoot.GetNode("TopBarSlot");
-        var spawnSlot = hudRoot.GetNode("MiddleRow/LeftColumn/SpawnControlsSlot");
-        var agentPanelSlot = hudRoot.GetNode("MiddleRow/RightColumn/AgentPanelSlot");
-        var consolePanelSlot = hudRoot.GetNode("ConsolePanelSlot");
+        var topBarSlot = hudRoot.GetNode("topbarslot");
+        var spawnSlot = hudRoot.GetNode("middlerow/leftcolumn/spawncontrolsslot");
+        var agentPanelSlot = hudRoot.GetNode("middlerow/rightcolumn/agentpanelslot");
+        var consolePanelSlot = hudRoot.GetNode("consolepanelslot");
 
         _sceneLoader.LoadScene(TopBarScene, topBarSlot);
         _sceneLoader.LoadScene(SpawnControlsScene, spawnSlot);
@@ -74,14 +74,14 @@ public partial class HudController : Control
         _sceneLoader.LoadScene(ConsoleScene, consolePanelSlot);
 
         // Grab references from loaded scenes
-        var agentCountLabel = _sceneLoader.FindNode<Label>(TopBarScene, "AgentCount")!;
-        var runtimeCountLabel = _sceneLoader.FindNode<Label>(TopBarScene, "RuntimeCount")!;
-        var versionLabel = _sceneLoader.FindNode<Label>(TopBarScene, "VersionLabel");
+        var agentCountLabel = _sceneLoader.FindNode<Label>(TopBarScene, "agentcount")!;
+        var runtimeCountLabel = _sceneLoader.FindNode<Label>(TopBarScene, "runtimecount")!;
+        var versionLabel = _sceneLoader.FindNode<Label>(TopBarScene, "versionlabel");
 
         _runtimeDropdown = _sceneLoader.FindNode<OptionButton>(SpawnControlsScene, "runtimedropdown");
         _createButton = _sceneLoader.FindNode<Button>(SpawnControlsScene, "createbutton");
 
-        var agentList = _sceneLoader.FindNode<VBoxContainer>(AgentPanelScene, "VBox/ScrollArea/AgentList")!;
+        var agentList = _sceneLoader.FindNode<VBoxContainer>(AgentPanelScene, "scrollarea/agentlist")!;
 
         _consoleTitle = _sceneLoader.FindNode<Label>(ConsoleScene, "consoleheader/consoletitle");
         _tabTerminalBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "consoleheader/terminaltabbtn");
