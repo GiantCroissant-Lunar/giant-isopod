@@ -23,6 +23,7 @@ public sealed class AgentWorldSystem : IDisposable
     public IActorRef Viewport { get; }
     public IActorRef Artifacts { get; }
     public IActorRef Workspace { get; }
+    public IActorRef Validator { get; }
     public IActorRef A2A { get; }
 
     public AgentWorldSystem(AgentWorldConfig config, ILoggerFactory loggerFactory)
@@ -98,16 +99,22 @@ public sealed class AgentWorldSystem : IDisposable
                 loggerFactory.CreateLogger<ViewportActor>())),
             "viewport");
 
-        TaskGraph = _system.ActorOf(
-            Props.Create(() => new TaskGraphActor(
-                Dispatch, AgentSupervisor, Viewport, Workspace,
-                loggerFactory.CreateLogger<TaskGraphActor>())),
-            "taskgraph");
-
         Artifacts = _system.ActorOf(
             Props.Create(() => new ArtifactRegistryActor(
                 loggerFactory.CreateLogger<ArtifactRegistryActor>())),
             "artifacts");
+
+        Validator = _system.ActorOf(
+            Props.Create(() => new ValidatorActor(
+                Artifacts,
+                loggerFactory.CreateLogger<ValidatorActor>())),
+            "validator");
+
+        TaskGraph = _system.ActorOf(
+            Props.Create(() => new TaskGraphActor(
+                Dispatch, AgentSupervisor, Viewport, Workspace, Validator,
+                loggerFactory.CreateLogger<TaskGraphActor>())),
+            "taskgraph");
 
         A2A = _system.ActorOf(
             Props.Create(() => new A2AActor(
