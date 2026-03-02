@@ -196,12 +196,8 @@ public sealed class AgentActor : UntypedActor
             case RetrievalComplete retrieval:
                 if (retrieval.Entries.Count > 0)
                 {
-                    // Assemble context-enriched prompt from retrieved knowledge
-                    var contextLines = retrieval.Entries
-                        .Select(e => $"[{e.Category}] {e.Content}")
-                        .ToList();
-                    var contextBlock = string.Join("\n", contextLines);
-                    var enrichedPrompt = $"[Retrieved context for task]\n{contextBlock}\n\n[Task]\n{retrieval.Task.Description}";
+                    var enrichedPrompt = PromptBuilder.BuildEnrichedPrompt(
+                        retrieval.Task.Description!, retrieval.Entries);
                     _rpcActor?.Tell(new SendPrompt(_agentId, enrichedPrompt));
                     _logger.LogInformation("Agent {AgentId} retrieved {Count} knowledge entries for task {TaskId}",
                         _agentId, retrieval.Entries.Count, retrieval.Task.TaskId);
