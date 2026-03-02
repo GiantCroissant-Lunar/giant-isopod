@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
-from memory_sidecar.chunking import chunk_file
+from memory_sidecar.chunking import CHUNKER_VERSION, chunk_file
 from memory_sidecar.config import CODE_EXTENSIONS, DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, EXCLUDED_PATTERNS
 from memory_sidecar.embed import embed_texts
-from memory_sidecar.storage import connect, delete_stale_chunks, init_codebase_schema, upsert_code_chunk
+from memory_sidecar.storage import (
+    connect,
+    delete_stale_chunks,
+    get_metadata,
+    init_codebase_schema,
+    init_metadata_schema,
+    purge_all_code_chunks,
+    set_metadata,
+    upsert_code_chunk,
+)
+
+logger = logging.getLogger(__name__)
 
 # Map file extensions to Tree-sitter language names
 _EXT_MAP = {
@@ -66,9 +78,23 @@ def index_codebase(
         raise FileNotFoundError(f"Source path not found: {source_root}")
 
     conn = connect(Path(db_path))
+    init_metadata_schema(conn)
     init_codebase_schema(conn)
 
-    stats = {"files_processed": 0, "chunks_indexed": 0, "chunks_deleted": 0}
+    stats = {"files_processed": 0, "chunks_indexed": 0, "chunks_deleted": 0, "chunks_purged": 0}
+
+    # Check chunker version — purge all chunks on mismatch to avoid stale vec0 entries
+    stored_version = get_metadata(conn, "chunker_version")
+    if stored_version != CHUNKER_VERSION:
+        purged = purge_all_code_chunks(conn)
+        if purged:
+            logger.info(
+                "Chunker version changed (%s -> %s), purged %d stale chunks", stored_version, CHUNKER_VERSION, purged
+            )
+            stats["chunks_purged"] = purged
+        set_metadata(conn, "chunker_version", CHUNKER_VERSION)
+        conn.commit()
+
     files = _walk_source_files(source_root)
 
     pending: list[tuple[str, str, str | None, str]] = []  # (filename, location, lang, code)

@@ -11,11 +11,15 @@ import memory_sidecar.storage as storage_mod
 from memory_sidecar.storage import (
     _serialize_vec,
     delete_stale_chunks,
+    get_metadata,
     init_codebase_schema,
     init_knowledge_schema,
+    init_metadata_schema,
     insert_knowledge,
+    purge_all_code_chunks,
     search_code,
     search_knowledge,
+    set_metadata,
     upsert_code_chunk,
 )
 
@@ -54,9 +58,7 @@ class TestInitCodebaseSchema:
         init_codebase_schema(conn)
 
         # Verify table exists
-        tables = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='code_chunks'"
-        ).fetchall()
+        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='code_chunks'").fetchall()
         assert len(tables) == 1
 
     def test_creates_filename_index(self):
@@ -94,9 +96,7 @@ class TestInitKnowledgeSchema:
         conn = sqlite3.connect(":memory:")
         init_knowledge_schema(conn)
 
-        tables = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge'"
-        ).fetchall()
+        tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge'").fetchall()
         assert len(tables) == 1
 
     def test_creates_category_index(self):
@@ -233,3 +233,69 @@ class TestVecUnavailableGuards:
             assert deleted == 1
         finally:
             storage_mod._has_vec = saved
+
+
+class TestMetadata:
+    """Tests for the metadata key-value table."""
+
+    def test_get_missing_key_returns_none(self):
+        conn = sqlite3.connect(":memory:")
+        init_metadata_schema(conn)
+        assert get_metadata(conn, "nonexistent") is None
+
+    def test_set_and_get(self):
+        conn = sqlite3.connect(":memory:")
+        init_metadata_schema(conn)
+        set_metadata(conn, "chunker_version", "v1")
+        assert get_metadata(conn, "chunker_version") == "v1"
+
+    def test_upsert_overwrites(self):
+        conn = sqlite3.connect(":memory:")
+        init_metadata_schema(conn)
+        set_metadata(conn, "chunker_version", "v1")
+        set_metadata(conn, "chunker_version", "v2")
+        assert get_metadata(conn, "chunker_version") == "v2"
+
+    def test_schema_idempotent(self):
+        conn = sqlite3.connect(":memory:")
+        init_metadata_schema(conn)
+        init_metadata_schema(conn)  # should not raise
+
+
+class TestPurgeAllCodeChunks:
+    """Tests for the purge_all_code_chunks function."""
+
+    def test_purges_all_rows(self):
+        conn = sqlite3.connect(":memory:")
+        init_codebase_schema(conn)
+        for loc in ["0:0", "1:100", "2:200"]:
+            conn.execute(
+                "INSERT INTO code_chunks (filename, location, language, code, updated_at) "
+                "VALUES (?, ?, 'python', 'code', '2024-01-01')",
+                ("test.py", loc),
+            )
+        conn.commit()
+
+        purged = purge_all_code_chunks(conn)
+        assert purged == 3
+        remaining = conn.execute("SELECT COUNT(*) FROM code_chunks").fetchone()[0]
+        assert remaining == 0
+
+    def test_empty_table_returns_zero(self):
+        conn = sqlite3.connect(":memory:")
+        init_codebase_schema(conn)
+        assert purge_all_code_chunks(conn) == 0
+
+    def test_purges_multiple_files(self):
+        conn = sqlite3.connect(":memory:")
+        init_codebase_schema(conn)
+        for fn in ["a.py", "b.py"]:
+            conn.execute(
+                "INSERT INTO code_chunks (filename, location, language, code, updated_at) "
+                "VALUES (?, '0:0', 'python', 'code', '2024-01-01')",
+                (fn,),
+            )
+        conn.commit()
+
+        purged = purge_all_code_chunks(conn)
+        assert purged == 2
