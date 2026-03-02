@@ -99,6 +99,7 @@ public partial class HudController : Control
         // Wire center tabs if they behave like buttons
         WireCenterTab(hudRoot, "MiddleRow/Centerarea/Centerheader/GenUITabBtn", true);
         WireCenterTab(hudRoot, "MiddleRow/Centerarea/Centerheader/TaskGraphTabBtn", false);
+        SwitchCenterTab(_showingGenUI);
 
         // Console starts hidden
         var consoleInstance = _sceneLoader.GetInstance(ConsoleScene);
