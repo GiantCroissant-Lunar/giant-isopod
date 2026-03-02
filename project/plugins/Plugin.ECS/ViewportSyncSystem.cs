@@ -28,34 +28,42 @@ public class ViewportSyncSystem : ISystem
         _agentIndexMap[agentId] = entityIndex;
     }
 
+    /// <summary>
+    /// Unregisters an agent when it is removed. Idempotent - no exception if agent not found.
+    /// </summary>
+    public void UnregisterAgent(string agentId)
+    {
+        _agentIndexMap.Remove(agentId);
+    }
+
     public void Update(EntityStore store)
     {
         if (_stateQueue.IsEmpty) return;
 
-        var query = store.Query<ActivityState, AgentLink>();
-
+        // Coalesce the latest change per agent index to avoid O(changes × entities)
+        var pending = new Dictionary<int, AgentActivityState>();
         while (_stateQueue.TryDequeue(out var change))
         {
-            if (!_agentIndexMap.TryGetValue(change.AgentId, out var index))
-                continue;
-
-            // Find and update the matching entity's ActivityState
-            bool found = false;
-            foreach (var (states, links, _) in query.Chunks)
+            if (_agentIndexMap.TryGetValue(change.AgentId, out var index))
             {
-                if (found) break;
-                for (int i = 0; i < states.Length; i++)
+                pending[index] = change.State; // overwrite to keep latest
+            }
+        }
+
+        if (pending.Count == 0) return;
+
+        var query = store.Query<ActivityState, AgentLink>();
+
+        foreach (var (states, links, _) in query.Chunks)
+        {
+            for (int i = 0; i < states.Length; i++)
+            {
+                ref var link = ref links[i];
+                if (pending.TryGetValue(link.AgentIndex, out var stateChange))
                 {
                     ref var state = ref states[i];
-                    ref var link = ref links[i];
-
-                    if (link.AgentIndex == index)
-                    {
-                        state.Current = MapState(change.State);
-                        state.StateTime = 0f;
-                        found = true;
-                        break;
-                    }
+                    state.Current = MapState(stateChange);
+                    state.StateTime = 0f;
                 }
             }
         }

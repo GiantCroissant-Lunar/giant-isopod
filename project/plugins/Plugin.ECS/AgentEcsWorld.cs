@@ -19,6 +19,9 @@ public sealed class AgentEcsWorld
     // Agent ID → Entity lookup
     private readonly Dictionary<string, Entity> _agentEntities = new();
 
+    // Stable unique index counter for AgentLink.AgentIndex
+    private int _nextAgentIndex = 0;
+
     public AgentEcsWorld()
     {
         _store = new EntityStore();
@@ -35,10 +38,11 @@ public sealed class AgentEcsWorld
         _animation.DeltaTime = delta;
         _wander.DeltaTime = delta;
 
+        // Process viewport sync first so simulation systems see up-to-date ActivityState
+        _viewportSync.Update(_store);
         _movement.Update(_store);
         _wander.Update(_store);
         _animation.Update(_store);
-        _viewportSync.Update(_store);
     }
 
     public Entity? SpawnAgent(string agentId, AgentVisualInfo info)
@@ -48,7 +52,7 @@ public sealed class AgentEcsWorld
         var paletteIndex = (int)((uint)agentId.GetHashCode() % 6);
         var rng = new Random(agentId.GetHashCode());
 
-        var agentIndex = _agentEntities.Count;
+        var agentIndex = _nextAgentIndex++;
 
         var entity = _store.CreateEntity();
         entity.AddComponent(new AgentIdentity { AgentId = agentId, DisplayName = info.DisplayName });
@@ -68,6 +72,7 @@ public sealed class AgentEcsWorld
         if (!_agentEntities.TryGetValue(agentId, out var entity)) return false;
         entity.DeleteEntity();
         _agentEntities.Remove(agentId);
+        _viewportSync.UnregisterAgent(agentId);
         return true;
     }
 
