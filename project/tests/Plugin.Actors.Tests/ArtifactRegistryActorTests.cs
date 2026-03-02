@@ -142,6 +142,14 @@ public class ArtifactRegistryActorTests : TestKit
     }
 
     [Fact]
+    public void UpdateValidation_UnknownArtifact_ReturnsFailure()
+    {
+        _registry.Tell(new UpdateValidation("missing-artifact", new ValidatorResult("compile", true)), TestActor);
+        var failure = ExpectMsg<Status.Failure>();
+        Assert.IsType<KeyNotFoundException>(failure.Cause);
+    }
+
+    [Fact]
     public void BlessArtifact_PublishesToEventStream()
     {
         _registry.Tell(new RegisterArtifact(MakeArtifact()), TestActor);
@@ -158,6 +166,31 @@ public class ArtifactRegistryActorTests : TestKit
         // EventStream publication
         var pub = ExpectMsg<ArtifactBlessed>();
         Assert.Equal("art-001", pub.ArtifactId);
+    }
+
+    [Fact]
+    public void BlessArtifact_UnknownArtifact_ReturnsFailure()
+    {
+        _registry.Tell(new BlessArtifact("missing-artifact"), TestActor);
+        var failure = ExpectMsg<Status.Failure>();
+        Assert.IsType<KeyNotFoundException>(failure.Cause);
+    }
+
+    [Fact]
+    public void BlessArtifact_RepeatedBless_DoesNotRepublishToEventStream()
+    {
+        _registry.Tell(new RegisterArtifact(MakeArtifact()), TestActor);
+        ExpectMsg<ArtifactRegistered>();
+
+        Sys.EventStream.Subscribe(TestActor, typeof(ArtifactBlessed));
+
+        _registry.Tell(new BlessArtifact("art-001"), TestActor);
+        ExpectMsg<ArtifactBlessed>();
+        ExpectMsg<ArtifactBlessed>();
+
+        _registry.Tell(new BlessArtifact("art-001"), TestActor);
+        ExpectMsg<ArtifactBlessed>();
+        ExpectNoMsg();
     }
 
     [Fact]
