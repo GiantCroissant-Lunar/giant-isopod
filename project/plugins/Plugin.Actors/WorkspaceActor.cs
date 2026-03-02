@@ -22,6 +22,8 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
     private bool _merging;
 
     private static readonly Regex SafeTaskIdRegex = new(@"^[A-Za-z0-9._-]+$", RegexOptions.Compiled);
+    // BaseRef must not start with '-' to prevent git option injection
+    private static readonly Regex SafeBaseRefRegex = new(@"^[A-Za-z0-9._/][A-Za-z0-9._/\-]*$", RegexOptions.Compiled);
     private static readonly TimeSpan GitCommandTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan StaleThreshold = TimeSpan.FromHours(1);
@@ -62,7 +64,10 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
 
             case ReleaseResult result:
                 if (result.Success)
+                {
+                    _workspaces.Remove(result.TaskId);
                     result.Requester.Tell(new WorkspaceReleased(result.TaskId));
+                }
                 else
                     _logger.LogWarning("Workspace release failed for task {TaskId}: {Error}", result.TaskId, result.Error);
                 break;
@@ -105,6 +110,12 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(msg.BaseRef) || !SafeBaseRefRegex.IsMatch(msg.BaseRef))
+        {
+            sender.Tell(new AllocationFailed(msg.TaskId, "Invalid base ref"));
+            return;
+        }
+
         var branchName = $"swarm/{msg.TaskId}";
 
         RunGitAsync("worktree", "add", worktreePath, "-b", branchName, msg.BaseRef)
@@ -140,7 +151,7 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
     {
         var sender = Sender;
 
-        if (!_workspaces.Remove(msg.TaskId, out var ws))
+        if (!_workspaces.TryGetValue(msg.TaskId, out var ws))
         {
             sender.Tell(new WorkspaceReleased(msg.TaskId));
             return;
@@ -255,7 +266,7 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
             }
 
             _logger.LogInformation("Task {TaskId} merged successfully (sha: {Sha})", result.TaskId, result.Sha);
-            result.Requester.Tell(new MergeSucceeded(result.TaskId, result.Sha!));
+            result.Requester.Tell(new MergeSucceeded(result.TaskId, result.Sha ?? string.Empty));
         }
         else
         {
@@ -288,7 +299,10 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
     private async Task<(bool Success, string? Error)> ReleaseWorktreeAsync(Workspace ws)
     {
         var remove = await RunGitAsync("worktree", "remove", "--force", ws.WorktreePath);
-        var deleteBranch = await RunGitAsync("branch", "-D", ws.BranchName);
+        // Try safe delete first; fall back to force-delete only if needed (e.g., conflict release)
+        var deleteBranch = await RunGitAsync("branch", "-d", ws.BranchName);
+        if (deleteBranch.ExitCode != 0)
+            deleteBranch = await RunGitAsync("branch", "-D", ws.BranchName);
         var prune = await RunGitAsync("worktree", "prune");
         var ok = remove.ExitCode == 0 && deleteBranch.ExitCode == 0 && prune.ExitCode == 0;
         var err = ok ? null : $"{remove.Stderr} {deleteBranch.Stderr} {prune.Stderr}".Trim();
