@@ -37,6 +37,9 @@ CODE_EXTENSIONS = frozenset(
     }
 )
 
+# ── Document file patterns (for Docling conversion) ──
+DOC_EXTENSIONS = frozenset({".pdf", ".docx", ".pptx", ".xlsx", ".html"})
+
 EXCLUDED_PATTERNS = frozenset(
     {
         ".*",
