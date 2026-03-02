@@ -1,4 +1,5 @@
 using GiantIsopod.Contracts.Protocol.Runtime;
+using Xunit;
 
 namespace GiantIsopod.Plugin.Process.Tests;
 
