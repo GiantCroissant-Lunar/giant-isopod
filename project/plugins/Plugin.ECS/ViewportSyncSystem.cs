@@ -13,6 +13,7 @@ public class ViewportSyncSystem : ISystem
 {
     private readonly ConcurrentQueue<AgentStateChanged> _stateQueue = new();
     private readonly Dictionary<string, int> _agentIndexMap = new();
+    private readonly Dictionary<int, AgentActivityState> _pending = new();
 
     /// <summary>
     /// Called by the ViewportActor to enqueue state changes from the actor system.
@@ -41,16 +42,16 @@ public class ViewportSyncSystem : ISystem
         if (_stateQueue.IsEmpty) return;
 
         // Coalesce the latest change per agent index to avoid O(changes × entities)
-        var pending = new Dictionary<int, AgentActivityState>();
+        _pending.Clear();
         while (_stateQueue.TryDequeue(out var change))
         {
             if (_agentIndexMap.TryGetValue(change.AgentId, out var index))
             {
-                pending[index] = change.State; // overwrite to keep latest
+                _pending[index] = change.State; // overwrite to keep latest
             }
         }
 
-        if (pending.Count == 0) return;
+        if (_pending.Count == 0) return;
 
         var query = store.Query<ActivityState, AgentLink>();
 
@@ -59,7 +60,7 @@ public class ViewportSyncSystem : ISystem
             for (int i = 0; i < states.Length; i++)
             {
                 ref var link = ref links[i];
-                if (pending.TryGetValue(link.AgentIndex, out var stateChange))
+                if (_pending.TryGetValue(link.AgentIndex, out var stateChange))
                 {
                     ref var state = ref states[i];
                     state.Current = MapState(stateChange);
