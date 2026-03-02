@@ -69,7 +69,24 @@ public sealed class ValidatorActor : UntypedActor
 
         if (applicable.Count == 0)
         {
+            // If the caller explicitly requested validators by name but none matched,
+            // report each missing validator as a failure rather than silently auto-passing.
+            if (msg.RequiredValidators is { Count: > 0 })
+            {
+                var failures = msg.RequiredValidators
+                    .Select(name => new ValidatorResult(name, false, "Required validator not registered"))
+                    .ToArray();
+                sender.Tell(new ValidationComplete(msg.ArtifactId, failures, msg.TaskId));
+                return;
+            }
+
             sender.Tell(new ValidationComplete(msg.ArtifactId, Array.Empty<ValidatorResult>(), msg.TaskId));
+            return;
+        }
+
+        if (_pending.ContainsKey(msg.ArtifactId))
+        {
+            _logger.LogWarning("Validation already in-flight for artifact {ArtifactId}, ignoring duplicate", msg.ArtifactId);
             return;
         }
 
@@ -101,6 +118,12 @@ public sealed class ValidatorActor : UntypedActor
         RunCommandAsync(spec.Command, artifact.Uri)
             .ContinueWith(t =>
             {
+                if (t.IsCanceled)
+                {
+                    return (object)new ScriptResult(artifactId, spec.Name, Passed: false,
+                        Details: "Script timed out or was cancelled");
+                }
+
                 if (t.IsFaulted)
                 {
                     return (object)new ScriptResult(artifactId, spec.Name, Passed: false,
