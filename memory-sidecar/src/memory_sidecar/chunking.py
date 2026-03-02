@@ -90,8 +90,16 @@ def _get_parser(language: str):
         return None
 
 
+def _validate_chunk_params(chunk_size: int, chunk_overlap: int) -> None:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be > 0")
+    if chunk_overlap < 0:
+        raise ValueError("chunk_overlap must be >= 0")
+
+
 def split_simple(content: str, chunk_size: int, chunk_overlap: int) -> list[dict]:
     """Simple recursive text splitter — fallback for languages without tree-sitter support."""
+    _validate_chunk_params(chunk_size, chunk_overlap)
     if len(content) <= chunk_size:
         return [{"text": content, "location": "0:0"}]
     chunks: list[dict] = []
@@ -122,8 +130,11 @@ def _collect_top_level_nodes(root_node, language: str) -> list:
     for child in root_node.children:
         if child.type in def_types:
             nodes.append(child)
-        elif child.type == "comment" or child.type == "expression_statement":
+        elif child.type in ("comment", "expression_statement"):
             # Include module-level comments and expressions (e.g., docstrings)
+            nodes.append(child)
+        elif child.is_named:
+            # Preserve other semantic top-level constructs (e.g., const, macro, global vars)
             nodes.append(child)
     return nodes
 
@@ -191,6 +202,7 @@ def chunk_file(content: str, language: str | None, chunk_size: int, chunk_overla
     Returns:
         List of chunk dicts with 'text' and 'location' keys.
     """
+    _validate_chunk_params(chunk_size, chunk_overlap)
     if language:
         result = split_ast(content, language, chunk_size, chunk_overlap)
         if result is not None:

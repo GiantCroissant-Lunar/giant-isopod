@@ -122,3 +122,11 @@ class TestWalkSourceFiles:
         files = _walk_source_files(tmp_path)
         names = [f.name for f in files]
         assert names == ["a.py", "b.py", "c.py"]
+
+    def test_excludes_hidden_files(self, tmp_path):
+        (tmp_path / ".secret.py").write_text("secret = 'key'")
+        (tmp_path / "visible.py").write_text("x = 1")
+
+        files = _walk_source_files(tmp_path)
+        names = {f.name for f in files}
+        assert names == {"visible.py"}

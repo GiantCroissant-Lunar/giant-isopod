@@ -4,7 +4,35 @@ from __future__ import annotations
 
 import pytest
 
-from memory_sidecar.chunking import chunk_file, split_ast, split_simple
+from memory_sidecar.chunking import _validate_chunk_params, chunk_file, split_ast, split_simple
+
+
+class TestValidateChunkParams:
+    """Tests for chunk parameter validation."""
+
+    def test_zero_chunk_size_raises(self):
+        with pytest.raises(ValueError, match="chunk_size must be > 0"):
+            _validate_chunk_params(0, 0)
+
+    def test_negative_chunk_size_raises(self):
+        with pytest.raises(ValueError, match="chunk_size must be > 0"):
+            _validate_chunk_params(-1, 0)
+
+    def test_negative_overlap_raises(self):
+        with pytest.raises(ValueError, match="chunk_overlap must be >= 0"):
+            _validate_chunk_params(100, -1)
+
+    def test_valid_params_pass(self):
+        _validate_chunk_params(100, 0)
+        _validate_chunk_params(100, 50)
+
+    def test_split_simple_rejects_bad_params(self):
+        with pytest.raises(ValueError):
+            split_simple("hello", chunk_size=0, chunk_overlap=0)
+
+    def test_chunk_file_rejects_bad_params(self):
+        with pytest.raises(ValueError):
+            chunk_file("hello", None, chunk_size=-1, chunk_overlap=0)
 
 
 class TestSplitSimple:

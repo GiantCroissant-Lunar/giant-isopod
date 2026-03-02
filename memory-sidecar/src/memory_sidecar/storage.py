@@ -145,8 +145,6 @@ def set_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
 def purge_all_code_chunks(conn: sqlite3.Connection) -> int:
     """Delete all code chunks and their vec0 embeddings. Returns count deleted."""
     count = conn.execute("SELECT COUNT(*) FROM code_chunks").fetchone()[0]
-    if count == 0:
-        return 0
     if _has_vec:
         conn.execute("DELETE FROM code_chunks_vec")
     conn.execute("DELETE FROM code_chunks")

@@ -57,8 +57,9 @@ def _walk_source_files(source_root: Path) -> list[Path]:
         # Prune excluded dirs in-place to prevent descent
         dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDED_PATTERNS and not d.startswith("."))
         for fname in sorted(filenames):
-            if Path(fname).suffix.lower() in CODE_EXTENSIONS:
-                result.append(Path(dirpath) / fname)
+            file_path = Path(dirpath) / fname
+            if _should_include(file_path, source_root):
+                result.append(file_path)
     return result
 
 
