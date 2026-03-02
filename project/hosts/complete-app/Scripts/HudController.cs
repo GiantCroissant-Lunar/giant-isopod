@@ -27,7 +27,13 @@ public partial class HudController : Control
     private OptionButton? _runtimeDropdown;
     private Button? _createButton;
     private List<string> _providerIds = new();
+
+    // Center Area State
+    private Control? _genUITabBtn;
+    private Control? _taskGraphTabBtn;
     private Control? _genUIHost;
+    public Control? TaskGraphSlot { get; private set; }
+    private bool _showingGenUI = true;
 
     // Console state
     private PanelContainer? _consolePanel;
@@ -84,7 +90,15 @@ public partial class HudController : Control
         _terminalContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "VBox/ConsoleBody/TerminalContainer");
         _markdownContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "VBox/ConsoleBody/RenderedContainer");
 
-        _genUIHost = hudRoot.GetNodeOrNull<Control>("MiddleRow/CenterArea/GenUIHost");
+        // Center Area setup
+        _genUITabBtn = hudRoot.GetNodeOrNull<Control>("MiddleRow/CenterArea/CenterHeader/GenUITabBtn");
+        _taskGraphTabBtn = hudRoot.GetNodeOrNull<Control>("MiddleRow/CenterArea/CenterHeader/TaskGraphTabBtn");
+        _genUIHost = hudRoot.GetNodeOrNull<Control>("MiddleRow/CenterArea/CenterBody/GenUIHost");
+        TaskGraphSlot = hudRoot.GetNodeOrNull<Control>("MiddleRow/CenterArea/CenterBody/TaskGraphSlot");
+
+        // Wire center tabs if they behave like buttons
+        WireCenterTab(hudRoot, "MiddleRow/CenterArea/CenterHeader/GenUITabBtn", true);
+        WireCenterTab(hudRoot, "MiddleRow/CenterArea/CenterHeader/TaskGraphTabBtn", false);
 
         // Console starts hidden
         var consoleInstance = _sceneLoader.GetInstance(ConsoleScene);
@@ -134,6 +148,57 @@ public partial class HudController : Control
         // Re-grab references from reloaded scenes
         LoadScenes();
         WireEvents();
+    }
+
+    private void WireCenterTab(Control root, string path, bool isGenUi)
+    {
+        var node = root.GetNodeOrNull<Control>(path);
+        // If it was generated as a Label (since it was TEXT in figma), we can wrap it in GUI input.
+        if (node != null)
+        {
+            node.MouseFilter = MouseFilterEnum.Stop;
+            if (!node.IsConnected("gui_input", Callable.From<InputEvent>(e => OnCenterTabInput(e, isGenUi))))
+            {
+                node.Connect("gui_input", Callable.From<InputEvent>(e => OnCenterTabInput(e, isGenUi)));
+            }
+        }
+    }
+
+    private void OnCenterTabInput(InputEvent @event, bool isGenUi)
+    {
+        if (@event is InputEventMouseButton mouseObj && mouseObj.Pressed && mouseObj.ButtonIndex == MouseButton.Left)
+        {
+            SwitchCenterTab(isGenUi);
+        }
+    }
+
+    private void SwitchCenterTab(bool showGenUI)
+    {
+        _showingGenUI = showGenUI;
+        if (_genUIHost != null) _genUIHost.Visible = showGenUI;
+        if (TaskGraphSlot != null) TaskGraphSlot.Visible = !showGenUI;
+
+        UpdateCenterTabStyles();
+    }
+
+    private void UpdateCenterTabStyles()
+    {
+        if (_genUITabBtn is Label genUiLbl)
+        {
+            genUiLbl.RemoveThemeColorOverride("font_color");
+            genUiLbl.AddThemeColorOverride("font_color", _showingGenUI
+                ? new Color(0.7f, 0.7f, 0.75f)
+                : new Color(0.5f, 0.5f, 0.55f));
+            genUiLbl.RemoveThemeFontOverride("font"); // Optionally tweak weight if available
+        }
+
+        if (_taskGraphTabBtn is Label graphLbl)
+        {
+            graphLbl.RemoveThemeColorOverride("font_color");
+            graphLbl.AddThemeColorOverride("font_color", !_showingGenUI
+                ? new Color(0.7f, 0.7f, 0.75f)
+                : new Color(0.5f, 0.5f, 0.55f));
+        }
     }
 
     public void ApplyEvent(ViewportEvent evt)
