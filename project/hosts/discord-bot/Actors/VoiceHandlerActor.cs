@@ -6,6 +6,7 @@ using GiantIsopod.DiscordBot.Models;
 using GiantIsopod.DiscordBot.Services;
 using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
+using static Akka.Actor.PipeToSupport;
 
 namespace GiantIsopod.DiscordBot.Actors;
 
@@ -64,87 +65,90 @@ public class VoiceHandlerActor : ReceiveActor
         base.PostStop();
     }
 
-    private async void OnStartVoiceRecording(StartVoiceRecording msg)
+    private void OnStartVoiceRecording(StartVoiceRecording msg)
     {
-        try
+        if (_connections.ContainsKey(msg.ChannelId))
         {
-            if (_connections.ContainsKey(msg.ChannelId))
-            {
-                _logger.LogWarning("Already recording in channel {ChannelId}", msg.ChannelId);
-                return;
-            }
-
-            _logger.LogInformation(
-                "Joining voice channel {ChannelId} in guild {GuildId}",
-                msg.ChannelId, _guildId);
-
-            var audioClient = await _discordService.JoinVoiceChannelAsync(_guildId, msg.ChannelId);
-            if (audioClient == null)
-            {
-                _logger.LogError("Failed to join voice channel {ChannelId}", msg.ChannelId);
-                return;
-            }
-
-            var connectionState = new VoiceConnectionState
-            {
-                ChannelId = msg.ChannelId,
-                AudioClient = audioClient,
-                StartedAt = DateTimeOffset.UtcNow,
-                RecordingUserId = msg.UserId
-            };
-
-            _connections[msg.ChannelId] = connectionState;
-
-            // Start recording from the audio stream
-            _ = Task.Run(async () => await RecordAudioAsync(msg.ChannelId, audioClient, msg.UserId));
-
-            // Set max duration timeout
-            var maxDuration = msg.MaxDurationSeconds ?? _voiceConfig.MaxRecordingDurationSeconds;
-            Context.System.Scheduler.ScheduleTellOnce(
-                TimeSpan.FromSeconds(maxDuration),
-                Self,
-                new StopVoiceRecording { GuildId = _guildId, ChannelId = msg.ChannelId },
-                Self);
-
-            _logger.LogInformation(
-                "Started recording in channel {ChannelId} for user {UserId}",
-                msg.ChannelId, msg.UserId);
+            _logger.LogWarning("Already recording in channel {ChannelId}", msg.ChannelId);
+            return;
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error starting voice recording in channel {ChannelId}", msg.ChannelId);
-        }
+
+        _logger.LogInformation(
+            "Joining voice channel {ChannelId} in guild {GuildId}",
+            msg.ChannelId, _guildId);
+
+        _discordService.JoinVoiceChannelAsync(_guildId, msg.ChannelId)
+            .PipeTo(Self, success: audioClient =>
+            {
+                if (audioClient == null)
+                {
+                    _logger.LogError("Failed to join voice channel {ChannelId}", msg.ChannelId);
+                    return new VoiceConnectionFailed { ChannelId = msg.ChannelId, UserId = msg.UserId };
+                }
+
+                var connectionState = new VoiceConnectionState
+                {
+                    ChannelId = msg.ChannelId,
+                    AudioClient = audioClient,
+                    StartedAt = DateTimeOffset.UtcNow,
+                    RecordingUserId = msg.UserId
+                };
+
+                _connections[msg.ChannelId] = connectionState;
+
+                // Start recording from the audio stream
+                _ = Task.Run(async () => await RecordAudioAsync(msg.ChannelId, audioClient, msg.UserId));
+
+                // Set max duration timeout
+                var maxDuration = msg.MaxDurationSeconds ?? _voiceConfig.MaxRecordingDurationSeconds;
+                Context.System.Scheduler.ScheduleTellOnce(
+                    TimeSpan.FromSeconds(maxDuration),
+                    Self,
+                    new StopVoiceRecording { GuildId = _guildId, ChannelId = msg.ChannelId },
+                    Self);
+
+                _logger.LogInformation(
+                    "Started recording in channel {ChannelId} for user {UserId}",
+                    msg.ChannelId, msg.UserId);
+
+                return new VoiceRecordingStarted { ChannelId = msg.ChannelId, UserId = msg.UserId };
+            }, failure: ex =>
+            {
+                _logger.LogError(ex, "Error starting voice recording in channel {ChannelId}", msg.ChannelId);
+                return new VoiceConnectionFailed { ChannelId = msg.ChannelId, UserId = msg.UserId };
+            });
     }
 
-    private async void OnStopVoiceRecording(StopVoiceRecording msg)
+    private void OnStopVoiceRecording(StopVoiceRecording msg)
     {
-        try
+        if (!_connections.TryGetValue(msg.ChannelId, out var connectionState))
         {
-            if (!_connections.TryGetValue(msg.ChannelId, out var connectionState))
-            {
-                _logger.LogWarning("Not recording in channel {ChannelId}", msg.ChannelId);
-                return;
-            }
-
-            _logger.LogInformation(
-                "Stopping recording in channel {ChannelId}",
-                msg.ChannelId);
-
-            // Stop the audio client
-            await _discordService.LeaveVoiceChannelAsync(_guildId);
-
-            // Process any remaining audio data
-            if (_audioBuffers.TryRemove(connectionState.RecordingUserId, out var buffer))
-            {
-                await FinalizeRecordingAsync(buffer, connectionState);
-            }
-
-            _connections.Remove(msg.ChannelId);
+            _logger.LogWarning("Not recording in channel {ChannelId}", msg.ChannelId);
+            return;
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error stopping voice recording in channel {ChannelId}", msg.ChannelId);
-        }
+
+        _logger.LogInformation(
+            "Stopping recording in channel {ChannelId}",
+            msg.ChannelId);
+
+        // Stop the audio client
+        _discordService.LeaveVoiceChannelAsync(_guildId)
+            .PipeTo(Self, success: () =>
+            {
+                // Process any remaining audio data
+                if (_audioBuffers.TryRemove(connectionState.RecordingUserId, out var buffer))
+                {
+                    _ = FinalizeRecordingAsync(buffer, connectionState);
+                }
+
+                _connections.Remove(msg.ChannelId);
+
+                return new VoiceRecordingStopped { ChannelId = msg.ChannelId };
+            }, failure: ex =>
+            {
+                _logger.LogError(ex, "Error stopping voice recording in channel {ChannelId}", msg.ChannelId);
+                return new VoiceRecordingFailed { ChannelId = msg.ChannelId, Error = ex.Message };
+            });
     }
 
     private async Task RecordAudioAsync(ulong channelId, IAudioClient audioClient, ulong userId)
@@ -334,4 +338,27 @@ internal sealed class UploadAudioComplete
 {
     public required string RecordingId { get; init; }
     public required AudioReference AudioReference { get; init; }
+}
+
+internal sealed class VoiceRecordingStarted
+{
+    public required ulong ChannelId { get; init; }
+    public required ulong UserId { get; init; }
+}
+
+internal sealed class VoiceConnectionFailed
+{
+    public required ulong ChannelId { get; init; }
+    public required ulong UserId { get; init; }
+}
+
+internal sealed class VoiceRecordingStopped
+{
+    public required ulong ChannelId { get; init; }
+}
+
+internal sealed class VoiceRecordingFailed
+{
+    public required ulong ChannelId { get; init; }
+    public required string Error { get; init; }
 }

@@ -217,11 +217,20 @@ public class DiscordBotHostedService : IHostedService, IDisposable
 
         try
         {
-            // Stop the Discord bot actor gracefully
+            // Stop the Discord bot actor gracefully with timeout
             var stopTask = _discordBotActor.Ask<BotStopped>(new StopBot(), TimeSpan.FromSeconds(10));
 
             // Wait for stop or timeout
-            await Task.WhenAny(stopTask, Task.Delay(TimeSpan.FromSeconds(15), cancellationToken));
+            var completedTask = await Task.WhenAny(stopTask, Task.Delay(TimeSpan.FromSeconds(15), cancellationToken));
+
+            if (completedTask == stopTask)
+            {
+                _logger.LogInformation("Discord bot actor stopped gracefully");
+            }
+            else
+            {
+                _logger.LogWarning("Discord bot actor stop timed out, forcing termination");
+            }
 
             // Terminate the actor system
             await _actorSystem.Terminate();

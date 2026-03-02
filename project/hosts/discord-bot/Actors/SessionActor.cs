@@ -3,6 +3,7 @@ using Akka.Event;
 using GiantIsopod.DiscordBot.Configuration;
 using GiantIsopod.DiscordBot.Models;
 using GiantIsopod.DiscordBot.Services;
+using static Akka.Actor.PipeToSupport;
 
 namespace GiantIsopod.DiscordBot.Actors;
 
@@ -70,133 +71,150 @@ public class SessionActor : ReceiveActor, ILogReceive
         base.PostStop();
     }
 
-    private async void OnDiscordPromptReceived(DiscordPromptReceived prompt)
+    private void OnDiscordPromptReceived(DiscordPromptReceived prompt)
     {
-        try
+        _log.Info(
+            "Processing prompt {0} from user {1}",
+            prompt.CorrelationId, prompt.UserId);
+
+        // Create the agent request
+        var request = new AgentRequest
         {
-            _log.Info(
-                "Processing prompt {0} from user {1}",
-                prompt.CorrelationId, prompt.UserId);
-
-            // Create the agent request
-            var request = new AgentRequest
+            CorrelationId = prompt.CorrelationId,
+            PromptText = prompt.TextContent,
+            AudioReference = prompt.AudioReference,
+            UserContext = new UserContext
             {
-                CorrelationId = prompt.CorrelationId,
-                PromptText = prompt.TextContent,
-                AudioReference = prompt.AudioReference,
-                UserContext = new UserContext
+                UserId = _userId,
+                Username = "unknown", // Could be enriched from Discord context
+                ChannelId = _channelId,
+                GuildId = _guildId
+            },
+            Type = prompt.AudioReference != null
+                ? RequestType.Mixed
+                : RequestType.Text
+        };
+
+        // Track the request
+        var requestState = new RequestState
+        {
+            CorrelationId = prompt.CorrelationId,
+            StartedAt = DateTimeOffset.UtcNow,
+            DiscordMessageId = null // Will be set when we send initial message
+        };
+        _activeRequests[prompt.CorrelationId] = requestState;
+
+        // Send acknowledgment to Discord and then send request to main app
+        var ackMessage = prompt.AudioReference != null
+            ? "🎤 Processing your voice message..."
+            : "💭 Thinking...";
+
+        _discordService.SendStreamingMessageAsync(_channelId, ackMessage)
+            .PipeTo(Self, success: discordMessage =>
+            {
+                if (discordMessage != null)
                 {
-                    UserId = _userId,
-                    Username = "unknown", // Could be enriched from Discord context
-                    ChannelId = _channelId,
-                    GuildId = _guildId
-                },
-                Type = prompt.AudioReference != null
-                    ? RequestType.Mixed
-                    : RequestType.Text
-            };
+                    requestState.DiscordMessageId = discordMessage.Id;
+                    _streamingMessages[prompt.CorrelationId] = new StreamingMessageState
+                    {
+                        DiscordMessageId = discordMessage.Id,
+                        CurrentContent = ackMessage,
+                        LastUpdate = DateTimeOffset.UtcNow
+                    };
+                }
 
-            // Track the request
-            var requestState = new RequestState
+                // Send request to main app via Akka.Remote
+                _mainAppGateway?.Tell(request, Self);
+
+                // Set timeout for this request
+                Context.System.Scheduler.ScheduleTellOnce(
+                    TimeSpan.FromMinutes(5),
+                    Self,
+                    new RequestTimeout { CorrelationId = prompt.CorrelationId },
+                    Self);
+
+                return new DiscordMessageSent { CorrelationId = prompt.CorrelationId };
+            }, failure: ex =>
             {
-                CorrelationId = prompt.CorrelationId,
-                StartedAt = DateTimeOffset.UtcNow,
-                DiscordMessageId = null // Will be set when we send initial message
-            };
-            _activeRequests[prompt.CorrelationId] = requestState;
-
-            // Send acknowledgment to Discord
-            var ackMessage = prompt.AudioReference != null
-                ? "🎤 Processing your voice message..."
-                : "💭 Thinking...";
-
-            var discordMessage = await _discordService.SendStreamingMessageAsync(
-                _channelId, ackMessage);
-
-            if (discordMessage != null)
-            {
-                requestState.DiscordMessageId = discordMessage.Id;
-                _streamingMessages[prompt.CorrelationId] = new StreamingMessageState
+                _log.Error(ex, "Error sending initial message for prompt {0}", prompt.CorrelationId);
+                return new DiscordMessageFailed
                 {
-                    DiscordMessageId = discordMessage.Id,
-                    CurrentContent = ackMessage,
-                    LastUpdate = DateTimeOffset.UtcNow
+                    CorrelationId = prompt.CorrelationId,
+                    Error = ex.Message
                 };
-            }
-
-            // Send request to main app via Akka.Remote
-            _mainAppGateway?.Tell(request, Self);
-
-            // Set timeout for this request
-            Context.System.Scheduler.ScheduleTellOnce(
-                TimeSpan.FromMinutes(5),
-                Self,
-                new RequestTimeout { CorrelationId = prompt.CorrelationId },
-                Self);
-        }
-        catch (Exception ex)
-        {
-            _log.Error(
-                ex, "Error processing prompt {0}", prompt.CorrelationId);
-
-            await _discordService.SendMessageAsync(
-                _channelId,
-                "❌ Sorry, I encountered an error processing your request.");
-        }
+            });
     }
 
-    private async void OnAgentResponse(AgentResponse response)
+    private void OnAgentResponse(AgentResponse response)
     {
-        try
+        if (!_activeRequests.TryGetValue(response.CorrelationId, out var requestState))
         {
-            if (!_activeRequests.TryGetValue(response.CorrelationId, out var requestState))
-            {
-                _log.Warning(
-                    "Received response for unknown correlation ID: {0}",
-                    response.CorrelationId);
-                return;
-            }
-
-            switch (response.Type)
-            {
-                case ResponseType.Acknowledgment:
-                    _log.Debug(
-                        "Request {0} acknowledged by main app",
-                        response.CorrelationId);
-                    break;
-
-                case ResponseType.StatusUpdate:
-                    // Update the Discord message with status
-                    if (requestState.DiscordMessageId.HasValue)
-                    {
-                        await _discordService.UpdateMessageAsync(
-                            _channelId,
-                            requestState.DiscordMessageId.Value,
-                            response.Content ?? "⏳ Processing...");
-                    }
-                    break;
-
-                case ResponseType.Content:
-                    await HandleStreamingContent(response, requestState);
-                    break;
-
-                case ResponseType.Error:
-                    await HandleErrorResponse(response, requestState);
-                    break;
-            }
-
-            // If complete, clean up
-            if (response.IsComplete || response.Status == ResponseStatus.Error)
-            {
-                _activeRequests.Remove(response.CorrelationId);
-                _streamingMessages.Remove(response.CorrelationId);
-            }
-        }
-        catch (Exception ex)
-        {
-            _log.Error(
-                ex, "Error handling agent response for {0}",
+            _log.Warning(
+                "Received response for unknown correlation ID: {0}",
                 response.CorrelationId);
+            return;
+        }
+
+        switch (response.Type)
+        {
+            case ResponseType.Acknowledgment:
+                _log.Debug(
+                    "Request {0} acknowledged by main app",
+                    response.CorrelationId);
+                break;
+
+            case ResponseType.StatusUpdate:
+                // Update the Discord message with status
+                if (requestState.DiscordMessageId.HasValue)
+                {
+                    _discordService.UpdateMessageAsync(
+                        _channelId,
+                        requestState.DiscordMessageId.Value,
+                        response.Content ?? "⏳ Processing...")
+                        .PipeTo(Self, failure: ex =>
+                        {
+                            _log.Error(ex, "Error updating status message for {0}", response.CorrelationId);
+                            return new DiscordMessageFailed
+                            {
+                                CorrelationId = response.CorrelationId,
+                                Error = ex.Message
+                            };
+                        });
+                }
+                break;
+
+            case ResponseType.Content:
+                HandleStreamingContent(response, requestState)
+                    .PipeTo(Self, failure: ex =>
+                    {
+                        _log.Error(ex, "Error handling streaming content for {0}", response.CorrelationId);
+                        return new DiscordMessageFailed
+                        {
+                            CorrelationId = response.CorrelationId,
+                            Error = ex.Message
+                        };
+                    });
+                break;
+
+            case ResponseType.Error:
+                HandleErrorResponse(response, requestState)
+                    .PipeTo(Self, failure: ex =>
+                    {
+                        _log.Error(ex, "Error handling error response for {0}", response.CorrelationId);
+                        return new DiscordMessageFailed
+                        {
+                            CorrelationId = response.CorrelationId,
+                            Error = ex.Message
+                        };
+                    });
+                break;
+        }
+
+        // If complete, clean up
+        if (response.IsComplete || response.Status == ResponseStatus.Error)
+        {
+            _activeRequests.Remove(response.CorrelationId);
+            _streamingMessages.Remove(response.CorrelationId);
         }
     }
 
@@ -246,7 +264,7 @@ public class SessionActor : ReceiveActor, ILogReceive
         }
     }
 
-    private async void OnRequestTimeout(RequestTimeout timeout)
+    private void OnRequestTimeout(RequestTimeout timeout)
     {
         if (_activeRequests.Remove(timeout.CorrelationId, out var requestState))
         {
@@ -258,14 +276,32 @@ public class SessionActor : ReceiveActor, ILogReceive
 
             if (requestState.DiscordMessageId.HasValue)
             {
-                await _discordService.UpdateMessageAsync(
+                _discordService.UpdateMessageAsync(
                     _channelId,
                     requestState.DiscordMessageId.Value,
-                    timeoutMessage);
+                    timeoutMessage)
+                    .PipeTo(Self, failure: ex =>
+                    {
+                        _log.Error(ex, "Error sending timeout message for {0}", timeout.CorrelationId);
+                        return new DiscordMessageFailed
+                        {
+                            CorrelationId = timeout.CorrelationId,
+                            Error = ex.Message
+                        };
+                    });
             }
             else
             {
-                await _discordService.SendMessageAsync(_channelId, timeoutMessage);
+                _discordService.SendMessageAsync(_channelId, timeoutMessage)
+                    .PipeTo(Self, failure: ex =>
+                    {
+                        _log.Error(ex, "Error sending timeout message for {0}", timeout.CorrelationId);
+                        return new DiscordMessageFailed
+                        {
+                            CorrelationId = timeout.CorrelationId,
+                            Error = ex.Message
+                        };
+                    });
             }
 
             _streamingMessages.Remove(timeout.CorrelationId);
@@ -312,4 +348,15 @@ internal sealed class SendStreamingChunk
 {
     public required string CorrelationId { get; init; }
     public required string Content { get; init; }
+}
+
+internal sealed class DiscordMessageSent
+{
+    public required string CorrelationId { get; init; }
+}
+
+internal sealed class DiscordMessageFailed
+{
+    public required string CorrelationId { get; init; }
+    public required string Error { get; init; }
 }

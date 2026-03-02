@@ -106,6 +106,11 @@ public class S3StorageService : IStorageService
         TimeSpan expiry,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(recordingId))
+        {
+            throw new ArgumentException("Recording ID cannot be null or empty.", nameof(recordingId));
+        }
+
         var key = GetStorageKey(recordingId, "wav"); // Default, could be stored elsewhere
 
         var request = new GetPreSignedUrlRequest

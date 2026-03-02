@@ -104,7 +104,7 @@ public class DiscordBotService : IDiscordBotService, IDisposable
         }
 
         // Send initial message with typing indicator placeholder
-        return await channel.SendMessageAsync(initialContent);
+        return await channel.SendMessageAsync(initialContent, options: new RequestOptions { CancelToken = cancellationToken });
     }
 
     public async Task UpdateMessageAsync(ulong channelId, ulong messageId, string newContent, CancellationToken cancellationToken = default)
