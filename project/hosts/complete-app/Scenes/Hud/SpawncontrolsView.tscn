@@ -2,12 +2,12 @@
 
 [node name="SpawncontrolsView" type="HBoxContainer"]
 
-[node name="runtimedropdown" type="HBoxContainer" parent="."]
+[node name="runtimedropdown" type="OptionButton" parent="."]
 
 [node name="dropdownlabel" type="Label" parent="runtimedropdown"]
 text = "Select runtime..."
 
-[node name="createbutton" type="HBoxContainer" parent="."]
+[node name="createbutton" type="Button" parent="."]
 
 [node name="createlabel" type="Label" parent="createbutton"]
 text = "+ Spawn"

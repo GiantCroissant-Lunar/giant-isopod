@@ -26,6 +26,8 @@ text = "Task Graph"
 
 [node name="genuihost" type="VBoxContainer" parent="middlerow/centerarea/centerbody"]
 
+[node name="taskgraphslot" type="VBoxContainer" parent="middlerow/centerarea/centerbody"]
+visible = false
 [node name="rightcolumn" type="VBoxContainer" parent="middlerow"]
 
 [node name="agentpanelslot" type="VBoxContainer" parent="middlerow/rightcolumn"]

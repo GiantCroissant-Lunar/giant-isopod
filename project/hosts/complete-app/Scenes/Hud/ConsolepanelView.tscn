@@ -9,17 +9,19 @@ text = "Console"
 
 [node name="tabspacer" type="Control" parent="consoleheader"]
 
-[node name="terminaltabbtn" type="Label" parent="consoleheader"]
+[node name="terminaltabbtn" type="Button" parent="consoleheader"]
 text = "Terminal"
 
-[node name="renderedtabbtn" type="Label" parent="consoleheader"]
+[node name="renderedtabbtn" type="Button" parent="consoleheader"]
 text = "Rendered"
 
 [node name="headerspacer" type="Control" parent="consoleheader"]
 
-[node name="closebtn" type="Label" parent="consoleheader"]
+[node name="closebtn" type="Button" parent="consoleheader"]
 text = "x"
 
 [node name="consolebody" type="VBoxContainer" parent="."]
 
 [node name="terminalcontainer" type="VBoxContainer" parent="consolebody"]
+
+[node name="renderedcontainer" type="Control" parent="consolebody"]

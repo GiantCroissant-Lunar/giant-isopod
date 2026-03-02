@@ -78,17 +78,17 @@ public partial class HudController : Control
         var runtimeCountLabel = _sceneLoader.FindNode<Label>(TopBarScene, "RuntimeCount")!;
         var versionLabel = _sceneLoader.FindNode<Label>(TopBarScene, "VersionLabel");
 
-        _runtimeDropdown = _sceneLoader.FindNode<OptionButton>(SpawnControlsScene, "RuntimeDropdown");
-        _createButton = _sceneLoader.FindNode<Button>(SpawnControlsScene, "CreateButton");
+        _runtimeDropdown = _sceneLoader.FindNode<OptionButton>(SpawnControlsScene, "runtimedropdown");
+        _createButton = _sceneLoader.FindNode<Button>(SpawnControlsScene, "createbutton");
 
         var agentList = _sceneLoader.FindNode<VBoxContainer>(AgentPanelScene, "VBox/ScrollArea/AgentList")!;
 
-        _consoleTitle = _sceneLoader.FindNode<Label>(ConsoleScene, "VBox/ConsoleHeader/ConsoleTitle");
-        _tabTerminalBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/TerminalTabBtn");
-        _tabRenderedBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/RenderedTabBtn");
-        var closeBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/CloseBtn");
-        _terminalContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "VBox/ConsoleBody/TerminalContainer");
-        _markdownContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "VBox/ConsoleBody/RenderedContainer");
+        _consoleTitle = _sceneLoader.FindNode<Label>(ConsoleScene, "consoleheader/consoletitle");
+        _tabTerminalBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "consoleheader/terminaltabbtn");
+        _tabRenderedBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "consoleheader/renderedtabbtn");
+        var closeBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "consoleheader/closebtn");
+        _terminalContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "consolebody/terminalcontainer");
+        _markdownContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "consolebody/renderedcontainer");
 
         // Center Area setup
         _genUITabBtn = hudRoot.GetNodeOrNull<Control>("MiddleRow/Centerarea/Centerheader/GenUITabBtn");
@@ -132,7 +132,7 @@ public partial class HudController : Control
         _tabTerminalBtn?.Connect("pressed", Callable.From(() => SwitchTab(terminal: true)));
         _tabRenderedBtn?.Connect("pressed", Callable.From(() => SwitchTab(terminal: false)));
 
-        var closeBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/CloseBtn");
+        var closeBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "consoleheader/closebtn");
         closeBtn?.Connect("pressed", Callable.From(() =>
         {
             var consoleInstance = _sceneLoader.GetInstance(ConsoleScene);
@@ -151,6 +151,9 @@ public partial class HudController : Control
         WireEvents();
     }
 
+    private Callable? _genUiTabCb;
+    private Callable? _taskGraphTabCb;
+
     private void WireCenterTab(Control root, string path, bool isGenUi)
     {
         var node = root.GetNodeOrNull<Control>(path);
@@ -158,9 +161,16 @@ public partial class HudController : Control
         if (node != null)
         {
             node.MouseFilter = MouseFilterEnum.Stop;
-            if (!node.IsConnected("gui_input", Callable.From<InputEvent>(e => OnCenterTabInput(e, isGenUi))))
+
+            ref var cbField = ref isGenUi ? ref _genUiTabCb : ref _taskGraphTabCb;
+            if (cbField == null)
             {
-                node.Connect("gui_input", Callable.From<InputEvent>(e => OnCenterTabInput(e, isGenUi)));
+                cbField = Callable.From<InputEvent>(e => OnCenterTabInput(e, isGenUi));
+            }
+
+            if (!node.IsConnected("gui_input", cbField.Value))
+            {
+                node.Connect("gui_input", cbField.Value);
             }
         }
     }
@@ -190,7 +200,6 @@ public partial class HudController : Control
             genUiLbl.AddThemeColorOverride("font_color", _showingGenUI
                 ? new Color(0.7f, 0.7f, 0.75f)
                 : new Color(0.5f, 0.5f, 0.55f));
-            genUiLbl.RemoveThemeFontOverride("font"); // Optionally tweak weight if available
         }
 
         if (_taskGraphTabBtn is Label graphLbl)
