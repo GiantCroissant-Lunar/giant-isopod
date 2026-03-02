@@ -74,7 +74,7 @@ Use `reply-to-pull-request-review-comment` followed by `resolve-pull-request-rev
 - The comment is a **compliment** or acknowledgement — thank and resolve
 - The comment is an **FYI** or informational note — acknowledge and resolve
 - The suggestion **conflicts with project architecture** (ECS patterns, plugin contract boundaries, Godot node structure) — explain why and resolve
-- The change is **out of scope** for the current PR — acknowledge, suggest a follow-up issue, and resolve
+- The change is **out of scope** for the current PR — acknowledge, note it for a future PR, and resolve
 
 ## Important Guidelines
 
