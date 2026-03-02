@@ -30,15 +30,20 @@ public class ViewportSyncSystem : ISystem
 
     public void Update(EntityStore store)
     {
+        if (_stateQueue.IsEmpty) return;
+
+        var query = store.Query<ActivityState, AgentLink>();
+
         while (_stateQueue.TryDequeue(out var change))
         {
             if (!_agentIndexMap.TryGetValue(change.AgentId, out var index))
                 continue;
 
             // Find and update the matching entity's ActivityState
-            var query = store.Query<ActivityState, AgentLink>();
+            bool found = false;
             foreach (var (states, links, _) in query.Chunks)
             {
+                if (found) break;
                 for (int i = 0; i < states.Length; i++)
                 {
                     ref var state = ref states[i];
@@ -48,6 +53,8 @@ public class ViewportSyncSystem : ISystem
                     {
                         state.Current = MapState(change.State);
                         state.StateTime = 0f;
+                        found = true;
+                        break;
                     }
                 }
             }

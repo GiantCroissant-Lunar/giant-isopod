@@ -48,16 +48,18 @@ public sealed class AgentEcsWorld
         var paletteIndex = (int)((uint)agentId.GetHashCode() % 6);
         var rng = new Random(agentId.GetHashCode());
 
+        var agentIndex = _agentEntities.Count;
+
         var entity = _store.CreateEntity();
         entity.AddComponent(new AgentIdentity { AgentId = agentId, DisplayName = info.DisplayName });
         entity.AddComponent(new WorldPosition { X = 100 + rng.Next(600), Y = 80 + rng.Next(300) });
         entity.AddComponent(new Movement());
         entity.AddComponent(new ActivityState { Current = Activity.Idle });
         entity.AddComponent(new AgentVisual { PaletteIndex = paletteIndex, Facing = Direction.Down });
-        entity.AddComponent(new AgentLink { AgentIndex = _agentEntities.Count });
+        entity.AddComponent(new AgentLink { AgentIndex = agentIndex });
 
         _agentEntities[agentId] = entity;
-        _viewportSync.RegisterAgent(agentId, _agentEntities.Count - 1);
+        _viewportSync.RegisterAgent(agentId, agentIndex);
         return entity;
     }
 
@@ -107,12 +109,4 @@ public sealed class AgentEcsWorld
     {
         _viewportSync.EnqueueStateChange(change);
     }
-}
-
-/// <summary>
-/// Simple system interface for Friflo ECS systems.
-/// </summary>
-public interface ISystem
-{
-    void Update(EntityStore store);
 }

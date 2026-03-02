@@ -11,6 +11,11 @@ public class WanderSystem : ISystem
     private readonly Random _rng = new();
     private float _timer;
 
+    private const int MinTileX = 4;
+    private const int MaxTileX = 56;
+    private const int MinTileY = 4;
+    private const int MaxTileY = 30;
+
     public float DeltaTime { get; set; }
 
     public void Update(EntityStore store)
@@ -36,8 +41,8 @@ public class WanderSystem : ISystem
 
                 mov.TargetTileX = (int)(pos.X / 16f) + _rng.Next(-4, 5);
                 mov.TargetTileY = (int)(pos.Y / 16f) + _rng.Next(-3, 4);
-                mov.TargetTileX = Math.Clamp(mov.TargetTileX, 4, 56);
-                mov.TargetTileY = Math.Clamp(mov.TargetTileY, 4, 30);
+                mov.TargetTileX = Math.Clamp(mov.TargetTileX, MinTileX, MaxTileX);
+                mov.TargetTileY = Math.Clamp(mov.TargetTileY, MinTileY, MaxTileY);
                 mov.HasTarget = true;
             }
         }

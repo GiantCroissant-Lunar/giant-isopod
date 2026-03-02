@@ -27,6 +27,11 @@ public class AnimationSystem : ISystem
                 ref var mov = ref movements[i];
 
                 state.StateTime += dt;
+                // Normalize StateTime to prevent overflow after extended sessions
+                // Wrap around every 1000 seconds (~16 minutes) which is safely below int.MaxValue
+                const float MaxStateTime = 1000f;
+                if (state.StateTime > MaxStateTime)
+                    state.StateTime %= MaxStateTime;
                 var frameIndex = (int)(state.StateTime * FrameRate);
 
                 // Update facing direction based on movement
