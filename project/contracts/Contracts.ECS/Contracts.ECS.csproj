@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <!-- Friflo ECS for Systems -->
-    <PackageReference Include="Friflo.Engine.ECS" Version="1.4.0" />
+    <PackageReference Include="Friflo.Engine.ECS" Version="3.4.2" />
   </ItemGroup>
 
   <ItemGroup>
