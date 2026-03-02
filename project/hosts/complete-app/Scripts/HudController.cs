@@ -27,7 +27,13 @@ public partial class HudController : Control
     private OptionButton? _runtimeDropdown;
     private Button? _createButton;
     private List<string> _providerIds = new();
+
+    // Center Area State
+    private Control? _genUITabBtn;
+    private Control? _taskGraphTabBtn;
     private Control? _genUIHost;
+    public Control? TaskGraphSlot { get; private set; }
+    private bool _showingGenUI = true;
 
     // Console state
     private PanelContainer? _consolePanel;
@@ -57,10 +63,10 @@ public partial class HudController : Control
         var hudRoot = _sceneLoader.LoadScene(SwarmHudScene, this);
 
         // Load sub-scenes into their slots
-        var topBarSlot = hudRoot.GetNode("TopBarSlot");
-        var spawnSlot = hudRoot.GetNode("MiddleRow/LeftColumn/SpawnControlsSlot");
-        var agentPanelSlot = hudRoot.GetNode("MiddleRow/RightColumn/AgentPanelSlot");
-        var consolePanelSlot = hudRoot.GetNode("ConsolePanelSlot");
+        var topBarSlot = hudRoot.GetNode("topbarslot");
+        var spawnSlot = hudRoot.GetNode("middlerow/leftcolumn/spawncontrolsslot");
+        var agentPanelSlot = hudRoot.GetNode("middlerow/rightcolumn/agentpanelslot");
+        var consolePanelSlot = hudRoot.GetNode("consolepanelslot");
 
         _sceneLoader.LoadScene(TopBarScene, topBarSlot);
         _sceneLoader.LoadScene(SpawnControlsScene, spawnSlot);
@@ -68,23 +74,32 @@ public partial class HudController : Control
         _sceneLoader.LoadScene(ConsoleScene, consolePanelSlot);
 
         // Grab references from loaded scenes
-        var agentCountLabel = _sceneLoader.FindNode<Label>(TopBarScene, "AgentCount")!;
-        var runtimeCountLabel = _sceneLoader.FindNode<Label>(TopBarScene, "RuntimeCount")!;
-        var versionLabel = _sceneLoader.FindNode<Label>(TopBarScene, "VersionLabel");
+        var agentCountLabel = _sceneLoader.FindNode<Label>(TopBarScene, "agentcount")!;
+        var runtimeCountLabel = _sceneLoader.FindNode<Label>(TopBarScene, "runtimecount")!;
+        var versionLabel = _sceneLoader.FindNode<Label>(TopBarScene, "versionlabel");
 
-        _runtimeDropdown = _sceneLoader.FindNode<OptionButton>(SpawnControlsScene, "RuntimeDropdown");
-        _createButton = _sceneLoader.FindNode<Button>(SpawnControlsScene, "CreateButton");
+        _runtimeDropdown = _sceneLoader.FindNode<OptionButton>(SpawnControlsScene, "runtimedropdown");
+        _createButton = _sceneLoader.FindNode<Button>(SpawnControlsScene, "createbutton");
 
-        var agentList = _sceneLoader.FindNode<VBoxContainer>(AgentPanelScene, "VBox/ScrollArea/AgentList")!;
+        var agentList = _sceneLoader.FindNode<VBoxContainer>(AgentPanelScene, "scrollarea/agentlist")!;
 
-        _consoleTitle = _sceneLoader.FindNode<Label>(ConsoleScene, "VBox/ConsoleHeader/ConsoleTitle");
-        _tabTerminalBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/TerminalTabBtn");
-        _tabRenderedBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/RenderedTabBtn");
-        var closeBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/CloseBtn");
-        _terminalContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "VBox/ConsoleBody/TerminalContainer");
-        _markdownContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "VBox/ConsoleBody/RenderedContainer");
+        _consoleTitle = _sceneLoader.FindNode<Label>(ConsoleScene, "consoleheader/consoletitle");
+        _tabTerminalBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "consoleheader/terminaltabbtn");
+        _tabRenderedBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "consoleheader/renderedtabbtn");
+        var closeBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "consoleheader/closebtn");
+        _terminalContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "consolebody/terminalcontainer");
+        _markdownContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "consolebody/renderedcontainer");
 
-        _genUIHost = hudRoot.GetNodeOrNull<Control>("MiddleRow/CenterArea/GenUIHost");
+        // Center Area setup
+        _genUITabBtn = hudRoot.GetNodeOrNull<Control>("middlerow/centerarea/centerheader/genuitabbtn");
+        _taskGraphTabBtn = hudRoot.GetNodeOrNull<Control>("middlerow/centerarea/centerheader/taskgraphtabbtn");
+        _genUIHost = hudRoot.GetNodeOrNull<Control>("middlerow/centerarea/centerbody/genuihost");
+        TaskGraphSlot = hudRoot.GetNodeOrNull<Control>("middlerow/centerarea/centerbody/taskgraphslot");
+
+        // Wire center tabs if they behave like buttons
+        WireCenterTab(hudRoot, "middlerow/centerarea/centerheader/genuitabbtn", true);
+        WireCenterTab(hudRoot, "middlerow/centerarea/centerheader/taskgraphtabbtn", false);
+        SwitchCenterTab(_showingGenUI);
 
         // Console starts hidden
         var consoleInstance = _sceneLoader.GetInstance(ConsoleScene);
@@ -117,7 +132,7 @@ public partial class HudController : Control
         _tabTerminalBtn?.Connect("pressed", Callable.From(() => SwitchTab(terminal: true)));
         _tabRenderedBtn?.Connect("pressed", Callable.From(() => SwitchTab(terminal: false)));
 
-        var closeBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "VBox/ConsoleHeader/CloseBtn");
+        var closeBtn = _sceneLoader.FindNode<Button>(ConsoleScene, "consoleheader/closebtn");
         closeBtn?.Connect("pressed", Callable.From(() =>
         {
             var consoleInstance = _sceneLoader.GetInstance(ConsoleScene);
@@ -134,6 +149,66 @@ public partial class HudController : Control
         // Re-grab references from reloaded scenes
         LoadScenes();
         WireEvents();
+    }
+
+    private Callable? _genUiTabCb;
+    private Callable? _taskGraphTabCb;
+
+    private void WireCenterTab(Control root, string path, bool isGenUi)
+    {
+        var node = root.GetNodeOrNull<Control>(path);
+        // If it was generated as a Label (since it was TEXT in figma), we can wrap it in GUI input.
+        if (node != null)
+        {
+            node.MouseFilter = MouseFilterEnum.Stop;
+
+            ref var cbField = ref isGenUi ? ref _genUiTabCb : ref _taskGraphTabCb;
+            if (cbField == null)
+            {
+                cbField = Callable.From<InputEvent>(e => OnCenterTabInput(e, isGenUi));
+            }
+
+            if (!node.IsConnected("gui_input", cbField.Value))
+            {
+                node.Connect("gui_input", cbField.Value);
+            }
+        }
+    }
+
+    private void OnCenterTabInput(InputEvent @event, bool isGenUi)
+    {
+        if (@event is InputEventMouseButton mouseObj && mouseObj.Pressed && mouseObj.ButtonIndex == MouseButton.Left)
+        {
+            SwitchCenterTab(isGenUi);
+        }
+    }
+
+    private void SwitchCenterTab(bool showGenUI)
+    {
+        _showingGenUI = showGenUI;
+        if (_genUIHost != null) _genUIHost.Visible = showGenUI;
+        if (TaskGraphSlot != null) TaskGraphSlot.Visible = !showGenUI;
+
+        UpdateCenterTabStyles();
+    }
+
+    private void UpdateCenterTabStyles()
+    {
+        if (_genUITabBtn is Label genUiLbl)
+        {
+            genUiLbl.RemoveThemeColorOverride("font_color");
+            genUiLbl.AddThemeColorOverride("font_color", _showingGenUI
+                ? new Color(0.7f, 0.7f, 0.75f)
+                : new Color(0.5f, 0.5f, 0.55f));
+        }
+
+        if (_taskGraphTabBtn is Label graphLbl)
+        {
+            graphLbl.RemoveThemeColorOverride("font_color");
+            graphLbl.AddThemeColorOverride("font_color", !_showingGenUI
+                ? new Color(0.7f, 0.7f, 0.75f)
+                : new Color(0.5f, 0.5f, 0.55f));
+        }
     }
 
     public void ApplyEvent(ViewportEvent evt)

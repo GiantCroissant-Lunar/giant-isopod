@@ -1,22 +1,16 @@
 [gd_scene load_steps=1 format=3]
 
-[node name="AgentListEntryView" type="HBoxContainer"]
-custom_minimum_size = Vector2(0, 28)
-theme_override_constants/separation = 8
+[node name="AgentlistentryView" type="HBoxContainer"]
 
-[node name="StatusDot" type="ColorRect" parent="."]
-custom_minimum_size = Vector2(8, 8)
+[node name="statusdot" type="PanelContainer" parent="."]
 
-[node name="NameLabel" type="Label" parent="."]
+[node name="namelabel" type="Label" parent="."]
 text = "agent-1"
 
-[node name="StateLabel" type="Label" parent="."]
+[node name="statelabel" type="Label" parent="."]
 text = "idle"
 
-[node name="Spacer" type="Control" parent="."]
-size_flags_horizontal = 3
+[node name="spacer" type="Control" parent="."]
 
-[node name="RemoveButton" type="Button" parent="."]
-custom_minimum_size = Vector2(24, 24)
+[node name="removebutton" type="Label" parent="."]
 text = "x"
-flat = true

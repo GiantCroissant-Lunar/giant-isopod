@@ -101,16 +101,24 @@ public partial class Main : Node2D
         {
             AnchorLeft = 0,
             AnchorTop = 0,
-            AnchorRight = 0,
-            AnchorBottom = 0,
-            OffsetLeft = 10,
-            OffsetTop = 80,
-            OffsetRight = 500,
-            OffsetBottom = 400,
+            AnchorRight = 1,
+            AnchorBottom = 1,
+            OffsetLeft = 0,
+            OffsetTop = 0,
+            OffsetRight = 0,
+            OffsetBottom = 0,
             MouseFilter = Control.MouseFilterEnum.Ignore,
         };
-        var hudRoot = GetNode<Control>("HUD/HUDRoot");
-        hudRoot.AddChild(_taskGraphView);
+
+        if (_hud.TaskGraphSlot != null)
+        {
+            _hud.TaskGraphSlot.AddChild(_taskGraphView);
+        }
+        else
+        {
+            var hudRoot = GetNode<Control>("HUD/HUDRoot");
+            hudRoot.AddChild(_taskGraphView);
+        }
 
         // Hot-reload support (debug builds only)
         _hotReload = new HudHotReload(_hud);

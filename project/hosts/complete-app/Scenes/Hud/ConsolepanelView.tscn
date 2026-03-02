@@ -1,47 +1,27 @@
 [gd_scene load_steps=1 format=3]
 
-[node name="ConsolePanelView" type="PanelContainer"]
-custom_minimum_size = Vector2(0, 350)
+[node name="ConsolepanelView" type="VBoxContainer"]
 
-[node name="VBox" type="VBoxContainer" parent="."]
-theme_override_constants/separation = 0
+[node name="consoleheader" type="HBoxContainer" parent="."]
 
-[node name="ConsoleHeader" type="HBoxContainer" parent="VBox"]
-custom_minimum_size = Vector2(0, 30)
-theme_override_constants/separation = 8
-
-[node name="ConsoleTitle" type="Label" parent="VBox/ConsoleHeader"]
+[node name="consoletitle" type="Label" parent="consoleheader"]
 text = "Console"
 
-[node name="TabSpacer" type="Control" parent="VBox/ConsoleHeader"]
-custom_minimum_size = Vector2(16, 0)
+[node name="tabspacer" type="Control" parent="consoleheader"]
 
-[node name="TerminalTabBtn" type="Button" parent="VBox/ConsoleHeader"]
+[node name="terminaltabbtn" type="Button" parent="consoleheader"]
 text = "Terminal"
-flat = true
-toggle_mode = true
-button_pressed = true
 
-[node name="RenderedTabBtn" type="Button" parent="VBox/ConsoleHeader"]
+[node name="renderedtabbtn" type="Button" parent="consoleheader"]
 text = "Rendered"
-flat = true
-toggle_mode = true
 
-[node name="HeaderSpacer" type="Control" parent="VBox/ConsoleHeader"]
-size_flags_horizontal = 3
+[node name="headerspacer" type="Control" parent="consoleheader"]
 
-[node name="CloseBtn" type="Button" parent="VBox/ConsoleHeader"]
+[node name="closebtn" type="Button" parent="consoleheader"]
 text = "x"
-flat = true
 
-[node name="ConsoleBody" type="VBoxContainer" parent="VBox"]
-size_flags_vertical = 3
+[node name="consolebody" type="VBoxContainer" parent="."]
 
-[node name="TerminalContainer" type="VBoxContainer" parent="VBox/ConsoleBody"]
-size_flags_horizontal = 3
-size_flags_vertical = 3
+[node name="terminalcontainer" type="VBoxContainer" parent="consolebody"]
 
-[node name="RenderedContainer" type="VBoxContainer" parent="VBox/ConsoleBody"]
-visible = false
-size_flags_horizontal = 3
-size_flags_vertical = 3
+[node name="renderedcontainer" type="Control" parent="consolebody"]

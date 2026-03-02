@@ -19,14 +19,24 @@
             "primaryAxisAlignItems": "MIN",
             "counterAxisAlignItems": "MIN",
             "itemSpacing": 0,
-            "absoluteBoundingBox": { "x": 0, "y": 0, "width": 1920, "height": 1080 },
+            "absoluteBoundingBox": {
+              "x": 0,
+              "y": 0,
+              "width": 1920,
+              "height": 1080
+            },
             "children": [
               {
                 "id": "6:2",
                 "name": "TopBarSlot [width: fill]",
                 "type": "FRAME",
                 "layoutMode": "HORIZONTAL",
-                "absoluteBoundingBox": { "x": 0, "y": 0, "width": 1920, "height": 32 },
+                "absoluteBoundingBox": {
+                  "x": 0,
+                  "y": 0,
+                  "width": 1920,
+                  "height": 32
+                },
                 "children": []
               },
               {
@@ -37,7 +47,12 @@
                 "primaryAxisAlignItems": "SPACE_BETWEEN",
                 "counterAxisAlignItems": "MIN",
                 "itemSpacing": 0,
-                "absoluteBoundingBox": { "x": 0, "y": 32, "width": 1920, "height": 698 },
+                "absoluteBoundingBox": {
+                  "x": 0,
+                  "y": 32,
+                  "width": 1920,
+                  "height": 698
+                },
                 "children": [
                   {
                     "id": "6:4",
@@ -49,14 +64,24 @@
                     "itemSpacing": 8,
                     "paddingLeft": 12,
                     "paddingTop": 8,
-                    "absoluteBoundingBox": { "x": 0, "y": 32, "width": 300, "height": 698 },
+                    "absoluteBoundingBox": {
+                      "x": 0,
+                      "y": 32,
+                      "width": 300,
+                      "height": 698
+                    },
                     "children": [
                       {
                         "id": "6:5",
                         "name": "SpawnControlsSlot",
                         "type": "FRAME",
                         "layoutMode": "HORIZONTAL",
-                        "absoluteBoundingBox": { "x": 12, "y": 40, "width": 280, "height": 36 },
+                        "absoluteBoundingBox": {
+                          "x": 12,
+                          "y": 40,
+                          "width": 280,
+                          "height": 36
+                        },
                         "children": []
                       }
                     ]
@@ -66,15 +91,133 @@
                     "name": "CenterArea [width: fill] [height: fill]",
                     "type": "FRAME",
                     "layoutMode": "VERTICAL",
-                    "absoluteBoundingBox": { "x": 300, "y": 32, "width": 1380, "height": 698 },
+                    "absoluteBoundingBox": {
+                      "x": 300,
+                      "y": 32,
+                      "width": 1380,
+                      "height": 698
+                    },
                     "children": [
                       {
-                        "id": "6:7",
-                        "name": "GenUIHost [width: fill] [height: fill]",
+                        "id": "6:6_header",
+                        "name": "CenterHeader",
+                        "type": "FRAME",
+                        "layoutMode": "HORIZONTAL",
+                        "primaryAxisAlignItems": "MIN",
+                        "counterAxisAlignItems": "CENTER",
+                        "itemSpacing": 8,
+                        "paddingLeft": 12,
+                        "paddingRight": 12,
+                        "paddingTop": 6,
+                        "paddingBottom": 6,
+                        "absoluteBoundingBox": {
+                          "x": 300,
+                          "y": 32,
+                          "width": 1380,
+                          "height": 30
+                        },
+                        "fills": [
+                          {
+                            "type": "SOLID",
+                            "visible": true,
+                            "color": {
+                              "r": 0.12,
+                              "g": 0.12,
+                              "b": 0.15,
+                              "a": 0.85
+                            }
+                          }
+                        ],
+                        "children": [
+                          {
+                            "id": "6:6_header_genui",
+                            "name": "GenUITabBtn",
+                            "type": "TEXT",
+                            "characters": "GenUI",
+                            "style": {
+                              "fontSize": 11,
+                              "fontWeight": 600,
+                              "fills": [
+                                {
+                                  "type": "SOLID",
+                                  "color": {
+                                    "r": 0.7,
+                                    "g": 0.7,
+                                    "b": 0.75,
+                                    "a": 1.0
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "id": "6:6_header_spacer",
+                            "name": "TabSpacer [width: 16]",
+                            "type": "LINE"
+                          },
+                          {
+                            "id": "6:6_header_graph",
+                            "name": "TaskGraphTabBtn",
+                            "type": "TEXT",
+                            "characters": "Task Graph",
+                            "style": {
+                              "fontSize": 11,
+                              "fontWeight": 400,
+                              "fills": [
+                                {
+                                  "type": "SOLID",
+                                  "color": {
+                                    "r": 0.5,
+                                    "g": 0.5,
+                                    "b": 0.55,
+                                    "a": 1.0
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "id": "6:6_body",
+                        "name": "CenterBody [width: fill] [height: fill]",
                         "type": "FRAME",
                         "layoutMode": "VERTICAL",
-                        "absoluteBoundingBox": { "x": 300, "y": 32, "width": 1380, "height": 698 },
-                        "children": []
+                        "absoluteBoundingBox": {
+                          "x": 300,
+                          "y": 62,
+                          "width": 1380,
+                          "height": 668
+                        },
+                        "children": [
+                          {
+                            "id": "6:7",
+                            "name": "GenUIHost [width: fill] [height: fill]",
+                            "type": "FRAME",
+                            "layoutMode": "VERTICAL",
+                            "absoluteBoundingBox": {
+                              "x": 300,
+                              "y": 62,
+                              "width": 1380,
+                              "height": 668
+                            },
+                            "children": []
+                          },
+                          {
+                            "id": "6:7_graph",
+                            "name": "TaskGraphSlot [width: fill] [height: fill]",
+                            "type": "FRAME",
+                            "visible": false,
+                            "layoutMode": "VERTICAL",
+                            "absoluteBoundingBox": {
+                              "x": 300,
+                              "y": 62,
+                              "width": 1380,
+                              "height": 668
+                            },
+                            "children": []
+                          }
+                        ]
                       }
                     ]
                   },
@@ -83,14 +226,24 @@
                     "name": "RightColumn",
                     "type": "FRAME",
                     "layoutMode": "VERTICAL",
-                    "absoluteBoundingBox": { "x": 1680, "y": 32, "width": 240, "height": 698 },
+                    "absoluteBoundingBox": {
+                      "x": 1680,
+                      "y": 32,
+                      "width": 240,
+                      "height": 698
+                    },
                     "children": [
                       {
                         "id": "6:9",
                         "name": "AgentPanelSlot [height: fill]",
                         "type": "FRAME",
                         "layoutMode": "VERTICAL",
-                        "absoluteBoundingBox": { "x": 1680, "y": 32, "width": 240, "height": 698 },
+                        "absoluteBoundingBox": {
+                          "x": 1680,
+                          "y": 32,
+                          "width": 240,
+                          "height": 698
+                        },
                         "children": []
                       }
                     ]
@@ -102,7 +255,12 @@
                 "name": "ConsolePanelSlot [width: fill]",
                 "type": "FRAME",
                 "layoutMode": "VERTICAL",
-                "absoluteBoundingBox": { "x": 0, "y": 730, "width": 1920, "height": 350 },
+                "absoluteBoundingBox": {
+                  "x": 0,
+                  "y": 730,
+                  "width": 1920,
+                  "height": 350
+                },
                 "children": []
               }
             ]
