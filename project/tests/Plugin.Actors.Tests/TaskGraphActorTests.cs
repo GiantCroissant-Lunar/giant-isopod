@@ -11,6 +11,7 @@ public class TaskGraphActorTests : TestKit
     private readonly IActorRef _dispatchProbe;
     private readonly IActorRef _agentSupervisorProbe;
     private readonly IActorRef _viewportProbe;
+    private readonly IActorRef _workspaceProbe;
     private readonly IActorRef _taskGraph;
 
     public TaskGraphActorTests()
@@ -18,12 +19,14 @@ public class TaskGraphActorTests : TestKit
         _dispatchProbe = CreateTestProbe().Ref;
         _agentSupervisorProbe = CreateTestProbe().Ref;
         _viewportProbe = CreateTestProbe().Ref;
+        _workspaceProbe = CreateTestProbe().Ref;
 
         _taskGraph = Sys.ActorOf(Props.Create(() =>
             new TaskGraphActor(
                 _dispatchProbe,
                 _agentSupervisorProbe,
                 _viewportProbe,
+                _workspaceProbe,
                 NullLogger<TaskGraphActor>.Instance)));
     }
 
