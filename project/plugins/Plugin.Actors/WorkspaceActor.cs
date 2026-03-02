@@ -241,6 +241,12 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
 
             var rev = await RunGitAsync("rev-parse", "HEAD");
             var sha = rev.Stdout.Trim();
+            if (rev.ExitCode != 0 || string.IsNullOrWhiteSpace(sha))
+            {
+                return new MergeResult(taskId, Success: false, Sha: null,
+                    ConflictFiles: new[] { $"Failed to resolve merge SHA: {rev.Stderr}" },
+                    Requester: requester);
+            }
 
             return new MergeResult(taskId, Success: true, Sha: sha, ConflictFiles: null, Requester: requester);
         }
