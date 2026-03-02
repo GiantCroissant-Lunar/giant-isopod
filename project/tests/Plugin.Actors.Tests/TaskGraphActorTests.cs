@@ -83,22 +83,6 @@ public class TaskGraphActorTests : TestKit
     // ── Task completion without decomposition ──
 
     [Fact]
-    public void TaskCompleted_NoSubplan_MarksCompleted()
-    {
-        // Submit a single-node graph
-        _taskGraph.Tell(MakeGraph("g2", new[] { Node("t1", "do thing", "skill-a") }), TestActor);
-        ExpectMsg<TaskGraphAccepted>();
-
-        // Complete the task
-        _taskGraph.Tell(new TaskCompleted("t1", "agent-1", true, "done", "g2"));
-
-        // Graph should complete — listen for EventStream
-        Sys.EventStream.Subscribe(TestActor, typeof(TaskGraphCompleted));
-        // Re-send completion (graph already completed above, so we need a fresh graph)
-        // Actually, the graph completed synchronously. Let's use a two-node graph instead.
-    }
-
-    [Fact]
     public void TaskCompleted_NoSubplan_CompletesGraph()
     {
         Sys.EventStream.Subscribe(TestActor, typeof(TaskGraphCompleted));

@@ -153,8 +153,11 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         for (var i = 0; i < subplan.Subtasks.Count; i++)
             subNodeMap[i] = subGraph.AddNode();
 
+        // Pre-parse and validate all dependency indices; store parsed values for reuse
+        var parsedDeps = new List<List<int>>();
         for (var i = 0; i < subplan.Subtasks.Count; i++)
         {
+            var deps = new List<int>();
             foreach (var depRef in subplan.Subtasks[i].DependsOnSubtasks)
             {
                 if (!int.TryParse(depRef, out var depIdx) || depIdx < 0 || depIdx >= subplan.Subtasks.Count)
@@ -163,8 +166,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                         $"Subtask {i} references invalid dependency index '{depRef}'");
                     return;
                 }
+                deps.Add(depIdx);
                 subGraph.AddArc(subNodeMap[depIdx], subNodeMap[i], Directedness.Directed);
             }
+            parsedDeps.Add(deps);
         }
 
         var topoSort = new Plate.ModernSatsuma.TopologicalSort(subGraph);
@@ -195,10 +200,9 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             state.IncomingEdges[subtaskId] = new List<string>();
             state.OutgoingEdges[subtaskId] = new List<string>();
 
-            // Wire up intra-subtask dependencies
-            foreach (var depRef in proposal.DependsOnSubtasks)
+            // Wire up intra-subtask dependencies (using pre-parsed indices)
+            foreach (var depIdx in parsedDeps[i])
             {
-                var depIdx = int.Parse(depRef);
                 var depId = subtaskIds[depIdx];
                 state.IncomingEdges[subtaskId].Add(depId);
                 state.OutgoingEdges[depId].Add(subtaskId);
@@ -298,8 +302,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         // Find the agent that owns the parent task
         if (!state.AssignedAgent.TryGetValue(parentId, out var agentId))
         {
-            _logger.LogWarning("Graph {GraphId}: no agent assigned for parent task {TaskId}, cannot synthesize",
+            _logger.LogWarning("Graph {GraphId}: no agent assigned for parent task {TaskId}, failing",
                 graphId, parentId);
+            state.Status[parentId] = TaskNodeStatus.Failed;
+            _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, parentId, TaskNodeStatus.Failed));
             return;
         }
 
@@ -413,7 +419,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
         _logger.LogWarning("Graph {GraphId} deadline exceeded — aborting all pending tasks", timedOut.GraphId);
 
-        // Cancel all non-terminal nodes (snapshot keys to avoid mutation during iteration)
+        // Cancel all non-terminal nodes including subtasks (snapshot keys to avoid mutation during iteration)
         foreach (var taskId in state.Status.Keys.ToList())
         {
             var status = state.Status[taskId];
