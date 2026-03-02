@@ -15,6 +15,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 {
     private readonly IActorRef _registry;
     private readonly IActorRef _agentSupervisor;
+    private readonly IActorRef _workspace;
     private readonly ILogger<DispatchActor> _logger;
 
     /// <summary>Active bid sessions keyed by TaskId.</summary>
@@ -31,10 +32,13 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
     public ITimerScheduler Timers { get; set; } = null!;
 
-    public DispatchActor(IActorRef registry, IActorRef agentSupervisor, ILogger<DispatchActor> logger)
+    private static readonly TimeSpan AllocationTimeout = TimeSpan.FromSeconds(10);
+
+    public DispatchActor(IActorRef registry, IActorRef agentSupervisor, IActorRef workspace, ILogger<DispatchActor> logger)
     {
         _registry = registry;
         _agentSupervisor = agentSupervisor;
+        _workspace = workspace;
         _logger = logger;
     }
 
@@ -79,6 +83,10 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
             case ApprovalTimedOut timedOut:
                 HandleApprovalTimeout(timedOut.TaskId);
+                break;
+
+            case WorkspaceAllocationDone done:
+                HandleWorkspaceAllocationDone(done);
                 break;
         }
     }
@@ -218,9 +226,33 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
     private void AwardTask(string taskId, string agentId, string? description, TaskBudget? budget, IActorRef originalSender, string? graphId = null)
     {
-        var assignment = new TaskAssigned(taskId, agentId, description, budget, graphId);
+        // Attempt workspace allocation; on failure or timeout, award without workspace (graceful degradation)
+        _workspace.Ask<object>(new AllocateWorkspace(taskId, "HEAD"), AllocationTimeout)
+            .ContinueWith(t =>
+            {
+                string? workspacePath = null;
+                if (t.IsCompletedSuccessfully && t.Result is WorkspaceAllocated allocated)
+                    workspacePath = allocated.WorktreePath;
+
+                return new WorkspaceAllocationDone(taskId, agentId, description, budget, originalSender, graphId, workspacePath);
+            })
+            .PipeTo(Self);
+    }
+
+    private void HandleWorkspaceAllocationDone(WorkspaceAllocationDone done)
+    {
+        if (done.WorkspacePath != null)
+        {
+            _logger.LogDebug("Task {TaskId} awarded with workspace at {Path}", done.TaskId, done.WorkspacePath);
+        }
+        else
+        {
+            _logger.LogDebug("Task {TaskId} awarded without workspace (allocation skipped or failed)", done.TaskId);
+        }
+
+        var assignment = new TaskAssigned(done.TaskId, done.AgentId, done.Description, done.Budget, done.GraphId, done.WorkspacePath);
         _agentSupervisor.Tell(assignment);
-        originalSender.Tell(assignment);
+        done.OriginalSender.Tell(assignment);
     }
 
     private bool IsFromTrustedApprover()
@@ -282,6 +314,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
     private sealed record BidWindowClosed(string TaskId);
     private sealed record ApprovalTimedOut(string TaskId);
     private sealed record PendingApproval(string TaskId, string AgentId, string? Description, TaskBudget? Budget, IActorRef OriginalSender, string? GraphId = null);
+    private sealed record WorkspaceAllocationDone(string TaskId, string AgentId, string? Description, TaskBudget? Budget, IActorRef OriginalSender, string? GraphId, string? WorkspacePath);
 }
 
 /// <summary>
