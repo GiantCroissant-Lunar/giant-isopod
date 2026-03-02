@@ -91,14 +91,14 @@ public partial class HudController : Control
         _markdownContainer = _sceneLoader.FindNode<Control>(ConsoleScene, "VBox/ConsoleBody/RenderedContainer");
 
         // Center Area setup
-        _genUITabBtn = hudRoot.GetNodeOrNull<Control>("MiddleRow/CenterArea/CenterHeader/GenUITabBtn");
-        _taskGraphTabBtn = hudRoot.GetNodeOrNull<Control>("MiddleRow/CenterArea/CenterHeader/TaskGraphTabBtn");
-        _genUIHost = hudRoot.GetNodeOrNull<Control>("MiddleRow/CenterArea/CenterBody/GenUIHost");
-        TaskGraphSlot = hudRoot.GetNodeOrNull<Control>("MiddleRow/CenterArea/CenterBody/TaskGraphSlot");
+        _genUITabBtn = hudRoot.GetNodeOrNull<Control>("MiddleRow/Centerarea/Centerheader/GenUITabBtn");
+        _taskGraphTabBtn = hudRoot.GetNodeOrNull<Control>("MiddleRow/Centerarea/Centerheader/TaskGraphTabBtn");
+        _genUIHost = hudRoot.GetNodeOrNull<Control>("MiddleRow/Centerarea/Centerbody/GenUIHost");
+        TaskGraphSlot = hudRoot.GetNodeOrNull<Control>("MiddleRow/Centerarea/Centerbody/TaskGraphSlot");
 
         // Wire center tabs if they behave like buttons
-        WireCenterTab(hudRoot, "MiddleRow/CenterArea/CenterHeader/GenUITabBtn", true);
-        WireCenterTab(hudRoot, "MiddleRow/CenterArea/CenterHeader/TaskGraphTabBtn", false);
+        WireCenterTab(hudRoot, "MiddleRow/Centerarea/Centerheader/GenUITabBtn", true);
+        WireCenterTab(hudRoot, "MiddleRow/Centerarea/Centerheader/TaskGraphTabBtn", false);
 
         // Console starts hidden
         var consoleInstance = _sceneLoader.GetInstance(ConsoleScene);
