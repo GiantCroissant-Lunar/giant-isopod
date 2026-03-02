@@ -1,6 +1,7 @@
 using GiantIsopod.Contracts.Core;
 using GiantIsopod.Contracts.Protocol.Aieos;
 using GiantIsopod.Contracts.Protocol.PiRpc;
+using Xunit;
 
 namespace GiantIsopod.Plugin.Mapping.Tests;
 
