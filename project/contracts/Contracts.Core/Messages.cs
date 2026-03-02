@@ -28,7 +28,7 @@ public record TaskRequestWithBudget(
     string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities,
     TaskBudget Budget, string? GraphId = null) : TaskRequest(TaskId, Description, RequiredCapabilities, GraphId);
 public record TaskAssigned(string TaskId, string AgentId, string? Description = null, TaskBudget? Budget = null, string? GraphId = null);
-public record TaskCompleted(string TaskId, string AgentId, bool Success, string? Summary = null, string? GraphId = null);
+public record TaskCompleted(string TaskId, string AgentId, bool Success, string? Summary = null, string? GraphId = null, IReadOnlyList<ArtifactRef>? Artifacts = null, ProposedSubplan? Subplan = null);
 public record TaskFailed(string TaskId, string? Reason = null, IReadOnlySet<string>? UnmetCapabilities = null, string? GraphId = null);
 public record TaskTimedOut(string TaskId);
 
@@ -61,7 +61,7 @@ public record TaskReadyForDispatch(string GraphId, string TaskId, string Descrip
 public record TaskNodeCompleted(string GraphId, string TaskId, bool Success, string? Summary = null);
 public record TaskGraphCompleted(string GraphId, IReadOnlyDictionary<string, bool> Results);
 
-public enum TaskNodeStatus { Pending, Ready, Dispatched, Completed, Failed, Cancelled }
+public enum TaskNodeStatus { Pending, Ready, Dispatched, Completed, Failed, Cancelled, WaitingForSubtasks, Synthesizing }
 
 // ── Task graph viewport notifications ──
 
@@ -172,6 +172,30 @@ public record ArtifactValidationUpdated(string ArtifactId);
 
 public record BlessArtifact(string ArtifactId);
 public record ArtifactBlessed(string ArtifactId);
+
+// ── Progressive decomposition (ADR-009) ──
+
+public enum DecompositionReason { TooLarge, MissingInfo, DependencyDiscovered, Ambiguity, ExternalToolRequired }
+public enum StopKind { AllSubtasksComplete, FirstSuccess, UserDecision }
+
+public record StopCondition(StopKind Kind, string Description);
+
+public record SubtaskProposal(
+    string Description,
+    IReadOnlySet<string> RequiredCapabilities,
+    IReadOnlyList<string> DependsOnSubtasks,
+    TimeSpan? BudgetCap = null,
+    IReadOnlyList<ArtifactType>? ExpectedOutputTypes = null);
+
+public record ProposedSubplan(
+    string ParentTaskId,
+    DecompositionReason Reason,
+    IReadOnlyList<SubtaskProposal> Subtasks,
+    StopCondition? StopWhen = null);
+
+public record TaskDecompositionAccepted(string ParentTaskId, IReadOnlyList<string> SubtaskIds, string? GraphId = null);
+public record TaskDecompositionRejected(string ParentTaskId, string Reason, string? GraphId = null);
+public record SubtasksCompleted(string ParentTaskId, IReadOnlyList<TaskCompleted> Results, string? GraphId = null);
 
 // ── Viewport bridge ──
 
