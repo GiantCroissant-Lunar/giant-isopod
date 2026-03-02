@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from memory_sidecar.chunking import split_simple
 from memory_sidecar.config import CODE_EXTENSIONS, DEFAULT_CHUNK_OVERLAP, DEFAULT_CHUNK_SIZE, EXCLUDED_PATTERNS
 from memory_sidecar.embed import embed_texts
 from memory_sidecar.storage import connect, delete_stale_chunks, init_codebase_schema, upsert_code_chunk
@@ -34,27 +35,6 @@ def _should_include(path: Path, source_root: Path) -> bool:
         if part in EXCLUDED_PATTERNS or part.startswith("."):
             return False
     return path.suffix.lower() in CODE_EXTENSIONS
-
-
-def _split_simple(content: str, chunk_size: int, chunk_overlap: int) -> list[dict]:
-    """Simple recursive text splitter (fallback until CocoIndex Tree-sitter is wired)."""
-    if len(content) <= chunk_size:
-        return [{"text": content, "location": "0:0"}]
-    chunks = []
-    start = 0
-    idx = 0
-    while start < len(content):
-        end = min(start + chunk_size, len(content))
-        if end < len(content):
-            nl = content.rfind("\n", start, end)
-            if nl > start:
-                end = nl + 1
-        text = content[start:end]
-        if text.strip():
-            chunks.append({"text": text, "location": f"{idx}:{start}"})
-            idx += 1
-        start = end - chunk_overlap if end < len(content) else end
-    return chunks
 
 
 def index_codebase(
@@ -91,7 +71,7 @@ def index_codebase(
         if not content.strip():
             continue
 
-        chunks = _split_simple(content, chunk_size, chunk_overlap)
+        chunks = split_simple(content, chunk_size, chunk_overlap)
         keep = {c["location"] for c in chunks}
         stats["chunks_deleted"] += delete_stale_chunks(conn, rel, keep)
         stats["files_processed"] += 1
