@@ -1,17 +1,14 @@
 [gd_scene load_steps=1 format=3]
 
-[node name="SwarmTopBarView" type="HBoxContainer"]
-custom_minimum_size = Vector2(0, 32)
-theme_override_constants/separation = 12
+[node name="SwarmtopbarView" type="HBoxContainer"]
 
-[node name="AgentCount" type="Label" parent="."]
+[node name="agentcount" type="Label" parent="."]
 text = "Agents: 0"
 
-[node name="Spacer" type="Control" parent="."]
-size_flags_horizontal = 3
+[node name="spacer" type="Control" parent="."]
 
-[node name="RuntimeCount" type="Label" parent="."]
+[node name="runtimecount" type="Label" parent="."]
 text = "Runtimes: 0"
 
-[node name="VersionLabel" type="Label" parent="."]
+[node name="versionlabel" type="Label" parent="."]
 text = "v0.0.0"
