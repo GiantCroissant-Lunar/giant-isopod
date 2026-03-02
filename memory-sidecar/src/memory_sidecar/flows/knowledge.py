@@ -5,7 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from memory_sidecar.embed import embed_one
-from memory_sidecar.storage import connect, init_knowledge_schema, insert_knowledge, search_knowledge
+from memory_sidecar.storage import (
+    connect,
+    init_knowledge_schema,
+    insert_knowledge,
+    search_knowledge,
+    search_knowledge_hybrid,
+)
 
 
 def store(
@@ -29,10 +35,15 @@ def query(
     query_text: str,
     category: str | None = None,
     top_k: int = 10,
+    hybrid: bool = True,
 ) -> list[dict]:
-    """Search knowledge entries by semantic similarity."""
+    """Search knowledge entries. Uses hybrid (vector + FTS5 RRF) by default."""
     conn = connect(Path(db_path))
     init_knowledge_schema(conn)
-    results = search_knowledge(conn, embed_one(query_text), category, top_k)
+    embedding = embed_one(query_text)
+    if hybrid:
+        results = search_knowledge_hybrid(conn, embedding, query_text, category, top_k)
+    else:
+        results = search_knowledge(conn, embedding, category, top_k)
     conn.close()
     return results
