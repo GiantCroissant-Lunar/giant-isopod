@@ -114,6 +114,18 @@ Fail if unrelated files were modified, the assertion target is wrong, or the tes
         return 3;
     }
 
+    var artifacts = await world.Artifacts.Ask<ArtifactListResult>(
+        new GetArtifactsByTask("real-task"),
+        TimeSpan.FromSeconds(10));
+    PrintArtifactSummary(artifacts);
+
+    world.MemorySupervisor.Tell(new CommitMemory(agentId), ActorRefs.NoSender);
+    await Task.Delay(TimeSpan.FromSeconds(1));
+    var memorySearch = await world.MemorySupervisor.Ask<MemorySearchResult>(
+        new SearchMemory(agentId, "task", "real-task", TopK: 5),
+        TimeSpan.FromSeconds(15));
+    PrintMemorySummary(tempMemory, agentId, memorySearch);
+
     Console.WriteLine($"Status history: {string.Join(" -> ", statusHistory)}");
     return taskPassed ? 0 : 4;
 }
@@ -143,6 +155,31 @@ static void TryDeleteDirectory(string path)
     catch
     {
     }
+}
+
+static void PrintArtifactSummary(ArtifactListResult artifacts)
+{
+    Console.WriteLine($"Artifacts registered: {artifacts.Artifacts.Count}");
+    foreach (var artifact in artifacts.Artifacts)
+    {
+        var relativePath = artifact.Metadata != null &&
+                           artifact.Metadata.TryGetValue("relativePath", out var path)
+            ? path
+            : artifact.Uri;
+        var validators = artifact.Validators is { Count: > 0 }
+            ? string.Join(", ", artifact.Validators.Select(v => $"{v.ValidatorName}={(v.Passed ? "PASS" : "FAIL")}"))
+            : "none";
+        Console.WriteLine($"  artifact {artifact.ArtifactId}: type={artifact.Type} path={relativePath} validators={validators}");
+    }
+}
+
+static void PrintMemorySummary(string memoryBasePath, string agentId, MemorySearchResult memorySearch)
+{
+    var mv2Path = Path.Combine(memoryBasePath, $"{agentId}.mv2");
+    Console.WriteLine($"Memory file: {(File.Exists(mv2Path) ? $"present ({mv2Path})" : "missing")}");
+    Console.WriteLine($"Memory hits: {memorySearch.Hits.Count}");
+    foreach (var hit in memorySearch.Hits.Take(3))
+        Console.WriteLine($"  memory score={hit.Score:F3} title={hit.Title ?? "<none>"} text={hit.Text}");
 }
 
 sealed class DogfoodViewportBridge : IViewportBridge
