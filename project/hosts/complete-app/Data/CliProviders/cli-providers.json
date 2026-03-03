@@ -31,6 +31,38 @@
       "defaults": {}
     },
     {
+      "id": "copilot",
+      "displayName": "GitHub Copilot CLI",
+      "executable": "copilot",
+      "args": ["-p", "{prompt}", "--silent", "--stream", "off", "--yolo", "--no-ask-user", "--no-custom-instructions", "--model", "{model}"],
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "defaults": {
+        "model": "gpt-5.2-codex"
+      }
+    },
+    {
+      "id": "gemini",
+      "displayName": "Gemini CLI",
+      "executable": "gemini",
+      "args": ["-m", "{model}", "-p", "{prompt}", "-y", "-o", "text"],
+      "env": {},
+      "defaults": {
+        "model": "gemini-2.5-flash"
+      }
+    },
+    {
+      "id": "claude-code",
+      "displayName": "Claude Code",
+      "executable": "claude",
+      "args": ["-p", "--output-format", "text", "--dangerously-skip-permissions", "--tools", "Bash,Edit,Read,Write", "--append-system-prompt", "Follow the assigned task literally. Exact filenames, paths, content, and do-not-modify constraints are hard requirements. If the task names one target file, do not modify any other file. If you cannot satisfy the exact task, explain that in failure_reason instead of improvising.", "--model", "{model}", "--no-session-persistence", "{prompt}"],
+      "env": {},
+      "defaults": {
+        "model": "sonnet"
+      }
+    },
+    {
       "id": "kimi",
       "displayName": "Kimi",
       "executable": "kimi",

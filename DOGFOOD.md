@@ -21,6 +21,29 @@ A runtime is dogfood-ready for the core development workflow only if all of thes
 
 - `pi`: required
 - `kimi`: required
+- `claude-code`: candidate
+- `copilot`: candidate
+- `gemini`: candidate
+
+## Runtime Bring-Up Notes
+
+Use these when adding a new CLI runtime to `runtimes.json`.
+
+- `claude-code`
+  - Current status: direct file-edit probe passed; `basic` smoke passed.
+  - Command shape: positional prompt with `-p --output-format text`.
+- `copilot`
+  - Current status: direct file-edit probe passed after switching model to `gpt-5.2-codex`.
+  - Current blocker: `basic` smoke still times out under the giant-isopod task contract.
+- `gemini`
+  - Current status: direct file-edit probe passed with `gemini-2.5-flash`.
+  - Current blocker: `basic` smoke still fails under the giant-isopod task contract.
+
+Bring-up commands:
+
+- `dotnet run --project project\tools\RealCliSmoke\RealCliSmoke.csproj -- claude-code 8 basic`
+- `dotnet run --project project\tools\RealCliSmoke\RealCliSmoke.csproj -- copilot 8 basic`
+- `dotnet run --project project\tools\RealCliSmoke\RealCliSmoke.csproj -- gemini 8 basic`
 
 ## Failure Buckets
 
@@ -192,11 +215,34 @@ Recommended split:
 3. validator integration
 4. end-to-end dogfood verification
 
+### Feature 5: Middleware Pipeline
+
+Goal: move cross-cutting execution concerns out of `AgentActor` and `AgentRuntimeActor` into a composable pipeline.
+
+Target files:
+
+- `project/contracts/Contracts.Core/*`
+- `project/plugins/Plugin.Actors/AgentActor.cs`
+- `project/plugins/Plugin.Actors/AgentRuntimeActor.cs`
+- `project/plugins/Plugin.Actors/ValidatorActor.cs`
+- `project/plugins/Plugin.Process/*`
+- `project/tests/*`
+- `docs/decisions/010-agent-middleware-pipeline.md`
+
+Recommended split:
+
+1. middleware contracts and execution contexts
+2. agent task middleware chain
+3. runtime launch/output middleware chain
+4. validator review middleware chain
+5. end-to-end verification
+
 ## Execution Order
 
 1. Runtime-aware dispatch
 2. Runtime process observability
 3. Multi-feature dogfood runner
 4. Artifact follow-up workflow
+5. Middleware pipeline
 
 This order is intentional: first teach the system who should do work, then make runtime execution observable, then increase graph complexity, then add artifact-driven follow-up behavior.
