@@ -213,4 +213,30 @@ Continuing with the actual task...
         Assert.Null(parsed.Subplan);
         Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
     }
+
+    [Fact]
+    public void Parse_SkipsEnvelopeWithMismatchingTaskId()
+    {
+        var output = """
+<giant-isopod-result>
+{"task_id":"task-previous","outcome":"failed","summary":"Earlier task result.","artifacts_expected":[],"failure_reason":"Some error.","subplan":null}
+</giant-isopod-result>
+
+Processing the actual request...
+
+<giant-isopod-result>
+{"task_id":"task-actual","outcome":"completed","summary":"Correct task completed.","artifacts_expected":["Code"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+""";
+
+        var parsed = StructuredTaskResultParser.Parse(output, "task-actual");
+
+        Assert.True(parsed.HasEnvelope);
+        Assert.Equal("task-actual", parsed.EnvelopeTaskId);
+        Assert.Equal(StructuredTaskResultParser.ParsedTaskOutcome.Completed, parsed.Outcome);
+        Assert.Equal("Correct task completed.", parsed.Summary);
+        Assert.Null(parsed.FailureReason);
+        Assert.Null(parsed.Subplan);
+        Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
+    }
 }
