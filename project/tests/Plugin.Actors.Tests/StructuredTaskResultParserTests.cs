@@ -298,4 +298,36 @@ Processing the actual request...
         Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
     }
 
+    [Fact]
+    public void Parse_IgnoresEarlierEnvelopeForDifferentTaskId_ReturnsLastForRequestedId()
+    {
+        var output = """
+<giant-isopod-result>
+{"task_id":"earlier-task-id","outcome":"completed","summary":"Earlier envelope for different task.","artifacts_expected":["Doc"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+
+<giant-isopod-result>
+{"task_id":"requested-task","outcome":"completed","summary":"First envelope for requested task.","artifacts_expected":["Doc"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+
+<giant-isopod-result>
+{"task_id":"another-different-task","outcome":"failed","summary":"Envelope for another different task.","artifacts_expected":[],"failure_reason":"Some error.","subplan":null}
+</giant-isopod-result>
+
+<giant-isopod-result>
+{"task_id":"requested-task","outcome":"completed","summary":"Last envelope for requested task.","artifacts_expected":["Code"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+""";
+
+        var parsed = StructuredTaskResultParser.Parse(output, "requested-task");
+
+        Assert.True(parsed.HasEnvelope);
+        Assert.Equal("requested-task", parsed.EnvelopeTaskId);
+        Assert.Equal(StructuredTaskResultParser.ParsedTaskOutcome.Completed, parsed.Outcome);
+        Assert.Equal("Last envelope for requested task.", parsed.Summary);
+        Assert.Null(parsed.FailureReason);
+        Assert.Null(parsed.Subplan);
+        Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
+    }
+
 }
