@@ -131,4 +131,32 @@ Done.
         Assert.Contains("\"failure_reason\":null", prompt, StringComparison.Ordinal);
         Assert.Contains("Do the thing.", prompt, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Parse_UsesLastEnvelopeWhenMultipleEnvelopesPresent()
+    {
+        var output = """
+Let me work on this step by step.
+
+<giant-isopod-result>
+{"task_id":"task-multi","outcome":"completed","summary":"First attempt at the change.","artifacts_expected":["Doc"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+
+Wait, I need to reconsider the approach.
+
+<giant-isopod-result>
+{"task_id":"task-multi","outcome":"completed","summary":"Final implementation after revision.","artifacts_expected":["Code"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+""";
+
+        var parsed = StructuredTaskResultParser.Parse(output, "task-multi");
+
+        Assert.True(parsed.HasEnvelope);
+        Assert.Equal("task-multi", parsed.EnvelopeTaskId);
+        Assert.Equal(StructuredTaskResultParser.ParsedTaskOutcome.Completed, parsed.Outcome);
+        Assert.Equal("Final implementation after revision.", parsed.Summary);
+        Assert.Null(parsed.FailureReason);
+        Assert.Null(parsed.Subplan);
+        Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
+    }
 }
