@@ -419,11 +419,47 @@ public sealed class ValidatorActor : UntypedActor
         if (path is null || !File.Exists(path) || !LooksLikeTextArtifact(artifact, path))
             return null;
 
-        var content = File.ReadAllText(path);
-        if (content.Length <= MaxEmbeddedArtifactChars)
-            return content;
+        var fileInfo = new FileInfo(path);
+        if (fileInfo.Length == 0)
+            return string.Empty;
 
-        return $"{content[..MaxEmbeddedArtifactChars]}\n...[truncated]";
+        // For small files (conservative 4-byte-per-char UTF-8 estimate), use simple read.
+        if (fileInfo.Length <= MaxEmbeddedArtifactChars * 4L)
+        {
+            var smallContent = File.ReadAllText(path);
+            if (smallContent.Length <= MaxEmbeddedArtifactChars)
+                return smallContent;
+
+            return $"{smallContent[..MaxEmbeddedArtifactChars]}\n...[truncated]";
+        }
+
+        // For larger files, stream only the first MaxEmbeddedArtifactChars characters.
+        using var fs = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 4096,
+            FileOptions.SequentialScan);
+
+        using var reader = new StreamReader(
+            fs,
+            Encoding.UTF8,
+            detectEncodingFromByteOrderMarks: true,
+            bufferSize: 4096,
+            leaveOpen: false);
+
+        var buffer = new char[MaxEmbeddedArtifactChars];
+        var totalRead = reader.ReadBlock(buffer, 0, MaxEmbeddedArtifactChars);
+        if (totalRead == 0)
+            return string.Empty;
+
+        var prefix = new string(buffer, 0, totalRead);
+        var isTruncated = reader.Read() != -1;
+
+        return isTruncated
+            ? $"{prefix}\n...[truncated]"
+            : prefix;
     }
 
     private static string? ResolveArtifactPath(string uriOrPath)

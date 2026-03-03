@@ -31,10 +31,15 @@ public static class WorkspaceArtifactCollector
             return Array.Empty<ArtifactRef>();
 
         var createdAt = DateTimeOffset.UtcNow;
+        var normalizedWorkspaceRoot = Path.GetFullPath(
+            workspacePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            + Path.DirectorySeparatorChar;
         var artifacts = new List<ArtifactRef>(relativePaths.Count);
         foreach (var relativePath in relativePaths)
         {
             var fullPath = Path.GetFullPath(Path.Combine(workspacePath, relativePath));
+            if (!fullPath.StartsWith(normalizedWorkspaceRoot, StringComparison.OrdinalIgnoreCase))
+                continue;
             if (!File.Exists(fullPath))
                 continue;
 

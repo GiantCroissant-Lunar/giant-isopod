@@ -12,13 +12,27 @@ public class CliAgentRuntimeTests
         var workDir = Path.Combine(Path.GetTempPath(), $"giant-isopod-cli-runtime-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workDir);
 
-        var config = new CliRuntimeConfig
+        CliRuntimeConfig config;
+        if (OperatingSystem.IsWindows())
         {
-            Id = "test-cli",
-            DisplayName = "Test CLI",
-            Executable = "cmd",
-            Args = ["/c", "type", "{prompt_file_path}"]
-        };
+            config = new CliRuntimeConfig
+            {
+                Id = "test-cli",
+                DisplayName = "Test CLI",
+                Executable = "cmd",
+                Args = ["/c", "type", "{prompt_file_path}"]
+            };
+        }
+        else
+        {
+            config = new CliRuntimeConfig
+            {
+                Id = "test-cli",
+                DisplayName = "Test CLI",
+                Executable = "cat",
+                Args = ["{prompt_file_path}"]
+            };
+        }
 
         await using var runtime = new CliAgentRuntime("agent-1", config, model: null, workDir);
         await runtime.StartAsync();

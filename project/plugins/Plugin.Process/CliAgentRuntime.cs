@@ -149,7 +149,9 @@ public sealed class CliAgentRuntime : IAgentRuntime
 
     private string CreatePromptFile()
     {
-        var fileName = $"giant-isopod-prompt-{AgentId}-{Guid.NewGuid():N}.md";
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var safeAgentId = string.Concat(AgentId.Select(c => Array.IndexOf(invalidChars, c) >= 0 ? '_' : c));
+        var fileName = $"giant-isopod-prompt-{safeAgentId}-{Guid.NewGuid():N}.md";
         var path = Path.Combine(Path.GetTempPath(), fileName);
         File.WriteAllText(path, _prompt, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         return path;
@@ -166,13 +168,6 @@ public sealed class CliAgentRuntime : IAgentRuntime
     private string BuildLaunchDiagnostic(ResolvedCommandContext context)
     {
         var promptHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_prompt)));
-        var promptPreview = _prompt
-            .Replace("\r", " ", StringComparison.Ordinal)
-            .Replace("\n", " ", StringComparison.Ordinal)
-            .Trim();
-
-        if (promptPreview.Length > 240)
-            promptPreview = $"{promptPreview[..240]}...";
 
         var promptPlaceholder = $"<prompt len={_prompt.Length} sha256={promptHash[..12]}>";
         var promptFilePlaceholder = context.PromptFilePath is null
@@ -193,7 +188,7 @@ public sealed class CliAgentRuntime : IAgentRuntime
             })
             .ToArray();
 
-        return $"[runtime-launch] exe={_config.Executable} cwd={_workingDirectory} args=[{string.Join(", ", sanitizedArgs)}] promptLen={_prompt.Length} promptSha256={promptHash} promptFile={(context.PromptFilePath is null ? "<none>" : promptFilePlaceholder)} promptPreview=\"{promptPreview}\"";
+        return $"[runtime-launch] exe={_config.Executable} cwd={_workingDirectory} args=[{string.Join(", ", sanitizedArgs)}] promptLen={_prompt.Length} promptSha256={promptHash} promptFile={(context.PromptFilePath is null ? "<none>" : promptFilePlaceholder)}";
     }
 
     public async ValueTask DisposeAsync()

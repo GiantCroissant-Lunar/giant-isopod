@@ -189,8 +189,8 @@ public sealed class AgentActor : UntypedActor
                 }
                 else
                 {
-                    StartTaskExecution(task, BuildFallbackPrompt(task));
                     Context.Child("tasks").Tell(task);
+                    StartTaskExecution(task, BuildFallbackPrompt(task));
                 }
                 break;
 
@@ -198,7 +198,6 @@ public sealed class AgentActor : UntypedActor
                 var taskPrompt = retrieval.Entries.Count > 0
                     ? PromptBuilder.BuildTaskPrompt(retrieval.Task.TaskId, retrieval.Task.Description!, retrieval.Entries)
                     : BuildFallbackPrompt(retrieval.Task);
-                StartTaskExecution(retrieval.Task, taskPrompt);
 
                 if (retrieval.Entries.Count > 0)
                 {
@@ -209,6 +208,7 @@ public sealed class AgentActor : UntypedActor
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new AgentMemoryActivity(_agentId, false));
                 Context.Child("tasks").Tell(retrieval.Task);
+                StartTaskExecution(retrieval.Task, taskPrompt);
                 break;
 
             case RetrievalFailed failed:
@@ -216,8 +216,8 @@ public sealed class AgentActor : UntypedActor
                     _agentId, failed.Task.TaskId, failed.Reason);
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new AgentMemoryActivity(_agentId, false));
-                StartTaskExecution(failed.Task, BuildFallbackPrompt(failed.Task));
                 Context.Child("tasks").Tell(failed.Task);
+                StartTaskExecution(failed.Task, BuildFallbackPrompt(failed.Task));
                 break;
 
             case TaskCompleted completed:

@@ -32,6 +32,19 @@ Console.WriteLine($"Smoke root: {tempRoot}");
 Console.WriteLine($"Runtime: {runtimeId}");
 Console.WriteLine($"Scenario: {scenario}");
 
+AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+{
+    try
+    {
+        if (Directory.Exists(tempRoot))
+            Directory.Delete(tempRoot, recursive: true);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Failed to delete smoke temp directory '{tempRoot}': {ex}");
+    }
+};
+
 await InitializeRepoAsync(tempRepo);
 
 var runtimes = RuntimeRegistry.LoadFromJson(await File.ReadAllTextAsync(runtimesPath));
