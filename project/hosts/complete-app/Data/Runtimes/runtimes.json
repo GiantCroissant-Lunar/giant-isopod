@@ -5,7 +5,7 @@
       "id": "pi",
       "displayName": "Pi",
       "executable": "pi",
-      "args": ["--mode", "text", "--no-session", "--provider", "{provider}", "--model", "{model}", "-p", "{prompt}"],
+      "args": ["--mode", "text", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--tools", "read,bash,edit,write", "--append-system-prompt", "Follow the assigned task literally. Exact filenames, paths, content, and do-not-modify constraints are hard requirements. If the task names one target file, do not modify any other file. If you cannot satisfy the exact task, explain that in failure_reason instead of improvising.", "--provider", "{provider}", "--model", "{model}", "{prompt_file_ref}", "-p", "Execute the attached task instructions exactly. Do not look for any other task definition. Return the required giant-isopod result envelope."],
       "env": {
         "FORCE_COLOR": "1",
         "ZAI_API_KEY": "{ZAI_API_KEY}"
@@ -42,7 +42,7 @@
       "id": "kimi",
       "displayName": "Kimi",
       "executable": "kimi",
-      "args": ["--print", "-p", "{prompt}"],
+      "args": ["--print", "--yolo", "--agent", "default", "--output-format", "text", "-p", "{prompt}"],
       "env": {},
       "defaults": {}
     }

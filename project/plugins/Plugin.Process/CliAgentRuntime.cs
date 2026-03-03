@@ -1,4 +1,6 @@
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using CliWrap;
 using CliWrap.EventStream;
 using GiantIsopod.Contracts.Core;
@@ -59,45 +61,61 @@ public sealed class CliAgentRuntime : IAgentRuntime
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _cts?.Token ?? CancellationToken.None);
+        var commandContext = ResolveCommandContext();
 
-        var resolvedArgs = ResolveArgs();
-
-        var cmd = Cli.Wrap(_config.Executable)
-            .WithArguments(resolvedArgs)
-            .WithWorkingDirectory(_workingDirectory)
-            .WithEnvironmentVariables(env =>
-            {
-                foreach (var (key, value) in _config.Env)
-                    env.Set(key, ResolvePlaceholders(value, _extraEnv));
-            })
-            .WithValidation(CommandResultValidation.None);
-
-        IsRunning = true;
-
-        await foreach (var cmdEvent in cmd.ListenAsync(linkedCts.Token))
+        try
         {
-            switch (cmdEvent)
+            yield return BuildLaunchDiagnostic(commandContext);
+
+            var cmd = Cli.Wrap(_config.Executable)
+                .WithArguments(commandContext.Args)
+                .WithWorkingDirectory(_workingDirectory)
+                .WithEnvironmentVariables(env =>
+                {
+                    foreach (var (key, value) in _config.Env)
+                        env.Set(key, ResolvePlaceholders(value, commandContext.EnvironmentPlaceholders));
+                })
+                .WithValidation(CommandResultValidation.None);
+
+            IsRunning = true;
+
+            await foreach (var cmdEvent in cmd.ListenAsync(linkedCts.Token))
             {
-                case StandardOutputCommandEvent stdOut:
-                    if (!string.IsNullOrEmpty(stdOut.Text))
-                        yield return stdOut.Text;
-                    break;
-                case StandardErrorCommandEvent stdErr:
-                    if (!string.IsNullOrEmpty(stdErr.Text))
-                        yield return stdErr.Text;
-                    break;
+                switch (cmdEvent)
+                {
+                    case StandardOutputCommandEvent stdOut:
+                        if (!string.IsNullOrEmpty(stdOut.Text))
+                            yield return stdOut.Text;
+                        break;
+                    case StandardErrorCommandEvent stdErr:
+                        if (!string.IsNullOrEmpty(stdErr.Text))
+                            yield return stdErr.Text;
+                        break;
+                }
             }
         }
-
-        IsRunning = false;
+        finally
+        {
+            IsRunning = false;
+            linkedCts.Dispose();
+            commandContext.Dispose();
+        }
     }
 
-    private string[] ResolveArgs()
+    private ResolvedCommandContext ResolveCommandContext()
     {
         var placeholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["prompt"] = _prompt
         };
+
+        string? promptFilePath = null;
+        if (NeedsPromptFile())
+        {
+            promptFilePath = CreatePromptFile();
+            placeholders["prompt_file_path"] = promptFilePath;
+            placeholders["prompt_file_ref"] = $"@{promptFilePath}";
+        }
 
         // Merge defaults from config
         foreach (var (key, value) in _config.Defaults)
@@ -110,9 +128,31 @@ public sealed class CliAgentRuntime : IAgentRuntime
         if (effectiveModel?.ModelId is { } modelId)
             placeholders["model"] = modelId;
 
-        return _config.Args
+        var args = _config.Args
             .Select(arg => ResolvePlaceholders(arg, placeholders))
             .ToArray();
+
+        var environmentPlaceholders = new Dictionary<string, string>(_extraEnv, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in placeholders)
+            environmentPlaceholders[key] = value;
+
+        return new ResolvedCommandContext(args, placeholders, environmentPlaceholders, promptFilePath);
+    }
+
+    private bool NeedsPromptFile()
+    {
+        if (_config.Args.Any(arg => arg.Contains("{prompt_file_", StringComparison.OrdinalIgnoreCase)))
+            return true;
+
+        return _config.Env.Values.Any(value => value.Contains("{prompt_file_", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string CreatePromptFile()
+    {
+        var fileName = $"giant-isopod-prompt-{AgentId}-{Guid.NewGuid():N}.md";
+        var path = Path.Combine(Path.GetTempPath(), fileName);
+        File.WriteAllText(path, _prompt, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
     }
 
     private static string ResolvePlaceholders(string template, Dictionary<string, string> values)
@@ -123,9 +163,80 @@ public sealed class CliAgentRuntime : IAgentRuntime
         return result;
     }
 
+    private string BuildLaunchDiagnostic(ResolvedCommandContext context)
+    {
+        var promptHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_prompt)));
+        var promptPreview = _prompt
+            .Replace("\r", " ", StringComparison.Ordinal)
+            .Replace("\n", " ", StringComparison.Ordinal)
+            .Trim();
+
+        if (promptPreview.Length > 240)
+            promptPreview = $"{promptPreview[..240]}...";
+
+        var promptPlaceholder = $"<prompt len={_prompt.Length} sha256={promptHash[..12]}>";
+        var promptFilePlaceholder = context.PromptFilePath is null
+            ? null
+            : $"<prompt-file path={context.PromptFilePath}>";
+
+        var sanitizedArgs = context.Args
+            .Select(arg =>
+            {
+                if (string.Equals(arg, _prompt, StringComparison.Ordinal))
+                    return promptPlaceholder;
+
+                var sanitized = arg.Replace(_prompt, promptPlaceholder, StringComparison.Ordinal);
+                if (!string.IsNullOrWhiteSpace(context.PromptFilePath) && promptFilePlaceholder is not null)
+                    sanitized = sanitized.Replace(context.PromptFilePath, promptFilePlaceholder, StringComparison.Ordinal);
+
+                return sanitized;
+            })
+            .ToArray();
+
+        return $"[runtime-launch] exe={_config.Executable} cwd={_workingDirectory} args=[{string.Join(", ", sanitizedArgs)}] promptLen={_prompt.Length} promptSha256={promptHash} promptFile={(context.PromptFilePath is null ? "<none>" : promptFilePlaceholder)} promptPreview=\"{promptPreview}\"";
+    }
+
     public async ValueTask DisposeAsync()
     {
         await StopAsync();
         _cts?.Dispose();
+    }
+
+    private sealed class ResolvedCommandContext : IDisposable
+    {
+        public string[] Args { get; }
+        public Dictionary<string, string> Placeholders { get; }
+        public Dictionary<string, string> EnvironmentPlaceholders { get; }
+        public string? PromptFilePath { get; }
+
+        public ResolvedCommandContext(
+            string[] args,
+            Dictionary<string, string> placeholders,
+            Dictionary<string, string> environmentPlaceholders,
+            string? promptFilePath)
+        {
+            Args = args;
+            Placeholders = placeholders;
+            EnvironmentPlaceholders = environmentPlaceholders;
+            PromptFilePath = promptFilePath;
+        }
+
+        public void Dispose()
+        {
+            if (string.IsNullOrWhiteSpace(PromptFilePath))
+                return;
+
+            try
+            {
+                if (File.Exists(PromptFilePath))
+                    File.Delete(PromptFilePath);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
     }
 }
