@@ -187,4 +187,30 @@ After fixing the issue:
         Assert.Null(parsed.Subplan);
         Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
     }
+
+    [Fact]
+    public void Parse_IgnoresEarlierEnvelopeForDifferentTaskId()
+    {
+        var output = """
+<giant-isopod-result>
+{"task_id":"task-different","outcome":"completed","summary":"This should be ignored.","artifacts_expected":["Doc"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+
+Continuing with the actual task...
+
+<giant-isopod-result>
+{"task_id":"task-target","outcome":"completed","summary":"This is the correct result.","artifacts_expected":["Code"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+""";
+
+        var parsed = StructuredTaskResultParser.Parse(output, "task-target");
+
+        Assert.True(parsed.HasEnvelope);
+        Assert.Equal("task-target", parsed.EnvelopeTaskId);
+        Assert.Equal(StructuredTaskResultParser.ParsedTaskOutcome.Completed, parsed.Outcome);
+        Assert.Equal("This is the correct result.", parsed.Summary);
+        Assert.Null(parsed.FailureReason);
+        Assert.Null(parsed.Subplan);
+        Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
+    }
 }
