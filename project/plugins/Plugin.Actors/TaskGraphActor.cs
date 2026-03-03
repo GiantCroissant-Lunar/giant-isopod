@@ -61,6 +61,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 HandleMergeConflict(conflict);
                 break;
 
+            case WorkspaceReleased released:
+                HandleWorkspaceReleased(released);
+                break;
+
             case ValidationComplete validation:
                 HandleValidationComplete(validation);
                 break;
@@ -143,6 +147,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         else
         {
             CompleteTaskNode(graphId, state, completed);
+            RequestWorkspaceRelease(state, completed.TaskId);
         }
 
         CheckGraphCompletion(graphId, state);
@@ -373,7 +378,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
         _logger.LogInformation("Graph {GraphId}: task {TaskId} merged (sha: {Sha})", graphId, merged.TaskId, merged.MergeCommitSha);
         CompleteTaskNode(graphId, state, completed);
-        _workspace.Tell(new ReleaseWorkspace(merged.TaskId));
+        RequestWorkspaceRelease(state, merged.TaskId);
         CheckGraphCompletion(graphId, state);
     }
 
@@ -391,7 +396,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         state.Status[conflict.TaskId] = TaskNodeStatus.Failed;
         _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, conflict.TaskId, TaskNodeStatus.Failed));
         CancelDependents(state, conflict.TaskId);
-        _workspace.Tell(new ReleaseWorkspace(conflict.TaskId));
+        RequestWorkspaceRelease(state, conflict.TaskId);
         CheckGraphCompletion(graphId, state);
     }
 
@@ -471,6 +476,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             else
             {
                 CompleteTaskNode(graphId, state, pending.Completed);
+                RequestWorkspaceRelease(state, taskId);
                 CheckGraphCompletion(graphId, state);
             }
         }
@@ -520,7 +526,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 state.Status[taskId] = TaskNodeStatus.Failed;
                 _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, taskId, TaskNodeStatus.Failed));
                 CancelDependents(state, taskId);
-                _workspace.Tell(new ReleaseWorkspace(taskId));
+                RequestWorkspaceRelease(state, taskId);
                 CheckGraphCompletion(graphId, state);
             }
         }
@@ -554,9 +560,29 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             graphId, failed.TaskId, failed.Reason);
 
         CancelDependents(state, failed.TaskId);
-        _workspace.Tell(new ReleaseWorkspace(failed.TaskId));
+        RequestWorkspaceRelease(state, failed.TaskId);
         CheckSubtasksCompleted(graphId, state, failed.TaskId);
         CheckGraphCompletion(graphId, state);
+    }
+
+    private void HandleWorkspaceReleased(WorkspaceReleased released)
+    {
+        if (!TryFindGraphByTask(released.TaskId, out var graphId, out var state))
+            return;
+
+        if (!state.PendingWorkspaceRelease.Remove(released.TaskId))
+            return;
+
+        _logger.LogDebug("Graph {GraphId}: workspace released for task {TaskId}", graphId, released.TaskId);
+        CheckGraphCompletion(graphId, state);
+    }
+
+    private void RequestWorkspaceRelease(GraphState state, string taskId)
+    {
+        if (!state.PendingWorkspaceRelease.Add(taskId))
+            return;
+
+        _workspace.Tell(new ReleaseWorkspace(taskId));
     }
 
     /// <summary>
@@ -668,7 +694,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         var allTerminal = state.Status.Values.All(s =>
             s is TaskNodeStatus.Completed or TaskNodeStatus.Failed or TaskNodeStatus.Cancelled);
 
-        if (!allTerminal) return;
+        if (!allTerminal || state.PendingWorkspaceRelease.Count > 0) return;
 
         var results = state.Status.ToDictionary(
             kv => kv.Key,
@@ -709,6 +735,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         public Dictionary<string, TaskCompleted> PendingMerge { get; } = new();
         public Dictionary<string, PendingValidationEntry> PendingValidation { get; } = new();
         public Dictionary<string, int> ValidationAttempts { get; } = new();
+        public HashSet<string> PendingWorkspaceRelease { get; } = new();
 
         /// <summary>
         /// Builds graph state from a SubmitTaskGraph message.

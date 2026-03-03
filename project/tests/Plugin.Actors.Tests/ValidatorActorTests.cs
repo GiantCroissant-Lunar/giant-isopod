@@ -405,6 +405,12 @@ public class TaskGraphValidationTests : TestKit
         // Reply with passing validation
         _taskGraph.Tell(new ValidationComplete("a2", new[] { new ValidatorResult("lint", true) }));
 
+        var release = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", release.TaskId);
+        ExpectNoMsg(TimeSpan.FromMilliseconds(300));
+
+        _taskGraph.Tell(new WorkspaceReleased("t1"));
+
         var completed = ExpectMsg<TaskGraphCompleted>(TimeSpan.FromSeconds(5));
         Assert.Equal("g2", completed.GraphId);
         Assert.True(completed.Results["t1"]);
@@ -429,6 +435,38 @@ public class TaskGraphValidationTests : TestKit
         // Should request merge since it's a code artifact
         var merge = _workspaceProbe.ExpectMsg<RequestMerge>(TimeSpan.FromSeconds(5));
         Assert.Equal("t1", merge.TaskId);
+    }
+
+    [Fact]
+    public void MergeSucceeded_WaitsForWorkspaceReleaseBeforeCompletingGraph()
+    {
+        Sys.EventStream.Subscribe(TestActor, typeof(TaskGraphCompleted));
+
+        _taskGraph.Tell(new SubmitTaskGraph("g3b", new[] { Node("t1") }, Array.Empty<TaskEdge>()), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+        _dispatchProbe.ExpectMsg<TaskRequest>();
+
+        var artifact = MakeCodeArtifact("a3b");
+        _taskGraph.Tell(new TaskCompleted("t1", "agent-1", true, "done", "g3b",
+            Artifacts: new[] { artifact }));
+
+        _validatorProbe.ExpectMsg<ValidateArtifact>();
+        _taskGraph.Tell(new ValidationComplete("a3b", new[] { new ValidatorResult("lint", true) }));
+
+        var merge = _workspaceProbe.ExpectMsg<RequestMerge>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", merge.TaskId);
+
+        _taskGraph.Tell(new MergeSucceeded("t1", "sha-123"));
+
+        var release = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", release.TaskId);
+        ExpectNoMsg(TimeSpan.FromMilliseconds(300));
+
+        _taskGraph.Tell(new WorkspaceReleased("t1"));
+
+        var completed = ExpectMsg<TaskGraphCompleted>(TimeSpan.FromSeconds(5));
+        Assert.Equal("g3b", completed.GraphId);
+        Assert.True(completed.Results["t1"]);
     }
 
     [Fact]
@@ -493,6 +531,9 @@ public class TaskGraphValidationTests : TestKit
 
         var release = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
         Assert.Equal("t1", release.TaskId);
+        ExpectNoMsg(TimeSpan.FromMilliseconds(300));
+
+        _taskGraph.Tell(new WorkspaceReleased("t1"));
 
         // Should fail the task (attempt 2 >= 2)
         var completed = ExpectMsg<TaskGraphCompleted>(TimeSpan.FromSeconds(5));
@@ -511,6 +552,12 @@ public class TaskGraphValidationTests : TestKit
 
         // Complete without artifacts — should skip validation entirely
         _taskGraph.Tell(new TaskCompleted("t1", "agent-1", true, "done", "g6"));
+
+        var release = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", release.TaskId);
+        ExpectNoMsg(TimeSpan.FromMilliseconds(300));
+
+        _taskGraph.Tell(new WorkspaceReleased("t1"));
 
         var completed = ExpectMsg<TaskGraphCompleted>(TimeSpan.FromSeconds(5));
         Assert.True(completed.Results["t1"]);

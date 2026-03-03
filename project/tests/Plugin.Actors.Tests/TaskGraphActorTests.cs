@@ -8,28 +8,28 @@ namespace GiantIsopod.Plugin.Actors.Tests;
 
 public class TaskGraphActorTests : TestKit
 {
-    private readonly IActorRef _dispatchProbe;
-    private readonly IActorRef _agentSupervisorProbe;
-    private readonly IActorRef _viewportProbe;
-    private readonly IActorRef _workspaceProbe;
-    private readonly IActorRef _validatorProbe;
+    private readonly Akka.TestKit.TestProbe _dispatchProbe;
+    private readonly Akka.TestKit.TestProbe _agentSupervisorProbe;
+    private readonly Akka.TestKit.TestProbe _viewportProbe;
+    private readonly Akka.TestKit.TestProbe _workspaceProbe;
+    private readonly Akka.TestKit.TestProbe _validatorProbe;
     private readonly IActorRef _taskGraph;
 
     public TaskGraphActorTests()
     {
-        _dispatchProbe = CreateTestProbe().Ref;
-        _agentSupervisorProbe = CreateTestProbe().Ref;
-        _viewportProbe = CreateTestProbe().Ref;
-        _workspaceProbe = CreateTestProbe().Ref;
-        _validatorProbe = CreateTestProbe().Ref;
+        _dispatchProbe = CreateTestProbe();
+        _agentSupervisorProbe = CreateTestProbe();
+        _viewportProbe = CreateTestProbe();
+        _workspaceProbe = CreateTestProbe();
+        _validatorProbe = CreateTestProbe();
 
         _taskGraph = Sys.ActorOf(Props.Create(() =>
             new TaskGraphActor(
-                _dispatchProbe,
-                _agentSupervisorProbe,
-                _viewportProbe,
-                _workspaceProbe,
-                _validatorProbe,
+                _dispatchProbe.Ref,
+                _agentSupervisorProbe.Ref,
+                _viewportProbe.Ref,
+                _workspaceProbe.Ref,
+                _validatorProbe.Ref,
                 NullLogger<TaskGraphActor>.Instance)));
     }
 
@@ -97,7 +97,11 @@ public class TaskGraphActorTests : TestKit
         ExpectMsg<TaskGraphAccepted>();
 
         _taskGraph.Tell(new TaskCompleted("t1", "agent-1", true, "done", "g3"));
-        var completed = ExpectMsg<TaskGraphCompleted>();
+        var release = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", release.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1"));
+
+        var completed = ExpectMsg<TaskGraphCompleted>(TimeSpan.FromSeconds(5));
         Assert.Equal("g3", completed.GraphId);
         Assert.True(completed.Results["t1"]);
     }
@@ -126,7 +130,14 @@ public class TaskGraphActorTests : TestKit
 
         // Now complete the subtasks
         _taskGraph.Tell(new TaskCompleted("t1/sub-0", "agent-2", true, "sub-a done", "g4"));
+        var releaseSub0 = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1/sub-0", releaseSub0.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1/sub-0"));
+
         _taskGraph.Tell(new TaskCompleted("t1/sub-1", "agent-3", true, "sub-b done", "g4"));
+        var releaseSub1 = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1/sub-1", releaseSub1.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1/sub-1"));
 
         // Parent should move to Synthesizing and agent supervisor gets SubtasksCompleted
         // Graph still not complete because parent is Synthesizing
@@ -135,6 +146,9 @@ public class TaskGraphActorTests : TestKit
         // Simulate synthesis completion
         Sys.EventStream.Subscribe(TestActor, typeof(TaskGraphCompleted));
         _taskGraph.Tell(new TaskCompleted("t1", "agent-1", true, "synthesized", "g4"));
+        var release = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", release.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1"));
         var graphCompleted = ExpectMsg<TaskGraphCompleted>();
         Assert.Equal("g4", graphCompleted.GraphId);
     }
@@ -245,11 +259,21 @@ public class TaskGraphActorTests : TestKit
 
         // Complete both subtasks
         _taskGraph.Tell(new TaskCompleted("t1/sub-0", "a2", true, "s1 done", "g-synth"));
+        var releaseSub0 = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1/sub-0", releaseSub0.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1/sub-0"));
+
         _taskGraph.Tell(new TaskCompleted("t1/sub-1", "a3", true, "s2 done", "g-synth"));
+        var releaseSub1 = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1/sub-1", releaseSub1.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1/sub-1"));
 
         // Parent should now be Synthesizing. Verify by completing synthesis and checking graph completion.
         Sys.EventStream.Subscribe(TestActor, typeof(TaskGraphCompleted));
         _taskGraph.Tell(new TaskCompleted("t1", "a1", true, "synthesized", "g-synth"));
+        var release = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", release.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1"));
         var completed = ExpectMsg<TaskGraphCompleted>();
         Assert.Equal("g-synth", completed.GraphId);
     }
@@ -271,10 +295,16 @@ public class TaskGraphActorTests : TestKit
 
         // Complete just one subtask
         _taskGraph.Tell(new TaskCompleted("t1/sub-1", "a2", true, "try-2 won", "g-first"));
+        var releaseWinner = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1/sub-1", releaseWinner.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1/sub-1"));
 
         // Synthesis should be triggered, siblings cancelled. Complete synthesis.
         Sys.EventStream.Subscribe(TestActor, typeof(TaskGraphCompleted));
         _taskGraph.Tell(new TaskCompleted("t1", "a1", true, "synthesized", "g-first"));
+        var release = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", release.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1"));
         var completed = ExpectMsg<TaskGraphCompleted>();
         Assert.Equal("g-first", completed.GraphId);
         // sub-0 and sub-2 should not be marked as completed
@@ -300,12 +330,21 @@ public class TaskGraphActorTests : TestKit
 
         // Complete subtask
         _taskGraph.Tell(new TaskCompleted("t1/sub-0", "a2", true, "sub done", "g-chain"));
+        var releaseSub0 = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1/sub-0", releaseSub0.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1/sub-0"));
 
         // Complete synthesis of t1
         _taskGraph.Tell(new TaskCompleted("t1", "a1", true, "synthesized", "g-chain"));
+        var releaseT1 = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", releaseT1.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1"));
 
         // t2 should now be dispatchable. Complete it.
         _taskGraph.Tell(new TaskCompleted("t2", "a3", true, "t2 done", "g-chain"));
+        var releaseT2 = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t2", releaseT2.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t2"));
 
         var completed = ExpectMsg<TaskGraphCompleted>();
         Assert.Equal("g-chain", completed.GraphId);
