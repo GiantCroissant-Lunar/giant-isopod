@@ -73,6 +73,16 @@ public sealed class GodotViewportBridge : IViewportBridge
         _eventQueue.Enqueue(new TaskGraphCompletedEvent(graphId, results));
     }
 
+    public void PublishArtifactFollowUpSuggested(string agentId, string artifactId, string suggestion)
+    {
+        _eventQueue.Enqueue(new ArtifactFollowUpSuggestedEvent(agentId, artifactId, suggestion));
+    }
+
+    public void PublishArtifactFollowUpSubmitted(string agentId, string artifactId, string submission)
+    {
+        _eventQueue.Enqueue(new ArtifactFollowUpSubmittedEvent(agentId, artifactId, submission));
+    }
+
     /// <summary>
     /// Called from Godot _Process to drain events on the main thread.
     /// </summary>
@@ -102,3 +112,7 @@ public record GenUIActionEvent(string AgentId, string SurfaceId, string ActionId
 public record TaskGraphSubmittedEvent(string GraphId, IReadOnlyList<TaskNode> Nodes, IReadOnlyList<TaskEdge> Edges) : ViewportEvent("");
 public record TaskNodeStatusChangedEvent(string GraphId, string TaskId, TaskNodeStatus Status, string? AssignedAgentId) : ViewportEvent("");
 public record TaskGraphCompletedEvent(string GraphId, IReadOnlyDictionary<string, bool> Results) : ViewportEvent("");
+
+// Artifact follow-up events
+public record ArtifactFollowUpSuggestedEvent(string AgentId, string ArtifactId, string Suggestion) : ViewportEvent(AgentId);
+public record ArtifactFollowUpSubmittedEvent(string AgentId, string ArtifactId, string Submission) : ViewportEvent(AgentId);

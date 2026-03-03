@@ -21,6 +21,10 @@ public interface IViewportBridge
     void PublishTaskGraphSubmitted(string graphId, IReadOnlyList<TaskNode> nodes, IReadOnlyList<TaskEdge> edges) { }
     void PublishTaskNodeStatusChanged(string graphId, string taskId, TaskNodeStatus status, string? agentId = null) { }
     void PublishTaskGraphCompleted(string graphId, IReadOnlyDictionary<string, bool> results) { }
+
+    // Artifact follow-up events (default no-op for non-Godot bridges)
+    void PublishArtifactFollowUpSuggested(string agentId, string artifactId, string suggestion) { }
+    void PublishArtifactFollowUpSubmitted(string agentId, string artifactId, string submission) { }
 }
 
 public enum AgentActivityState
