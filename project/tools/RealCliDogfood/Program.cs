@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
 using GiantIsopod.Plugin.Actors;
@@ -114,12 +115,15 @@ Fail if unrelated files were modified, the assertion target is wrong, or the tes
         return 3;
     }
 
+    var parsedResult = StructuredTaskResultParser.Parse(transcript, "real-task");
+    var memoryQueries = BuildMemoryQueries(taskDescription, parsedResult.Summary);
+
     var artifacts = await world.Artifacts.Ask<ArtifactListResult>(
         new GetArtifactsByTask("real-task"),
         TimeSpan.FromSeconds(10));
     PrintArtifactSummary(artifacts);
 
-    var memorySummary = await WaitForMemorySummaryAsync(world, tempMemory, agentId);
+    var memorySummary = await WaitForMemorySummaryAsync(world, tempMemory, agentId, memoryQueries);
     PrintMemorySummary(memorySummary);
 
     Console.WriteLine($"Status history: {string.Join(" -> ", statusHistory)}");
@@ -172,33 +176,82 @@ static void PrintArtifactSummary(ArtifactListResult artifacts)
 static void PrintMemorySummary(MemorySummary summary)
 {
     Console.WriteLine($"Memory file: {(summary.FileExists ? $"present ({summary.FilePath})" : "missing")}");
+    Console.WriteLine($"Memory query: {summary.Query}");
     Console.WriteLine($"Memory hits: {summary.SearchResult.Hits.Count}");
     foreach (var hit in summary.SearchResult.Hits.Take(3))
         Console.WriteLine($"  memory score={hit.Score:F3} title={hit.Title ?? "<none>"} text={hit.Text}");
 }
 
-static async Task<MemorySummary> WaitForMemorySummaryAsync(AgentWorldSystem world, string memoryBasePath, string agentId)
+static async Task<MemorySummary> WaitForMemorySummaryAsync(
+    AgentWorldSystem world,
+    string memoryBasePath,
+    string agentId,
+    IReadOnlyList<string> queries)
 {
     var mv2Path = Path.Combine(memoryBasePath, $"{agentId}.mv2");
+    var queryList = queries.Count > 0 ? queries : ["real-task"];
+    var lastQuery = queryList[0];
     var lastResult = new MemorySearchResult(agentId, "real-task", Array.Empty<MemoryHit>());
+    var fileExists = false;
 
     for (var attempt = 1; attempt <= 8; attempt++)
     {
         world.MemorySupervisor.Tell(new CommitMemory(agentId), ActorRefs.NoSender);
         await Task.Delay(TimeSpan.FromSeconds(1));
+        fileExists = File.Exists(mv2Path);
 
-        lastResult = await world.MemorySupervisor.Ask<MemorySearchResult>(
-            new SearchMemory(agentId, "task", "real-task", TopK: 5),
-            TimeSpan.FromSeconds(15));
+        foreach (var query in queryList)
+        {
+            lastQuery = query;
+            lastResult = await world.MemorySupervisor.Ask<MemorySearchResult>(
+                new SearchMemory(agentId, query, "real-task", TopK: 5),
+                TimeSpan.FromSeconds(15));
 
-        if (File.Exists(mv2Path) || lastResult.Hits.Count > 0)
-            return new MemorySummary(mv2Path, File.Exists(mv2Path), lastResult);
+            if (lastResult.Hits.Count > 0)
+                return new MemorySummary(mv2Path, fileExists, query, lastResult);
+        }
     }
 
-    return new MemorySummary(mv2Path, File.Exists(mv2Path), lastResult);
+    return new MemorySummary(mv2Path, fileExists, lastQuery, lastResult);
 }
 
-sealed record MemorySummary(string FilePath, bool FileExists, MemorySearchResult SearchResult);
+static IReadOnlyList<string> BuildMemoryQueries(string taskDescription, string? summary)
+{
+    var queries = new List<string>();
+
+    AddQuery(summary);
+    AddIdentifiers(summary);
+    AddQuery(taskDescription);
+    AddIdentifiers(taskDescription);
+    AddQuery("real-task");
+
+    return queries;
+
+    void AddQuery(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        var trimmed = value.Trim();
+        if (!queries.Contains(trimmed, StringComparer.Ordinal))
+            queries.Add(trimmed);
+    }
+
+    void AddIdentifiers(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        foreach (Match match in Regex.Matches(value, @"\b[A-Za-z_][A-Za-z0-9_]{6,}\b"))
+        {
+            var token = match.Value;
+            if (!queries.Contains(token, StringComparer.Ordinal))
+                queries.Add(token);
+        }
+    }
+}
+
+sealed record MemorySummary(string FilePath, bool FileExists, string Query, MemorySearchResult SearchResult);
 
 sealed class DogfoodViewportBridge : IViewportBridge
 {
