@@ -13,6 +13,13 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class AgentRuntimeActor : UntypedActor
 {
     private const int MaxExecutionAttempts = 3;
+    private static readonly IReadOnlyList<IRuntimeExecutionMiddleware> RuntimeMiddlewares =
+    [
+        new PromptTransportRuntimeMiddleware(),
+        new RetryTimeoutRuntimeMiddleware(),
+        new StructuredResultNormalizationMiddleware()
+    ];
+
     private readonly string _agentId;
     private readonly string? _runtimeId;
     private readonly ModelSpec? _model;
@@ -114,22 +121,39 @@ public sealed class AgentRuntimeActor : UntypedActor
             try
             {
                 RuntimeAttemptResult? finalAttempt = null;
+                var runtimeConfig = _config.Runtimes.ResolveOrDefault(_runtimeId ?? _config.DefaultRuntimeId);
+                var runtimeId = _runtimeId ?? runtimeConfig.Id;
+
                 for (var attemptNumber = 1; attemptNumber <= MaxExecutionAttempts; attemptNumber++)
                 {
                     var prompt = attemptNumber == 1
                         ? execute.Prompt
                         : BuildRetryPrompt(execute);
 
-                    var attempt = await RunAttemptAsync(prompt, execute, workDir, self, ct);
+                    var executionContext = new RuntimeExecutionContext(
+                        execute,
+                        runtimeConfig,
+                        runtimeId,
+                        workDir,
+                        attemptNumber,
+                        MaxExecutionAttempts,
+                        prompt);
+
+                    var attempt = await RuntimeExecutionPipeline.ExecuteAsync(
+                        executionContext,
+                        RuntimeMiddlewares,
+                        (ctx, attemptCt) => RunAttemptAsync(ctx, self, attemptCt),
+                        ct);
+
                     finalAttempt = attempt;
 
-                    if (ShouldAcceptAttempt(execute, attempt))
+                    if (!attempt.Retryable)
                         break;
 
                     if (attemptNumber < MaxExecutionAttempts)
                     {
                         self.Tell(new RuntimeEvent(_agentId,
-                            $"[WARN] Runtime returned an invalid structured result for task {execute.TaskId}. Retrying once with stricter instructions."));
+                            $"[WARN] Runtime attempt for task {execute.TaskId} will be retried: {attempt.RetryReason ?? "missing structured result"}"));
                     }
                 }
 
@@ -161,19 +185,21 @@ public sealed class AgentRuntimeActor : UntypedActor
     }
 
     private async Task<RuntimeAttemptResult> RunAttemptAsync(
-        string prompt,
-        ExecuteTaskPrompt execute,
-        string workDir,
+        RuntimeExecutionContext context,
         IActorRef self,
         CancellationToken ct)
     {
         var output = new StringBuilder();
-        var runtimeConfig = _config.Runtimes.ResolveOrDefault(_runtimeId ?? _config.DefaultRuntimeId);
-        await using var runtime = RuntimeFactory.Create(_agentId, runtimeConfig, _model, workDir, _config.RuntimeEnvironment);
+        await using var runtime = RuntimeFactory.Create(
+            _agentId,
+            context.RuntimeConfig,
+            _model,
+            context.WorkingDirectory,
+            _config.RuntimeEnvironment);
         _runtime = runtime;
 
         await runtime.StartAsync(ct);
-        await runtime.SendAsync(prompt, ct);
+        await runtime.SendAsync(context.EffectivePrompt, ct);
 
         await foreach (var line in runtime.ReadEventsAsync(ct))
         {
@@ -184,9 +210,15 @@ public sealed class AgentRuntimeActor : UntypedActor
             self.Tell(new RuntimeEvent(_agentId, line));
         }
 
-        var parsed = StructuredTaskResultParser.Parse(output.ToString(), execute.TaskId);
-        var artifacts = await WorkspaceArtifactCollector.CollectAsync(workDir, execute.TaskId, _agentId, ct);
-        return new RuntimeAttemptResult(parsed, artifacts);
+        var transcript = output.ToString();
+        var parsed = StructuredTaskResultParser.Parse(transcript, context.Request.TaskId);
+        var artifacts = await WorkspaceArtifactCollector.CollectAsync(
+            context.WorkingDirectory,
+            context.Request.TaskId,
+            _agentId,
+            ct);
+
+        return new RuntimeAttemptResult(parsed, artifacts, transcript);
     }
 
     private void StartAdhocExecution(string prompt)
@@ -258,38 +290,6 @@ public sealed class AgentRuntimeActor : UntypedActor
 
         var suffix = artifacts.Count > changedFiles.Length ? "..." : string.Empty;
         return $"Task completed with {artifacts.Count} workspace change(s): {string.Join(", ", changedFiles)}{suffix}";
-    }
-
-    private static bool ShouldAcceptAttempt(ExecuteTaskPrompt execute, RuntimeAttemptResult attempt)
-    {
-        var parsed = attempt.Parsed;
-        if (!parsed.HasEnvelope)
-            return false;
-
-        if (string.IsNullOrWhiteSpace(parsed.EnvelopeTaskId))
-            return false;
-
-        if (!string.Equals(parsed.EnvelopeTaskId, execute.TaskId, StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        if (parsed.Outcome == StructuredTaskResultParser.ParsedTaskOutcome.Failed)
-            return true;
-
-        if (parsed.Outcome == StructuredTaskResultParser.ParsedTaskOutcome.Decompose)
-            return attempt.Parsed.Subplan is not null;
-
-        if (parsed.Outcome != StructuredTaskResultParser.ParsedTaskOutcome.Completed)
-            return false;
-
-        if (parsed.ExpectedArtifactTypes.Count > 0 && attempt.Artifacts.Count == 0 && !(execute.AllowNoOpCompletion && parsed.NoOp))
-            return false;
-
-        if (attempt.Artifacts.Count > 0)
-            return true;
-
-        return !string.IsNullOrWhiteSpace(parsed.Summary);
     }
 
     private void PublishFinalResult(ExecuteTaskPrompt execute, RuntimeAttemptResult attempt, IActorRef parent)
@@ -430,6 +430,9 @@ internal sealed class TokenBudgetState(int maxTokens)
     public bool Warned { get; set; }
 }
 
-internal sealed record RuntimeAttemptResult(
+public sealed record RuntimeAttemptResult(
     StructuredTaskResultParser.ParsedTaskResult Parsed,
-    IReadOnlyList<ArtifactRef> Artifacts);
+    IReadOnlyList<ArtifactRef> Artifacts,
+    string Transcript,
+    bool Retryable = false,
+    string? RetryReason = null);
