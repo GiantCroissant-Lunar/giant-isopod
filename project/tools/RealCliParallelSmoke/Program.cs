@@ -83,14 +83,14 @@ try
 }
 """;
 
-    var agentIds = new List<string>();
     foreach (var runtimeId in runtimesToUse)
     {
         for (var i = 1; i <= agentsPerRuntime; i++)
         {
             var agentId = $"{runtimeId}-parallel-{i}";
-            agentIds.Add(agentId);
-            world.AgentSupervisor.Tell(new SpawnAgent(agentId, profileJson, "builder", RuntimeId: runtimeId), ActorRefs.NoSender);
+            await world.AgentSupervisor.Ask<AgentSpawned>(
+                new SpawnAgent(agentId, profileJson, "builder", RuntimeId: runtimeId),
+                TimeSpan.FromSeconds(10));
         }
     }
 
@@ -229,6 +229,7 @@ sealed class ParallelSmokeViewportBridge : IViewportBridge
     private readonly ConcurrentDictionary<string, TaskCompletionSource<TaskGraphCompletedEvent>> _graphCompletions = new();
     private readonly ConcurrentDictionary<string, string> _completedAssignments = new();
     private readonly ConcurrentDictionary<string, int> _runtimeStarts = new();
+    private readonly ConcurrentDictionary<string, byte> _spawnedAgents = new();
 
     public Task<TaskGraphCompletedEvent> WaitForCompletionAsync(string graphId, TimeSpan timeout)
     {
@@ -254,6 +255,9 @@ sealed class ParallelSmokeViewportBridge : IViewportBridge
 
     public void PublishAgentSpawned(string agentId, AgentVisualInfo visualInfo)
     {
+        if (!_spawnedAgents.TryAdd(agentId, 0))
+            return;
+
         Console.WriteLine($"[spawned] {agentId}");
     }
 

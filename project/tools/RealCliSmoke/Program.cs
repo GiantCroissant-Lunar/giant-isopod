@@ -78,7 +78,9 @@ try
 }
 """;
 
-    world.AgentSupervisor.Tell(new SpawnAgent(agentId, profileJson, "builder", RuntimeId: runtimeId), ActorRefs.NoSender);
+    await world.AgentSupervisor.Ask<AgentSpawned>(
+        new SpawnAgent(agentId, profileJson, "builder", RuntimeId: runtimeId),
+        TimeSpan.FromSeconds(10));
     await Task.Delay(TimeSpan.FromSeconds(2));
 
     var graphId = $"smoke-{runtimeId}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
@@ -373,6 +375,7 @@ sealed class SmokeViewportBridge : IViewportBridge
     private readonly ConcurrentDictionary<string, TaskNodeStatus> _taskStatuses = new();
     private readonly ConcurrentDictionary<string, List<TaskNodeStatus>> _taskStatusHistory = new();
     private readonly ConcurrentDictionary<string, List<string>> _runtimeOutput = new();
+    private readonly ConcurrentDictionary<string, byte> _spawnedAgents = new();
 
     public Task<TaskGraphCompletedEvent> WaitForCompletionAsync(string graphId, TimeSpan timeout)
     {
@@ -406,6 +409,9 @@ sealed class SmokeViewportBridge : IViewportBridge
 
     public void PublishAgentSpawned(string agentId, AgentVisualInfo visualInfo)
     {
+        if (!_spawnedAgents.TryAdd(agentId, 0))
+            return;
+
         Console.WriteLine($"[spawned] {agentId}");
     }
 

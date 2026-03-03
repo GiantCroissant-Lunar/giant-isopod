@@ -701,9 +701,9 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             kv => kv.Value == TaskNodeStatus.Completed);
 
         Timers.Cancel($"deadline-{graphId}");
-        _viewport.Tell(new TaskGraphCompleted(graphId, results));
-        Context.Parent.Tell(new TaskGraphCompleted(graphId, results));
-        Context.System.EventStream.Publish(new TaskGraphCompleted(graphId, results));
+        var completed = new TaskGraphCompleted(graphId, results);
+        _viewport.Tell(completed);
+        Context.System.EventStream.Publish(completed);
 
         _graphs.Remove(graphId);
         _logger.LogInformation("Graph {GraphId} completed: {Done}/{Total} succeeded",
