@@ -240,6 +240,12 @@ public partial class HudController : Control
             case AgUiViewportEvent agui:
                 HandleAgUiEvent(agui.AgentId, agui.Event);
                 break;
+            case ArtifactFollowUpSuggestedEvent suggested:
+                _terminalManager.AppendOutput(suggested.AgentId, $"[FOLLOW-UP] Suggested for {suggested.ArtifactId}: {suggested.Suggestion}", _showingTerminal, _selectedAgentId);
+                break;
+            case ArtifactFollowUpSubmittedEvent submitted:
+                _terminalManager.AppendOutput(submitted.AgentId, $"[FOLLOW-UP] Submitted for {submitted.ArtifactId}: {submitted.Submission}", _showingTerminal, _selectedAgentId);
+                break;
         }
     }
 
