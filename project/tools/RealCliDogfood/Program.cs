@@ -59,6 +59,7 @@ try
         DefaultRuntimeId = runtimesToUse[0],
         RuntimeWorkingDirectory = repoRoot,
         AnchorRepoPath = repoRoot,
+        IntegrationBranch = ResolveCurrentBranch(repoRoot),
         RuntimeEnvironment = BuildRuntimeEnvironment(),
         MemvidExecutable = "memvid",
         MemorySidecarExecutable = "memory-sidecar"
@@ -96,9 +97,11 @@ try
     }
     await Task.Delay(TimeSpan.FromSeconds(2));
 
+    TaskNode[] nodes;
     if (graphManifest != null)
     {
-        foreach (var validator in graphManifest.Validators)
+        nodes = BuildManifestNodes(graphManifest);
+        foreach (var validator in BuildManifestValidators(graphManifest))
         {
             var spec = new ValidatorSpec(
                 validator.Name,
@@ -115,6 +118,15 @@ try
     }
     else
     {
+        nodes =
+        [
+            new TaskNode(
+                "real-task",
+                taskDescription,
+                new HashSet<string> { "code_edit" },
+                RequiredValidators: new[] { "agent-review" })
+        ];
+
         var validatorSpec = new ValidatorSpec(
             Name: "agent-review",
             Kind: ValidatorKind.AgentReview,
@@ -132,16 +144,6 @@ try
     var graphId = graphManifest != null
         ? $"{graphManifest.GraphIdPrefix}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}"
         : $"dogfood-{runtimesToUse[0]}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
-
-    var nodes = graphManifest?.Nodes.Select(ToTaskNode).ToArray()
-        ??
-        [
-            new TaskNode(
-                "real-task",
-                taskDescription,
-                new HashSet<string> { "code_edit" },
-                RequiredValidators: new[] { "agent-review" })
-        ];
 
     var edges = graphManifest?.Edges.Select(edge => new TaskEdge(edge.FromTaskId, edge.ToTaskId)).ToArray()
         ?? Array.Empty<TaskEdge>();
@@ -222,6 +224,36 @@ static string ResolveTaskDescription(IEnumerable<string> args)
     }
 
     return string.Join(" ", parts);
+}
+
+static string ResolveCurrentBranch(string repoRoot)
+{
+    using var process = new Process
+    {
+        StartInfo = new ProcessStartInfo
+        {
+            FileName = "git",
+            WorkingDirectory = repoRoot,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        }
+    };
+
+    process.StartInfo.ArgumentList.Add("rev-parse");
+    process.StartInfo.ArgumentList.Add("--abbrev-ref");
+    process.StartInfo.ArgumentList.Add("HEAD");
+    process.Start();
+    var stdout = process.StandardOutput.ReadToEnd();
+    var stderr = process.StandardError.ReadToEnd();
+    process.WaitForExit();
+
+    if (process.ExitCode != 0)
+        throw new InvalidOperationException($"Failed to resolve current branch: {stderr}");
+
+    var branch = stdout.Trim();
+    return string.IsNullOrWhiteSpace(branch) ? "main" : branch;
 }
 
 static GraphManifest? TryLoadGraphManifest(string? taskSpecArg)
@@ -467,15 +499,54 @@ static async Task<CommandOutput> RunSidecarCommandAsync(string executable, IRead
     return new CommandOutput(process.ExitCode, await stdoutTask, await stderrTask);
 }
 
-static TaskNode ToTaskNode(GraphManifestNode node)
+static TaskNode[] BuildManifestNodes(GraphManifest manifest)
 {
-    return new TaskNode(
-        node.TaskId,
-        node.Description,
-        new HashSet<string>(node.RequiredCapabilities, StringComparer.Ordinal),
-        RequiredValidators: node.RequiredValidators,
-        MaxValidationAttempts: node.MaxValidationAttempts ?? 2,
-        PreferredRuntimeId: node.PreferredRuntimeId);
+    return manifest.Nodes.Select(node =>
+    {
+        var requiredValidators = node.RequiredValidators?.Select(name => $"{name}-{node.TaskId}").ToArray();
+        return new TaskNode(
+            node.TaskId,
+            node.Description,
+            new HashSet<string>(node.RequiredCapabilities, StringComparer.Ordinal),
+            RequiredValidators: requiredValidators,
+            MaxValidationAttempts: node.MaxValidationAttempts ?? 2,
+            PreferredRuntimeId: node.PreferredRuntimeId);
+    }).ToArray();
+}
+
+static IEnumerable<GraphManifestValidator> BuildManifestValidators(GraphManifest manifest)
+{
+    var templates = manifest.Validators.ToDictionary(v => v.Name, StringComparer.Ordinal);
+    foreach (var node in manifest.Nodes)
+    {
+        if (node.RequiredValidators is not { Count: > 0 })
+            continue;
+
+        foreach (var validatorName in node.RequiredValidators)
+        {
+            if (!templates.TryGetValue(validatorName, out var template))
+                continue;
+
+            yield return template with
+            {
+                Name = $"{template.Name}-{node.TaskId}",
+                Rubric = BuildGraphTaskReviewRubric(template.Rubric, node.TaskId, node.Description)
+            };
+        }
+    }
+}
+
+static string BuildGraphTaskReviewRubric(string rubric, string taskId, string taskDescription)
+{
+    return $"""
+{rubric}
+
+Validate only task `{taskId}`.
+Submitted task:
+{taskDescription}
+
+Judge the artifact against this exact submitted task, not against any other batch node or generic feature summary.
+""";
 }
 
 sealed record MemorySummary(

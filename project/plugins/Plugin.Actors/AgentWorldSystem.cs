@@ -88,7 +88,7 @@ public sealed class AgentWorldSystem : IDisposable
 
         Workspace = _system.ActorOf(
             Props.Create(() => new WorkspaceActor(
-                anchorRepoPath, "main",
+                anchorRepoPath, config.IntegrationBranch,
                 loggerFactory.CreateLogger<WorkspaceActor>())),
             "workspace");
 
@@ -156,6 +156,9 @@ public record AgentWorldConfig
 
     /// <summary>Anchor repo path for workspace worktrees. Defaults to RuntimeWorkingDirectory.</summary>
     public string AnchorRepoPath { get; init; } = "";
+
+    /// <summary>Branch that task worktrees should merge back into.</summary>
+    public string IntegrationBranch { get; init; } = "main";
 
     /// <summary>Extra environment variables merged into all agent runtimes (e.g. API keys).</summary>
     public Dictionary<string, string> RuntimeEnvironment { get; init; } = new();
