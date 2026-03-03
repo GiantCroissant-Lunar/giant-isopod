@@ -33,6 +33,20 @@ public class TaskGraphActorTests : TestKit
                 NullLogger<TaskGraphActor>.Instance)));
     }
 
+    private IActorRef CreateTaskGraph(ITaskGraphCheckpointStore checkpointStore, IActorRef? knowledgeSupervisor = null)
+    {
+        return Sys.ActorOf(Props.Create(() =>
+            new TaskGraphActor(
+                _dispatchProbe.Ref,
+                _agentSupervisorProbe.Ref,
+                _viewportProbe.Ref,
+                _workspaceProbe.Ref,
+                _validatorProbe.Ref,
+                knowledgeSupervisor ?? ActorRefs.Nobody,
+                checkpointStore,
+                NullLogger<TaskGraphActor>.Instance)));
+    }
+
     private static HashSet<string> Caps(params string[] caps) => new(caps);
 
     private static SubmitTaskGraph MakeGraph(
@@ -488,5 +502,57 @@ public class TaskGraphActorTests : TestKit
         Assert.Equal("g-timeout", completed.GraphId);
         // All tasks should have failed or been cancelled
         Assert.False(completed.Results["t1"]);
+    }
+
+    [Fact]
+    public void Submit_PersistsCheckpoint_AndCompletionDeletesIt()
+    {
+        var checkpointDir = Path.Combine(Path.GetTempPath(), $"gi-taskgraph-checkpoint-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(checkpointDir);
+        var checkpointStore = new FileTaskGraphCheckpointStore(checkpointDir);
+        var taskGraph = CreateTaskGraph(checkpointStore);
+
+        taskGraph.Tell(MakeGraph("g-checkpoint", new[] { Node("t1") }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+
+        var saved = checkpointStore.LoadAll();
+        Assert.Single(saved);
+        Assert.Equal("g-checkpoint", saved[0].GraphId);
+
+        taskGraph.Tell(new TaskCompleted("t1", "agent-1", true, "done", "g-checkpoint"));
+        var release = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", release.TaskId);
+        taskGraph.Tell(new WorkspaceReleased("t1"));
+
+        Sys.EventStream.Subscribe(TestActor, typeof(TaskGraphCompleted));
+        ExpectMsg<TaskGraphCompleted>(TimeSpan.FromSeconds(5));
+
+        Assert.Empty(checkpointStore.LoadAll());
+        Directory.Delete(checkpointDir, recursive: true);
+    }
+
+    [Fact]
+    public void Restore_RequeuesDispatchedLeafTaskFromCheckpoint()
+    {
+        var checkpointDir = Path.Combine(Path.GetTempPath(), $"gi-taskgraph-restore-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(checkpointDir);
+        var checkpointStore = new FileTaskGraphCheckpointStore(checkpointDir);
+
+        var firstActor = CreateTaskGraph(checkpointStore);
+        firstActor.Tell(MakeGraph("g-restore", new[] { Node("t1") }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+        _dispatchProbe.ExpectMsg<TaskRequest>(TimeSpan.FromSeconds(5));
+
+        Watch(firstActor);
+        Sys.Stop(firstActor);
+        ExpectTerminated(firstActor, TimeSpan.FromSeconds(5));
+
+        var restoredActor = CreateTaskGraph(checkpointStore);
+        _dispatchProbe.ExpectMsg<TaskRequest>(msg => msg.TaskId == "t1", TimeSpan.FromSeconds(5));
+
+        Watch(restoredActor);
+        Sys.Stop(restoredActor);
+        ExpectTerminated(restoredActor, TimeSpan.FromSeconds(5));
+        Directory.Delete(checkpointDir, recursive: true);
     }
 }

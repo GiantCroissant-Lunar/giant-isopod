@@ -22,6 +22,7 @@ public sealed class AgentWorldSystem : IDisposable
     public IActorRef TaskGraph { get; }
     public IActorRef Viewport { get; }
     public IActorRef Artifacts { get; }
+    public IActorRef ArtifactFollowups { get; }
     public IActorRef Workspace { get; }
     public IActorRef Validator { get; }
     public IActorRef A2A { get; }
@@ -114,8 +115,16 @@ public sealed class AgentWorldSystem : IDisposable
         TaskGraph = _system.ActorOf(
             Props.Create(() => new TaskGraphActor(
                 Dispatch, AgentSupervisor, Viewport, Workspace, Validator, KnowledgeSupervisor,
+                CreateCheckpointStore(config),
                 loggerFactory.CreateLogger<TaskGraphActor>())),
             "taskgraph");
+
+        ArtifactFollowups = _system.ActorOf(
+            Props.Create(() => new ArtifactFollowupActor(
+                Artifacts,
+                TaskGraph,
+                loggerFactory.CreateLogger<ArtifactFollowupActor>())),
+            "artifact-followups");
 
         A2A = _system.ActorOf(
             Props.Create(() => new A2AActor(
@@ -136,6 +145,15 @@ public sealed class AgentWorldSystem : IDisposable
         _system.Terminate().Wait(TimeSpan.FromSeconds(10));
         _system.Dispose();
         _logger.LogInformation("Actor system stopped");
+    }
+
+    private static ITaskGraphCheckpointStore CreateCheckpointStore(AgentWorldConfig config)
+    {
+        var checkpointBasePath = !string.IsNullOrWhiteSpace(config.CheckpointBasePath)
+            ? config.CheckpointBasePath
+            : Path.Combine(config.MemoryBasePath, "task-graph-checkpoints");
+
+        return new FileTaskGraphCheckpointStore(checkpointBasePath);
     }
 }
 
@@ -165,4 +183,5 @@ public record AgentWorldConfig
 
     public string MemvidExecutable { get; init; } = "memvid";
     public string MemorySidecarExecutable { get; init; } = "memory-sidecar";
+    public string CheckpointBasePath { get; init; } = "";
 }

@@ -20,6 +20,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     private readonly IActorRef _workspace;
     private readonly IActorRef _validator;
     private readonly IActorRef _knowledgeSupervisor;
+    private readonly ITaskGraphCheckpointStore _checkpointStore;
     private readonly ILogger<TaskGraphActor> _logger;
     private readonly Dictionary<string, GraphState> _graphs = new();
     private const string PlannerKnowledgeAgentId = "task-planner";
@@ -27,7 +28,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     public ITimerScheduler Timers { get; set; } = null!;
 
     public TaskGraphActor(IActorRef dispatch, IActorRef agentSupervisor, IActorRef viewport, IActorRef workspace, IActorRef validator, ILogger<TaskGraphActor> logger)
-        : this(dispatch, agentSupervisor, viewport, workspace, validator, ActorRefs.Nobody, logger)
+        : this(dispatch, agentSupervisor, viewport, workspace, validator, ActorRefs.Nobody, NullTaskGraphCheckpointStore.Instance, logger)
     {
     }
 
@@ -39,6 +40,19 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         IActorRef validator,
         IActorRef knowledgeSupervisor,
         ILogger<TaskGraphActor> logger)
+        : this(dispatch, agentSupervisor, viewport, workspace, validator, knowledgeSupervisor, NullTaskGraphCheckpointStore.Instance, logger)
+    {
+    }
+
+    public TaskGraphActor(
+        IActorRef dispatch,
+        IActorRef agentSupervisor,
+        IActorRef viewport,
+        IActorRef workspace,
+        IActorRef validator,
+        IActorRef knowledgeSupervisor,
+        ITaskGraphCheckpointStore checkpointStore,
+        ILogger<TaskGraphActor> logger)
     {
         _dispatch = dispatch;
         _agentSupervisor = agentSupervisor;
@@ -46,7 +60,14 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         _workspace = workspace;
         _validator = validator;
         _knowledgeSupervisor = knowledgeSupervisor;
+        _checkpointStore = checkpointStore;
         _logger = logger;
+    }
+
+    protected override void PreStart()
+    {
+        RestoreCheckpoints();
+        base.PreStart();
     }
 
     protected override void OnReceive(object message)
@@ -97,10 +118,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         }
 
         _graphs[submit.GraphId] = state;
-        Sender.Tell(new TaskGraphAccepted(submit.GraphId, submit.Nodes.Count, submit.Edges.Count));
         _viewport.Tell(new NotifyTaskGraphSubmitted(submit.GraphId, submit.Nodes, submit.Edges));
-        _logger.LogInformation("Task graph {GraphId} accepted: {Nodes} nodes, {Edges} edges",
-            submit.GraphId, submit.Nodes.Count, submit.Edges.Count);
 
         // Schedule graph-level deadline if present
         if (submit.GraphBudget?.Deadline is { } deadline)
@@ -112,6 +130,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         }
 
         DispatchReadyNodes(state);
+        PersistGraphState(state);
+        Sender.Tell(new TaskGraphAccepted(submit.GraphId, submit.Nodes.Count, submit.Edges.Count));
+        _logger.LogInformation("Task graph {GraphId} accepted: {Nodes} nodes, {Edges} edges",
+            submit.GraphId, submit.Nodes.Count, submit.Edges.Count);
     }
 
     private void HandleTaskCompleted(TaskCompleted completed)
@@ -161,6 +183,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                     node?.OwnedPaths,
                     node?.ExpectedFiles));
             }
+            PersistGraphState(state);
             return; // Wait for ValidationComplete messages
         }
         else
@@ -170,6 +193,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         }
 
         CheckGraphCompletion(graphId, state);
+        PersistGraphStateIfActive(graphId, state);
     }
 
     private void HandleDecomposition(string graphId, GraphState state, TaskCompleted completed)
@@ -305,6 +329,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
         // Dispatch ready subtasks
         DispatchReadyNodes(state);
+        PersistGraphState(state);
     }
 
     private void RejectDecomposition(string graphId, GraphState state, TaskCompleted completed, string reason)
@@ -325,6 +350,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         _agentSupervisor.Tell(new ForwardToAgent(
             completed.AgentId,
             new TaskDecompositionRejected(completed.TaskId, reason, graphId)));
+        PersistGraphState(state);
     }
 
     private void CheckSubtasksCompleted(string graphId, GraphState state, string completedTaskId)
@@ -430,6 +456,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         CompleteTaskNode(graphId, state, completed);
         RequestWorkspaceRelease(state, merged.TaskId);
         CheckGraphCompletion(graphId, state);
+        PersistGraphStateIfActive(graphId, state);
     }
 
     private void HandleMergeConflict(MergeConflict conflict)
@@ -457,6 +484,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         CancelDependents(state, conflict.TaskId);
         RequestWorkspaceRelease(state, conflict.TaskId);
         CheckGraphCompletion(graphId, state);
+        PersistGraphStateIfActive(graphId, state);
     }
 
     private void HandleValidationComplete(ValidationComplete validation)
@@ -508,7 +536,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         pending.RemainingArtifacts--;
 
         if (pending.RemainingArtifacts > 0)
+        {
+            PersistGraphState(state);
             return; // Still waiting for more artifacts
+        }
 
         // All artifacts validated — check results
         state.PendingValidation.Remove(taskId);
@@ -537,6 +568,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 CompleteTaskNode(graphId, state, pending.Completed);
                 RequestWorkspaceRelease(state, taskId);
                 CheckGraphCompletion(graphId, state);
+                PersistGraphStateIfActive(graphId, state);
             }
         }
         else
@@ -587,6 +619,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                         node?.ExpectedFiles,
                         node?.AllowNoOpCompletion ?? false);
                 _dispatch.Tell(request);
+                PersistGraphState(state);
             }
             else
             {
@@ -613,6 +646,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 CancelDependents(state, taskId);
                 RequestWorkspaceRelease(state, taskId);
                 CheckGraphCompletion(graphId, state);
+                PersistGraphStateIfActive(graphId, state);
             }
         }
     }
@@ -657,6 +691,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         RequestWorkspaceRelease(state, failed.TaskId);
         CheckSubtasksCompleted(graphId, state, failed.TaskId);
         CheckGraphCompletion(graphId, state);
+        PersistGraphStateIfActive(graphId, state);
     }
 
     private void HandleWorkspaceReleased(WorkspaceReleased released)
@@ -669,6 +704,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
         _logger.LogDebug("Graph {GraphId}: workspace released for task {TaskId}", graphId, released.TaskId);
         CheckGraphCompletion(graphId, state);
+        PersistGraphStateIfActive(graphId, state);
     }
 
     private void RequestWorkspaceRelease(GraphState state, string taskId)
@@ -798,6 +834,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         }
 
         CheckGraphCompletion(timedOut.GraphId, state);
+        PersistGraphStateIfActive(timedOut.GraphId, state);
     }
 
     private void CheckGraphCompletion(string graphId, GraphState state)
@@ -812,15 +849,64 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             kv => kv.Value == TaskNodeStatus.Completed);
 
         Timers.Cancel($"deadline-{graphId}");
+        _graphs.Remove(graphId);
+        _checkpointStore.Delete(graphId);
         var completed = new TaskGraphCompleted(graphId, results);
         _viewport.Tell(completed);
         Context.System.EventStream.Publish(completed);
-
-        _graphs.Remove(graphId);
         _logger.LogInformation("Graph {GraphId} completed: {Done}/{Total} succeeded",
             graphId,
             results.Values.Count(v => v),
             results.Count);
+    }
+
+    private void PersistGraphStateIfActive(string graphId, GraphState state)
+    {
+        if (_graphs.ContainsKey(graphId))
+            PersistGraphState(state);
+    }
+
+    private void PersistGraphState(GraphState state)
+    {
+        try
+        {
+            _checkpointStore.Save(state.ToCheckpoint());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist checkpoint for graph {GraphId}", state.GraphId);
+        }
+    }
+
+    private void RestoreCheckpoints()
+    {
+        foreach (var checkpoint in _checkpointStore.LoadAll())
+        {
+            try
+            {
+                var state = GraphState.FromCheckpoint(checkpoint, _logger);
+                _graphs[state.GraphId] = state;
+                _viewport.Tell(new NotifyTaskGraphSubmitted(state.GraphId, state.Nodes.Values.ToArray(), state.Edges));
+                foreach (var (taskId, status) in state.Status)
+                    _viewport.Tell(new NotifyTaskNodeStatusChanged(state.GraphId, taskId, status));
+
+                if (state.GraphBudget?.Deadline is { } deadline)
+                {
+                    Timers.StartSingleTimer(
+                        $"deadline-{state.GraphId}",
+                        new GraphTimedOut(state.GraphId),
+                        deadline);
+                }
+
+                DispatchReadyNodes(state);
+                PersistGraphState(state);
+                _logger.LogInformation("Restored task graph checkpoint {GraphId} with {NodeCount} nodes", state.GraphId, state.Nodes.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to restore task graph checkpoint {GraphId}", checkpoint.GraphId);
+            }
+        }
     }
 
     private void StorePlanningFeedback(string category, string content, IDictionary<string, string> tags)
@@ -893,7 +979,9 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     internal sealed class GraphState
     {
         public required string GraphId { get; init; }
+        public required TaskBudget? GraphBudget { get; init; }
         public required Dictionary<string, TaskNode> Nodes { get; init; }
+        public required IReadOnlyList<TaskEdge> Edges { get; init; }
         public required Dictionary<string, List<string>> IncomingEdges { get; init; }
         public required Dictionary<string, List<string>> OutgoingEdges { get; init; }
         public required Dictionary<string, TaskNodeStatus> Status { get; init; }
@@ -987,13 +1075,93 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             return (new GraphState
             {
                 GraphId = submit.GraphId,
+                GraphBudget = submit.GraphBudget,
                 Nodes = nodes,
+                Edges = submit.Edges.ToArray(),
                 IncomingEdges = incoming,
                 OutgoingEdges = outgoing,
                 Status = status,
                 Depth = depth,
                 ParentTaskId = parentTaskId,
             }, null);
+        }
+
+        public TaskGraphCheckpoint ToCheckpoint()
+        {
+            return new TaskGraphCheckpoint(
+                GraphId,
+                GraphBudget,
+                Nodes.Values.OrderBy(node => node.TaskId).ToArray(),
+                Edges.ToArray(),
+                new Dictionary<string, TaskNodeStatus>(Status),
+                new Dictionary<string, int>(Depth),
+                new Dictionary<string, string?>(ParentTaskId),
+                ChildTaskIds.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value.ToArray()),
+                StopConditions.ToDictionary(kv => kv.Key, kv => kv.Value),
+                new Dictionary<string, string>(AssignedAgent),
+                new Dictionary<string, TaskCompleted>(CompletedResults),
+                new Dictionary<string, TaskCompleted>(PendingMerge),
+                PendingValidation.ToDictionary(
+                    kv => kv.Key,
+                    kv => new PendingValidationCheckpoint(
+                        kv.Value.Completed,
+                        kv.Value.RemainingArtifacts,
+                        kv.Value.AllResults.ToArray())),
+                new Dictionary<string, int>(ValidationAttempts),
+                PendingWorkspaceRelease.OrderBy(id => id).ToArray());
+        }
+
+        public static GraphState FromCheckpoint(TaskGraphCheckpoint checkpoint, ILogger logger)
+        {
+            var submit = new SubmitTaskGraph(
+                checkpoint.GraphId,
+                checkpoint.Nodes,
+                checkpoint.Edges,
+                checkpoint.GraphBudget);
+
+            var (state, rejectReason) = TryCreate(submit, logger);
+            if (state is null)
+                throw new InvalidOperationException($"Failed to restore checkpoint {checkpoint.GraphId}: {rejectReason}");
+
+            foreach (var (taskId, status) in checkpoint.Status)
+                state.Status[taskId] = NormalizeRestoredStatus(status);
+
+            foreach (var (taskId, depth) in checkpoint.Depth)
+                state.Depth[taskId] = depth;
+
+            foreach (var (taskId, parentTaskId) in checkpoint.ParentTaskId)
+                state.ParentTaskId[taskId] = parentTaskId;
+
+            foreach (var (taskId, childIds) in checkpoint.ChildTaskIds)
+                state.ChildTaskIds[taskId] = childIds.ToList();
+
+            foreach (var (taskId, stopCondition) in checkpoint.StopConditions)
+                state.StopConditions[taskId] = stopCondition;
+
+            foreach (var (taskId, agentId) in checkpoint.AssignedAgent)
+                state.AssignedAgent[taskId] = agentId;
+
+            foreach (var (taskId, result) in checkpoint.CompletedResults)
+                state.CompletedResults[taskId] = result;
+
+            foreach (var (taskId, attempts) in checkpoint.ValidationAttempts)
+                state.ValidationAttempts[taskId] = attempts;
+
+            return state;
+        }
+
+        private static TaskNodeStatus NormalizeRestoredStatus(TaskNodeStatus status)
+        {
+            return status switch
+            {
+                TaskNodeStatus.Pending => TaskNodeStatus.Pending,
+                TaskNodeStatus.Completed => TaskNodeStatus.Completed,
+                TaskNodeStatus.Failed => TaskNodeStatus.Failed,
+                TaskNodeStatus.Cancelled => TaskNodeStatus.Cancelled,
+                TaskNodeStatus.WaitingForSubtasks => TaskNodeStatus.WaitingForSubtasks,
+                TaskNodeStatus.Synthesizing => TaskNodeStatus.Synthesizing,
+                _ => TaskNodeStatus.Pending
+            };
         }
 
         internal static void AddImplicitOwnershipEdges(
