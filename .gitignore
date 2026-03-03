@@ -24,3 +24,7 @@ data/memory/
 # Temp/build logs
 .nuke/temp/
 output.txt
+
+# Editor directories
+.claude/
+.kiro/
