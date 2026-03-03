@@ -159,4 +159,32 @@ Wait, I need to reconsider the approach.
         Assert.Null(parsed.Subplan);
         Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
     }
+
+    [Fact]
+    public void Parse_UsesLastEnvelopeWithDifferentTaskIds()
+    {
+        var output = """
+Analyzing the requirements...
+
+<giant-isopod-result>
+{"task_id":"task-prev","outcome":"failed","summary":"Initial approach failed.","artifacts_expected":[],"failure_reason":"Dependency missing.","subplan":null}
+</giant-isopod-result>
+
+After fixing the issue:
+
+<giant-isopod-result>
+{"task_id":"task-final","outcome":"completed","summary":"Successfully implemented the feature.","artifacts_expected":["Code"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+""";
+
+        var parsed = StructuredTaskResultParser.Parse(output, "task-final");
+
+        Assert.True(parsed.HasEnvelope);
+        Assert.Equal("task-final", parsed.EnvelopeTaskId);
+        Assert.Equal(StructuredTaskResultParser.ParsedTaskOutcome.Completed, parsed.Outcome);
+        Assert.Equal("Successfully implemented the feature.", parsed.Summary);
+        Assert.Null(parsed.FailureReason);
+        Assert.Null(parsed.Subplan);
+        Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
+    }
 }
