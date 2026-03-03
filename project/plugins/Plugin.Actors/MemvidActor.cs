@@ -6,8 +6,8 @@ using Microsoft.Extensions.Logging;
 namespace GiantIsopod.Plugin.Actors;
 
 /// <summary>
-/// /user/memory/{agent} — owns a single agent's Memvid .mv2 file.
-/// Delegates to Plugin.Process.MemvidClient for actual CLI operations.
+/// /user/memory/{agent} — owns a single agent's episodic .mv2 file.
+/// Delegates to Plugin.Process.MemvidClient, which now routes through memory-sidecar.
 /// </summary>
 public sealed class MemvidActor : UntypedActor
 {
@@ -19,10 +19,10 @@ public sealed class MemvidActor : UntypedActor
     private ICancelable? _commitTimer;
     private bool _pendingCommit;
 
-    public MemvidActor(string agentId, string mv2Path, string memvidExecutable, ILogger<MemvidActor> logger)
+    public MemvidActor(string agentId, string mv2Path, string sidecarExecutable, ILogger<MemvidActor> logger)
     {
         _agentId = agentId;
-        _client = new MemvidClient(agentId, mv2Path, memvidExecutable);
+        _client = new MemvidClient(agentId, mv2Path, sidecarExecutable);
         _logger = logger;
     }
 

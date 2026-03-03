@@ -16,7 +16,9 @@ public sealed class MemorySidecarClient
     public MemorySidecarClient(string dataDir, string executable = "memory-sidecar")
     {
         _dataDir = dataDir;
-        _executable = ResolveExecutablePath(executable);
+        _executable = CliExecutableResolver.Resolve(
+            executable,
+            CliExecutableResolver.SidecarRepoLocalCandidates(executable));
     }
 
     public async Task<IndexStats> IndexCodebaseAsync(string sourcePath, CancellationToken ct = default)
@@ -110,100 +112,6 @@ public sealed class MemorySidecarClient
 
     private string CodebaseDbPath() => Path.Combine(_dataDir, "codebase.sqlite");
     private string KnowledgeDbPath(string agentId) => Path.Combine(_dataDir, "knowledge", $"{agentId}.sqlite");
-
-    private static string ResolveExecutablePath(string executable)
-    {
-        if (Path.IsPathRooted(executable) || executable.Contains(Path.DirectorySeparatorChar) || executable.Contains(Path.AltDirectorySeparatorChar))
-            return executable;
-
-        var fromPath = ResolveFromPath(executable);
-        if (fromPath != null)
-            return fromPath;
-
-        var repoFallback = ResolveRepoLocal(executable);
-        if (repoFallback != null)
-            return repoFallback;
-
-        return executable;
-    }
-
-    private static string? ResolveFromPath(string executable)
-    {
-        var path = Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrWhiteSpace(path))
-            return null;
-
-        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            foreach (var candidate in EnumerateExecutableCandidates(executable))
-            {
-                var fullPath = Path.Combine(directory, candidate);
-                if (File.Exists(fullPath))
-                    return fullPath;
-            }
-        }
-
-        return null;
-    }
-
-    private static string? ResolveRepoLocal(string executable)
-    {
-        var roots = new[]
-        {
-            Directory.GetCurrentDirectory(),
-            AppContext.BaseDirectory
-        }.Distinct(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var root in roots)
-        {
-            foreach (var directory in EnumerateWithParents(root))
-            {
-                foreach (var relativePath in EnumerateRepoLocalCandidates(executable))
-                {
-                    var fullPath = Path.Combine(directory, relativePath);
-                    if (File.Exists(fullPath))
-                        return fullPath;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private static IEnumerable<string> EnumerateWithParents(string start)
-    {
-        var current = new DirectoryInfo(Path.GetFullPath(start));
-        while (current != null)
-        {
-            yield return current.FullName;
-            current = current.Parent;
-        }
-    }
-
-    private static IEnumerable<string> EnumerateExecutableCandidates(string executable)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            yield return $"{executable}.exe";
-            yield return $"{executable}.cmd";
-            yield return $"{executable}.bat";
-        }
-
-        yield return executable;
-    }
-
-    private static IEnumerable<string> EnumerateRepoLocalCandidates(string executable)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            yield return Path.Combine("memory-sidecar", ".venv", "Scripts", $"{executable}.exe");
-            yield return Path.Combine("memory-sidecar", ".venv", "Scripts", $"{executable}.cmd");
-        }
-        else
-        {
-            yield return Path.Combine("memory-sidecar", ".venv", "bin", executable);
-        }
-    }
 }
 
 // ── Response types ──

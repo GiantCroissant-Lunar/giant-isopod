@@ -10,15 +10,15 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class MemorySupervisorActor : UntypedActor
 {
     private readonly string _memoryBasePath;
-    private readonly string _memvidExecutable;
+    private readonly string _memorySidecarExecutable;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<MemorySupervisorActor> _logger;
     private readonly Dictionary<string, IActorRef> _memoryActors = new();
 
-    public MemorySupervisorActor(string memoryBasePath, string memvidExecutable, ILoggerFactory loggerFactory)
+    public MemorySupervisorActor(string memoryBasePath, string memorySidecarExecutable, ILoggerFactory loggerFactory)
     {
         _memoryBasePath = memoryBasePath;
-        _memvidExecutable = memvidExecutable;
+        _memorySidecarExecutable = memorySidecarExecutable;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<MemorySupervisorActor>();
     }
@@ -48,7 +48,7 @@ public sealed class MemorySupervisorActor : UntypedActor
             var mv2Path = Path.Combine(_memoryBasePath, $"{agentId}.mv2");
             actor = Context.ActorOf(
                 Props.Create(() => new MemvidActor(
-                    agentId, mv2Path, _memvidExecutable,
+                    agentId, mv2Path, _memorySidecarExecutable,
                     _loggerFactory.CreateLogger<MemvidActor>())),
                 agentId);
             _memoryActors[agentId] = actor;

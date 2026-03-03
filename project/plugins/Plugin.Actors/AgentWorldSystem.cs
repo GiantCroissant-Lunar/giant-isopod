@@ -51,7 +51,7 @@ public sealed class AgentWorldSystem : IDisposable
         MemorySupervisor = _system.ActorOf(
             Props.Create(() => new MemorySupervisorActor(
                 config.MemoryBasePath,
-                config.MemvidExecutable,
+                config.MemorySidecarExecutable,
                 loggerFactory)),
             "memory");
 

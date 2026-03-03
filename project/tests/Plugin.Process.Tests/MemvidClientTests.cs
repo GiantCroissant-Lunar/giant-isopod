@@ -6,19 +6,19 @@ namespace GiantIsopod.Plugin.Process.Tests;
 public sealed class MemvidClientTests
 {
     [Fact]
-    public async Task PutCommitAndSearch_UseCurrentMemvidCliContract()
+    public async Task PutCommitAndSearch_UseSidecarEpisodicContract()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"giant-isopod-memvid-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
 
         var memoryPath = Path.Combine(tempRoot, "agent.mv2");
-        var logPath = Path.Combine(tempRoot, "memvid.log");
-        var executablePath = CreateFakeMemvidExecutable(tempRoot);
-        var previousLogPath = Environment.GetEnvironmentVariable("GIANT_ISOPOD_MEMVID_TEST_LOG");
+        var logPath = Path.Combine(tempRoot, "sidecar.log");
+        var executablePath = CreateFakeSidecarExecutable(tempRoot);
+        var previousLogPath = Environment.GetEnvironmentVariable("GIANT_ISOPOD_SIDECAR_TEST_LOG");
 
         try
         {
-            Environment.SetEnvironmentVariable("GIANT_ISOPOD_MEMVID_TEST_LOG", logPath);
+            Environment.SetEnvironmentVariable("GIANT_ISOPOD_SIDECAR_TEST_LOG", logPath);
 
             var client = new MemvidClient("agent-1", memoryPath, executablePath);
             await client.PutAsync(
@@ -34,49 +34,52 @@ public sealed class MemvidClientTests
             Assert.Single(hits);
             Assert.Contains("hello giant isopod memory", hits[0].Text, StringComparison.Ordinal);
 
-            Assert.Contains(loggedCommands, line => line == $"create|{memoryPath}");
-            Assert.Contains(loggedCommands, line => line == $"put|{memoryPath}|--title|probe|--tag|taskId=real-task");
-            Assert.Contains(loggedCommands, line => line == $"find|--query|hello|{memoryPath}|--json|--top-k|5");
+            Assert.Contains(loggedCommands, line => line == $"episodic-put|hello giant isopod memory|--file|{memoryPath}|--title|probe|--tag|taskId:real-task");
+            Assert.Contains(loggedCommands, line => line == $"episodic-commit|--file|{memoryPath}");
+            Assert.Contains(loggedCommands, line => line == $"episodic-search|hello|--file|{memoryPath}|--top-k|5");
         }
         finally
         {
-            Environment.SetEnvironmentVariable("GIANT_ISOPOD_MEMVID_TEST_LOG", previousLogPath);
+            Environment.SetEnvironmentVariable("GIANT_ISOPOD_SIDECAR_TEST_LOG", previousLogPath);
             Directory.Delete(tempRoot, recursive: true);
         }
     }
 
-    private static string CreateFakeMemvidExecutable(string tempRoot)
+    private static string CreateFakeSidecarExecutable(string tempRoot)
     {
         if (OperatingSystem.IsWindows())
         {
-            var scriptPath = Path.Combine(tempRoot, "fake-memvid.ps1");
-            var wrapperPath = Path.Combine(tempRoot, "fake-memvid.cmd");
+            var scriptPath = Path.Combine(tempRoot, "fake-sidecar.ps1");
+            var wrapperPath = Path.Combine(tempRoot, "fake-sidecar.cmd");
 
             File.WriteAllText(scriptPath, """
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
-$logPath = $env:GIANT_ISOPOD_MEMVID_TEST_LOG
+$logPath = $env:GIANT_ISOPOD_SIDECAR_TEST_LOG
 Add-Content -Path $logPath -Value ($Args -join '|')
 
 switch ($Args[0]) {
-  'create' {
-    New-Item -ItemType File -Path $Args[1] -Force | Out-Null
+  'episodic-put' {
+    $content = $Args[1]
+    $filePath = $Args[3]
+    New-Item -ItemType File -Path $filePath -Force | Out-Null
+    Set-Content -Path ($filePath + '.txt') -Value $content -NoNewline
+    Write-Output '{"ok":true}'
     exit 0
   }
-  'put' {
-    $content = [Console]::In.ReadToEnd()
-    New-Item -ItemType File -Path $Args[1] -Force | Out-Null
-    Set-Content -Path ($Args[1] + '.txt') -Value $content -NoNewline
-    exit 0
-  }
-  'find' {
-    $query = $Args[2]
-    $contentPath = $Args[3] + '.txt'
+  'episodic-search' {
+    $query = $Args[1]
+    $filePath = $Args[3]
+    $contentPath = $filePath + '.txt'
     $content = if (Test-Path $contentPath) { Get-Content -Raw $contentPath } else { '' }
     if ($content.Contains($query)) {
       Write-Output '{"hits":[{"text":"hello giant isopod memory","title":"probe","score":1.0}]}'
     } else {
       Write-Output '{"hits":[]}'
     }
+    exit 0
+  }
+  'episodic-commit' {
+    Write-Output '{"ok":true}'
     exit 0
   }
 }
@@ -88,23 +91,22 @@ exit 1
             return wrapperPath;
         }
 
-        var executablePath = Path.Combine(tempRoot, "fake-memvid.sh");
+        var executablePath = Path.Combine(tempRoot, "fake-sidecar.sh");
         File.WriteAllText(executablePath, """
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$(printf '%s|' "$@" | sed 's/|$//')" >> "${GIANT_ISOPOD_MEMVID_TEST_LOG}"
+printf '%s\n' "$(printf '%s|' "$@" | sed 's/|$//')" >> "${GIANT_ISOPOD_SIDECAR_TEST_LOG}"
 
 case "${1}" in
-  create)
-    touch "${2}"
+  episodic-put)
+    content="${2}"
+    file="${4}"
+    touch "${file}"
+    printf '%s' "${content}" > "${file}.txt"
+    printf '%s\n' '{"ok":true}'
     ;;
-  put)
-    content="$(cat)"
-    touch "${2}"
-    printf '%s' "${content}" > "${2}.txt"
-    ;;
-  find)
-    query="${3}"
+  episodic-search)
+    query="${2}"
     file="${4}"
     content=""
     if [[ -f "${file}.txt" ]]; then
@@ -115,6 +117,9 @@ case "${1}" in
     else
       printf '%s\n' '{"hits":[]}'
     fi
+    ;;
+  episodic-commit)
+    printf '%s\n' '{"ok":true}'
     ;;
   *)
     exit 1

@@ -141,5 +141,48 @@ def query(query_text: str, agent: str, category: str | None, top_k: int, db: str
             click.echo("---")
 
 
+@main.command("episodic-put")
+@click.argument("content")
+@click.option("--file", "file_path", required=True, help="Path to the .mv2 file")
+@click.option("--title", default=None, help="Optional title for the memory frame")
+@click.option("--tag", multiple=True, help="Tags as key:value or key=value pairs")
+def episodic_put(content: str, file_path: str, title: str | None, tag: tuple[str, ...]):
+    """Store an episodic memory entry through the sidecar."""
+    from memory_sidecar.flows.episodic import put as put_episodic
+
+    tags = {}
+    for t in tag:
+        if ":" in t:
+            k, v = t.split(":", 1)
+            tags[k] = v
+        elif "=" in t:
+            k, v = t.split("=", 1)
+            tags[k] = v
+    result = put_episodic(file_path, content, title=title, tags=tags or None)
+    click.echo(json.dumps(result))
+
+
+@main.command("episodic-search")
+@click.argument("query_text")
+@click.option("--file", "file_path", required=True, help="Path to the .mv2 file")
+@click.option("--top-k", default=10, help="Number of results")
+def episodic_search(query_text: str, file_path: str, top_k: int):
+    """Search episodic memory through the sidecar."""
+    from memory_sidecar.flows.episodic import search as search_episodic
+
+    result = search_episodic(file_path, query_text, top_k=top_k)
+    click.echo(json.dumps(result, indent=2))
+
+
+@main.command("episodic-commit")
+@click.option("--file", "file_path", required=True, help="Path to the .mv2 file")
+def episodic_commit(file_path: str):
+    """Finalize episodic memory writes (currently a no-op)."""
+    from memory_sidecar.flows.episodic import commit as commit_episodic
+
+    result = commit_episodic(file_path)
+    click.echo(json.dumps(result))
+
+
 if __name__ == "__main__":
     main()
