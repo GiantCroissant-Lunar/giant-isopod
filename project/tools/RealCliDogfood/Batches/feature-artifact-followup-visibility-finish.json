@@ -1,0 +1,32 @@
+{
+  "graph_id_prefix": "feature-artifact-followup-visibility-finish",
+  "agents_per_runtime": 1,
+  "validators": [
+    {
+      "name": "agent-review",
+      "runtime_id": "pi",
+      "applies_to": "Code",
+      "rubric": "Review the produced test artifact for exact task fidelity, correctness, and scope control. Pass only if the test file proves the intended viewport behavior and stays tightly scoped to the requested file."
+    }
+  ],
+  "nodes": [
+    {
+      "task_id": "followup-tests",
+      "preferred_runtime_id": "pi",
+      "owned_paths": [
+        "project/tests/Plugin.Actors.Tests/ViewportActorTests.cs"
+      ],
+      "expected_files": [
+        "project/tests/Plugin.Actors.Tests/ViewportActorTests.cs"
+      ],
+      "required_capabilities": [
+        "code_edit"
+      ],
+      "required_validators": [
+        "agent-review"
+      ],
+      "description": "Create only project/tests/Plugin.Actors.Tests/ViewportActorTests.cs. Add focused unit tests proving ViewportActor forwards ArtifactFollowupSuggested and ArtifactFollowupSubmitted messages through the viewport bridge, including a bridge replacement case. Do not edit any production file. The production feature is already present on this branch."
+    }
+  ],
+  "edges": []
+}

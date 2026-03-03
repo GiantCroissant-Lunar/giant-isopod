@@ -1,0 +1,135 @@
+{
+  "graph_id_prefix": "feature-artifact-followup-visibility",
+  "agents_per_runtime": 1,
+  "validators": [
+    {
+      "name": "agent-review",
+      "runtime_id": "pi",
+      "applies_to": "Code",
+      "rubric": "Review the produced code artifact for exact task fidelity, correctness, and scope control. Pass only if the artifact satisfies the submitted task, keeps edits tightly scoped to owned_paths and expected_files, and preserves existing viewport and HUD behavior."
+    }
+  ],
+  "nodes": [
+    {
+      "task_id": "followup-viewport-contracts",
+      "preferred_runtime_id": "pi",
+      "owned_paths": [
+        "project/contracts/Contracts.Core/IViewportBridge.cs",
+        "project/hosts/complete-app/Scripts/GodotViewportBridge.cs"
+      ],
+      "expected_files": [
+        "project/contracts/Contracts.Core/IViewportBridge.cs",
+        "project/hosts/complete-app/Scripts/GodotViewportBridge.cs"
+      ],
+      "required_capabilities": [
+        "code_edit"
+      ],
+      "required_validators": [
+        "agent-review"
+      ],
+      "description": "Add artifact follow-up viewport bridge support. Update project/contracts/Contracts.Core/IViewportBridge.cs and project/hosts/complete-app/Scripts/GodotViewportBridge.cs so the viewport bridge can publish artifact follow-up suggestion and submission events to Godot, including concrete event record types queued through the existing bridge. Edit only those two files. Do not change actor logic or HUD code here."
+    },
+    {
+      "task_id": "followup-viewport-routing",
+      "preferred_runtime_id": "pi",
+      "owned_paths": [
+        "project/plugins/Plugin.Actors/ViewportActor.cs"
+      ],
+      "expected_files": [
+        "project/plugins/Plugin.Actors/ViewportActor.cs"
+      ],
+      "required_capabilities": [
+        "code_edit"
+      ],
+      "required_validators": [
+        "agent-review"
+      ],
+      "description": "Update only project/plugins/Plugin.Actors/ViewportActor.cs so it forwards artifact follow-up suggestion and submission events into the viewport bridge. Assume followup-viewport-contracts has already added the bridge methods. Keep existing viewport behavior unchanged for all other events."
+    },
+    {
+      "task_id": "followup-tests",
+      "preferred_runtime_id": "kimi",
+      "owned_paths": [
+        "project/tests/Plugin.Actors.Tests/ViewportActorTests.cs"
+      ],
+      "expected_files": [
+        "project/tests/Plugin.Actors.Tests/ViewportActorTests.cs"
+      ],
+      "required_capabilities": [
+        "code_edit"
+      ],
+      "required_validators": [
+        "agent-review"
+      ],
+      "description": "Create or update only project/tests/Plugin.Actors.Tests/ViewportActorTests.cs to prove ViewportActor forwards artifact follow-up suggested and submitted events through the viewport bridge. Do not edit production code. Assume the viewport contract and routing tasks have already completed."
+    },
+    {
+      "task_id": "followup-hud-surface",
+      "preferred_runtime_id": "kimi",
+      "owned_paths": [
+        "project/hosts/complete-app/Scripts/HudController.cs"
+      ],
+      "expected_files": [
+        "project/hosts/complete-app/Scripts/HudController.cs"
+      ],
+      "required_capabilities": [
+        "code_edit"
+      ],
+      "required_validators": [
+        "agent-review"
+      ],
+      "description": "Update only project/hosts/complete-app/Scripts/HudController.cs so artifact follow-up suggestion and submission viewport events become visible in the HUD console in a concise, readable form. Do not modify actor logic, bridge code, or other host files."
+    },
+    {
+      "task_id": "followup-review",
+      "preferred_runtime_id": "pi",
+      "owned_paths": [
+        "project/contracts/Contracts.Core/IViewportBridge.cs",
+        "project/hosts/complete-app/Scripts/GodotViewportBridge.cs",
+        "project/plugins/Plugin.Actors/ViewportActor.cs",
+        "project/tests/Plugin.Actors.Tests/ViewportActorTests.cs",
+        "project/hosts/complete-app/Scripts/HudController.cs"
+      ],
+      "expected_files": [
+        "project/contracts/Contracts.Core/IViewportBridge.cs",
+        "project/hosts/complete-app/Scripts/GodotViewportBridge.cs",
+        "project/plugins/Plugin.Actors/ViewportActor.cs",
+        "project/tests/Plugin.Actors.Tests/ViewportActorTests.cs",
+        "project/hosts/complete-app/Scripts/HudController.cs"
+      ],
+      "required_capabilities": [
+        "code_edit"
+      ],
+      "required_validators": [
+        "agent-review"
+      ],
+      "description": "Review the artifact follow-up visibility feature across the viewport contract, viewport actor routing, HUD console presentation, and tests. Tighten any small inconsistencies needed for the batch to build and verify cleanly without expanding scope."
+    }
+  ],
+  "edges": [
+    {
+      "from_task_id": "followup-viewport-contracts",
+      "to_task_id": "followup-viewport-routing"
+    },
+    {
+      "from_task_id": "followup-viewport-contracts",
+      "to_task_id": "followup-hud-surface"
+    },
+    {
+      "from_task_id": "followup-viewport-routing",
+      "to_task_id": "followup-tests"
+    },
+    {
+      "from_task_id": "followup-viewport-routing",
+      "to_task_id": "followup-review"
+    },
+    {
+      "from_task_id": "followup-tests",
+      "to_task_id": "followup-review"
+    },
+    {
+      "from_task_id": "followup-hud-surface",
+      "to_task_id": "followup-review"
+    }
+  ]
+}
