@@ -223,6 +223,23 @@ public record ArtifactValidationUpdated(string ArtifactId);
 public record BlessArtifact(string ArtifactId);
 public record ArtifactBlessed(string ArtifactId);
 
+public record ArtifactFollowupSuggestion(
+    string SuggestionId,
+    string ArtifactId,
+    string Title,
+    string Description,
+    IReadOnlySet<string> RequiredCapabilities,
+    IReadOnlyList<string>? OwnedPaths = null,
+    IReadOnlyList<string>? ExpectedFiles = null,
+    IReadOnlyList<string>? RequiredValidators = null,
+    string? PreferredRuntimeId = null);
+
+public record ArtifactFollowupSuggested(string ArtifactId, IReadOnlyList<ArtifactFollowupSuggestion> Suggestions);
+public record GetArtifactFollowups(string ArtifactId);
+public record ArtifactFollowupResult(string ArtifactId, IReadOnlyList<ArtifactFollowupSuggestion> Suggestions);
+public record SubmitArtifactFollowup(string ArtifactId, IReadOnlyList<string>? SuggestionIds = null, string? GraphId = null);
+public record ArtifactFollowupSubmitted(string ArtifactId, string GraphId, IReadOnlyList<string> TaskIds);
+
 // ── Progressive decomposition (ADR-009) ──
 
 public enum DecompositionReason { TooLarge, MissingInfo, DependencyDiscovered, Ambiguity, ExternalToolRequired }
