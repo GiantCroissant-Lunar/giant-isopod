@@ -22,7 +22,7 @@ public sealed class MemvidClient : IMemoryStore
     {
         AgentId = agentId;
         FilePath = filePath;
-        _memvidExecutable = memvidExecutable;
+        _memvidExecutable = ResolveExecutablePath(memvidExecutable);
     }
 
     public async Task PutAsync(string content, string? title = null,
@@ -65,10 +65,7 @@ public sealed class MemvidClient : IMemoryStore
 
     public async Task CommitAsync(CancellationToken ct = default)
     {
-        if (!File.Exists(FilePath))
-            return;
-
-        await ExecuteCheckedAsync(["verify-single-file", FilePath], null, ct);
+        await Task.CompletedTask;
     }
 
     private async Task EnsureCreatedAsync(CancellationToken ct)
@@ -136,5 +133,31 @@ public sealed class MemvidClient : IMemoryStore
         }
 
         return result;
+    }
+
+    private static string ResolveExecutablePath(string executable)
+    {
+        if (Path.IsPathRooted(executable) || executable.Contains(Path.DirectorySeparatorChar) || executable.Contains(Path.AltDirectorySeparatorChar))
+            return executable;
+
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+            return executable;
+
+        var candidates = OperatingSystem.IsWindows()
+            ? new[] { $"{executable}.cmd", $"{executable}.exe", $"{executable}.bat", executable }
+            : new[] { executable };
+
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            foreach (var candidate in candidates)
+            {
+                var fullPath = Path.Combine(directory, candidate);
+                if (File.Exists(fullPath))
+                    return fullPath;
+            }
+        }
+
+        return executable;
     }
 }

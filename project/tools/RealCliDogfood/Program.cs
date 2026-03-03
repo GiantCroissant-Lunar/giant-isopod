@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
 using GiantIsopod.Plugin.Actors;
 using GiantIsopod.Plugin.Process;
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 
 var runtimeId = args.Length > 0 ? args[0] : "pi";
 var timeoutMinutes = args.Length > 1 && int.TryParse(args[1], out var parsedMinutes) ? parsedMinutes : 10;
@@ -31,6 +32,17 @@ Directory.CreateDirectory(tempMemory);
 try
 {
     var runtimes = RuntimeRegistry.LoadFromJson(await File.ReadAllTextAsync(runtimesPath));
+    using var loggerFactory = LoggerFactory.Create(builder =>
+    {
+        builder
+            .SetMinimumLevel(LogLevel.Information)
+            .AddSimpleConsole(options =>
+            {
+                options.SingleLine = true;
+                options.TimestampFormat = "HH:mm:ss ";
+            });
+    });
+
     var config = new AgentWorldConfig
     {
         SkillsBasePath = Path.Combine(repoRoot, "project", "hosts", "complete-app", "Data", "Skills"),
@@ -46,7 +58,7 @@ try
     };
 
     var bridge = new DogfoodViewportBridge();
-    using var world = new AgentWorldSystem(config, NullLoggerFactory.Instance);
+    using var world = new AgentWorldSystem(config, loggerFactory);
     world.SetViewportBridge(bridge);
 
     var agentId = $"{runtimeId}-dogfood";
@@ -125,6 +137,8 @@ Fail if unrelated files were modified, the assertion target is wrong, or the tes
 
     var memorySummary = await WaitForMemorySummaryAsync(world, tempMemory, agentId, memoryQueries);
     PrintMemorySummary(memorySummary);
+    if (memorySummary.FileExists && memorySummary.SearchResult.Hits.Count == 0)
+        await PrintMemoryDiagnosticsAsync(memorySummary.FilePath, memoryQueries);
 
     Console.WriteLine($"Status history: {string.Join(" -> ", statusHistory)}");
     return taskPassed ? 0 : 4;
@@ -176,6 +190,7 @@ static void PrintArtifactSummary(ArtifactListResult artifacts)
 static void PrintMemorySummary(MemorySummary summary)
 {
     Console.WriteLine($"Memory file: {(summary.FileExists ? $"present ({summary.FilePath})" : "missing")}");
+    Console.WriteLine($"Memory queries: {string.Join(" | ", summary.Queries)}");
     Console.WriteLine($"Memory query: {summary.Query}");
     Console.WriteLine($"Memory hits: {summary.SearchResult.Hits.Count}");
     foreach (var hit in summary.SearchResult.Hits.Take(3))
@@ -208,11 +223,11 @@ static async Task<MemorySummary> WaitForMemorySummaryAsync(
                 TimeSpan.FromSeconds(15));
 
             if (lastResult.Hits.Count > 0)
-                return new MemorySummary(mv2Path, fileExists, query, lastResult);
+                return new MemorySummary(mv2Path, fileExists, queryList, query, lastResult);
         }
     }
 
-    return new MemorySummary(mv2Path, fileExists, lastQuery, lastResult);
+    return new MemorySummary(mv2Path, fileExists, queryList, lastQuery, lastResult);
 }
 
 static IReadOnlyList<string> BuildMemoryQueries(string taskDescription, string? summary)
@@ -251,7 +266,111 @@ static IReadOnlyList<string> BuildMemoryQueries(string taskDescription, string? 
     }
 }
 
-sealed record MemorySummary(string FilePath, bool FileExists, string Query, MemorySearchResult SearchResult);
+static async Task PrintMemoryDiagnosticsAsync(string filePath, IReadOnlyList<string> queries)
+{
+    var stats = await RunMemvidCommandAsync(["stats", filePath]);
+    Console.WriteLine($"Memory stats exit={stats.ExitCode}");
+    if (!string.IsNullOrWhiteSpace(stats.StandardOutput))
+        Console.WriteLine(stats.StandardOutput.Trim());
+    if (!string.IsNullOrWhiteSpace(stats.StandardError))
+        Console.WriteLine(stats.StandardError.Trim());
+
+    foreach (var query in queries.Take(3))
+    {
+        var find = await RunMemvidCommandAsync(["find", "--query", query, filePath, "--json", "--top-k", "3"]);
+        Console.WriteLine($"Memory diagnostic query: {query}");
+        Console.WriteLine($"  exit={find.ExitCode}");
+        if (!string.IsNullOrWhiteSpace(find.StandardOutput))
+            Console.WriteLine($"  stdout={find.StandardOutput.Trim()}");
+        if (!string.IsNullOrWhiteSpace(find.StandardError))
+            Console.WriteLine($"  stderr={find.StandardError.Trim()}");
+    }
+
+    var probePut = await RunMemvidCommandAsync(
+        ["put", filePath, "--title", "dogfood-diagnostic", "--tag", "source=dogfood"],
+        "diagnostic memory probe");
+    Console.WriteLine($"Memory diagnostic put exit={probePut.ExitCode}");
+    if (!string.IsNullOrWhiteSpace(probePut.StandardOutput))
+        Console.WriteLine(probePut.StandardOutput.Trim());
+    if (!string.IsNullOrWhiteSpace(probePut.StandardError))
+        Console.WriteLine(probePut.StandardError.Trim());
+
+    var probeStats = await RunMemvidCommandAsync(["stats", filePath]);
+    Console.WriteLine($"Memory post-probe stats exit={probeStats.ExitCode}");
+    if (!string.IsNullOrWhiteSpace(probeStats.StandardOutput))
+        Console.WriteLine(probeStats.StandardOutput.Trim());
+    if (!string.IsNullOrWhiteSpace(probeStats.StandardError))
+        Console.WriteLine(probeStats.StandardError.Trim());
+
+    var probeFind = await RunMemvidCommandAsync(["find", "--query", "diagnostic", filePath, "--json", "--top-k", "3"]);
+    Console.WriteLine("Memory diagnostic query: diagnostic");
+    Console.WriteLine($"  exit={probeFind.ExitCode}");
+    if (!string.IsNullOrWhiteSpace(probeFind.StandardOutput))
+        Console.WriteLine($"  stdout={probeFind.StandardOutput.Trim()}");
+    if (!string.IsNullOrWhiteSpace(probeFind.StandardError))
+        Console.WriteLine($"  stderr={probeFind.StandardError.Trim()}");
+}
+
+static async Task<CommandOutput> RunMemvidCommandAsync(IReadOnlyList<string> args, string? standardInput = null)
+{
+    var startInfo = new ProcessStartInfo
+    {
+        FileName = ResolveMemvidExecutablePath(),
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        RedirectStandardInput = standardInput != null,
+        UseShellExecute = false,
+        CreateNoWindow = true
+    };
+
+    foreach (var arg in args)
+        startInfo.ArgumentList.Add(arg);
+
+    using var process = new Process { StartInfo = startInfo };
+    process.Start();
+    if (standardInput != null)
+    {
+        await process.StandardInput.WriteAsync(standardInput);
+        process.StandardInput.Close();
+    }
+    var stdoutTask = process.StandardOutput.ReadToEndAsync();
+    var stderrTask = process.StandardError.ReadToEndAsync();
+    await process.WaitForExitAsync();
+
+    return new CommandOutput(process.ExitCode, await stdoutTask, await stderrTask);
+}
+
+static string ResolveMemvidExecutablePath()
+{
+    var path = Environment.GetEnvironmentVariable("PATH");
+    if (string.IsNullOrWhiteSpace(path))
+        throw new InvalidOperationException("PATH is not set; cannot locate memvid.");
+
+    var candidates = OperatingSystem.IsWindows()
+        ? new[] { "memvid.cmd", "memvid.exe", "memvid.bat" }
+        : new[] { "memvid" };
+
+    foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        foreach (var candidate in candidates)
+        {
+            var fullPath = Path.Combine(directory, candidate);
+            if (File.Exists(fullPath))
+                return fullPath;
+        }
+    }
+
+    throw new FileNotFoundException("Could not locate memvid on PATH.");
+}
+
+sealed record MemorySummary(
+    string FilePath,
+    bool FileExists,
+    IReadOnlyList<string> Queries,
+    string Query,
+    MemorySearchResult SearchResult);
+
+sealed record CommandOutput(int ExitCode, string StandardOutput, string StandardError);
 
 sealed class DogfoodViewportBridge : IViewportBridge
 {

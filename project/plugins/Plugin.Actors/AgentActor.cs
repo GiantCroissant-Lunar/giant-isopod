@@ -385,13 +385,19 @@ public sealed class AgentActor : UntypedActor
         if (completed.Summary == null)
             return;
 
+        _logger.LogInformation(
+            "Agent {AgentId} finalizing task {TaskId} with summary length {Length}",
+            _agentId,
+            completed.TaskId,
+            completed.Summary.Length);
+
         _knowledgeSupervisor.Tell(new StoreKnowledge(
             _agentId, completed.Summary, "outcome",
             new Dictionary<string, string> { ["taskId"] = completed.TaskId }));
         _memorySupervisor.Tell(new StoreMemory(
             _agentId, completed.TaskId, completed.Summary,
             $"Task {completed.TaskId} completed"));
-        _logger.LogDebug("Agent {AgentId} stored outcome for task {TaskId}", _agentId, completed.TaskId);
+        _logger.LogInformation("Agent {AgentId} queued memory store for task {TaskId}", _agentId, completed.TaskId);
     }
 
     private AgentVisualInfo LoadVisualInfo()

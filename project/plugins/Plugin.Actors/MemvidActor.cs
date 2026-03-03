@@ -48,7 +48,7 @@ public sealed class MemvidActor : UntypedActor
                 break;
 
             case StoreCompleted completed:
-                _logger.LogDebug("Stored memory for {AgentId}: {Title}", _agentId, completed.Title);
+                _logger.LogInformation("Stored memory for {AgentId}: {Title}", _agentId, completed.Title);
                 ScheduleDebouncedCommit();
                 break;
 
@@ -59,7 +59,7 @@ public sealed class MemvidActor : UntypedActor
 
             case CommitCompleted:
                 _pendingCommit = false;
-                _logger.LogDebug("Memory committed for {AgentId}", _agentId);
+                _logger.LogInformation("Memory committed for {AgentId}", _agentId);
                 break;
 
             case MemvidOperationFailed failed:
@@ -75,6 +75,13 @@ public sealed class MemvidActor : UntypedActor
 
     private void HandleStore(StoreMemory store)
     {
+        _logger.LogInformation(
+            "Memory store requested for {AgentId}: task={TaskRunId}, title={Title}, contentLength={Length}",
+            store.AgentId,
+            store.TaskRunId,
+            store.Title ?? "<none>",
+            store.Content.Length);
+
         _client.PutAsync(store.Content, store.Title, store.Tags)
             .ContinueWith(t =>
             {

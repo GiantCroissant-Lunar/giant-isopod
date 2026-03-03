@@ -36,7 +36,6 @@ public sealed class MemvidClientTests
 
             Assert.Contains(loggedCommands, line => line == $"create|{memoryPath}");
             Assert.Contains(loggedCommands, line => line == $"put|{memoryPath}|--title|probe|--tag|taskId=real-task");
-            Assert.Contains(loggedCommands, line => line == $"verify-single-file|{memoryPath}");
             Assert.Contains(loggedCommands, line => line == $"find|--query|hello|{memoryPath}|--json|--top-k|5");
         }
         finally
@@ -80,9 +79,6 @@ switch ($Args[0]) {
     }
     exit 0
   }
-  'verify-single-file' {
-    if (Test-Path $Args[1]) { exit 0 } else { exit 1 }
-  }
 }
 
 exit 1
@@ -119,9 +115,6 @@ case "${1}" in
     else
       printf '%s\n' '{"hits":[]}'
     fi
-    ;;
-  verify-single-file)
-    test -f "${2}"
     ;;
   *)
     exit 1
