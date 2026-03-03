@@ -1,0 +1,81 @@
+{
+  "graph_id_prefix": "feature-retry-noop-recovery",
+  "agents_per_runtime": 1,
+  "validators": [
+    {
+      "name": "agent-review",
+      "runtime_id": "pi",
+      "applies_to": "Code",
+      "rubric": "Review the produced code artifact for exact task fidelity, correctness, and scope control. Pass only if the change fixes retry/no-op recovery without weakening the fail-closed behavior for true empty no-op completions."
+    }
+  ],
+  "nodes": [
+    {
+      "task_id": "retry-noop-runtime",
+      "preferred_runtime_id": "pi",
+      "owned_paths": [
+        "project/plugins/Plugin.Actors/AgentRuntimeActor.cs"
+      ],
+      "expected_files": [
+        "project/plugins/Plugin.Actors/AgentRuntimeActor.cs"
+      ],
+      "required_capabilities": [
+        "code_edit"
+      ],
+      "required_validators": [
+        "agent-review"
+      ],
+      "description": "Update only project/plugins/Plugin.Actors/AgentRuntimeActor.cs to fix this workflow bug: after a timed-out or retried attempt leaves valid workspace artifacts in the task worktree, a later retry may return no_op=true and currently fails with 'Runtime reported no-op completion for a task that does not allow it.' Accept that situation when workspace artifacts for the task are present and otherwise valid, but keep the fail-closed behavior for true no-op-without-artifacts cases. Do not modify tests in this task."
+    },
+    {
+      "task_id": "retry-noop-tests",
+      "preferred_runtime_id": "kimi",
+      "owned_paths": [
+        "project/tests/Plugin.Actors.Tests/AgentRuntimeActorTests.cs"
+      ],
+      "expected_files": [
+        "project/tests/Plugin.Actors.Tests/AgentRuntimeActorTests.cs"
+      ],
+      "required_capabilities": [
+        "code_edit"
+      ],
+      "required_validators": [
+        "agent-review"
+      ],
+      "description": "Create only project/tests/Plugin.Actors.Tests/AgentRuntimeActorTests.cs with focused regression tests for the retry/no-op bug. Cover at least these cases: no_op with artifacts from the current task worktree is accepted as completion; no_op without artifacts still fails when AllowNoOpCompletion is false. Assume the production fix already exists and do not modify production files."
+    },
+    {
+      "task_id": "retry-noop-review",
+      "preferred_runtime_id": "pi",
+      "owned_paths": [
+        "project/plugins/Plugin.Actors/AgentRuntimeActor.cs",
+        "project/tests/Plugin.Actors.Tests/AgentRuntimeActorTests.cs"
+      ],
+      "expected_files": [
+        "project/plugins/Plugin.Actors/AgentRuntimeActor.cs",
+        "project/tests/Plugin.Actors.Tests/AgentRuntimeActorTests.cs"
+      ],
+      "required_capabilities": [
+        "code_edit"
+      ],
+      "required_validators": [
+        "agent-review"
+      ],
+      "description": "Review the retry/no-op recovery change across AgentRuntimeActor and its regression tests. Tighten any small inconsistencies needed for the feature to build and verify cleanly. Do not expand scope beyond this workflow bug."
+    }
+  ],
+  "edges": [
+    {
+      "from_task_id": "retry-noop-runtime",
+      "to_task_id": "retry-noop-tests"
+    },
+    {
+      "from_task_id": "retry-noop-runtime",
+      "to_task_id": "retry-noop-review"
+    },
+    {
+      "from_task_id": "retry-noop-tests",
+      "to_task_id": "retry-noop-review"
+    }
+  ]
+}

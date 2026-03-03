@@ -294,99 +294,118 @@ public sealed class AgentRuntimeActor : UntypedActor
 
     private void PublishFinalResult(ExecuteTaskPrompt execute, RuntimeAttemptResult attempt, IActorRef parent)
     {
+        var evaluation = EvaluateFinalResult(_agentId, execute, attempt);
+        if (evaluation.Failed is not null)
+        {
+            parent.Tell(evaluation.Failed);
+            return;
+        }
+
+        if (evaluation.Completed is not null)
+        {
+            parent.Tell(evaluation.Completed);
+        }
+    }
+
+    internal static FinalResultEvaluation EvaluateFinalResult(
+        string agentId,
+        ExecuteTaskPrompt execute,
+        RuntimeAttemptResult attempt)
+    {
         var parsed = attempt.Parsed;
         if (!parsed.HasEnvelope)
         {
-            parent.Tell(new TaskFailed(
-                execute.TaskId,
-                "Runtime did not return the required structured result envelope.",
-                GraphId: execute.GraphId));
-            return;
+            return new FinalResultEvaluation(
+                Failed: new TaskFailed(
+                    execute.TaskId,
+                    "Runtime did not return the required structured result envelope.",
+                    GraphId: execute.GraphId));
         }
 
         if (string.IsNullOrWhiteSpace(parsed.EnvelopeTaskId))
         {
-            parent.Tell(new TaskFailed(
-                execute.TaskId,
-                "Runtime returned a structured result without the required task_id.",
-                GraphId: execute.GraphId));
-            return;
+            return new FinalResultEvaluation(
+                Failed: new TaskFailed(
+                    execute.TaskId,
+                    "Runtime returned a structured result without the required task_id.",
+                    GraphId: execute.GraphId));
         }
 
         if (!string.Equals(parsed.EnvelopeTaskId, execute.TaskId, StringComparison.Ordinal))
         {
-            parent.Tell(new TaskFailed(
-                execute.TaskId,
-                $"Runtime returned a result for unexpected task id '{parsed.EnvelopeTaskId}'.",
-                GraphId: execute.GraphId));
-            return;
+            return new FinalResultEvaluation(
+                Failed: new TaskFailed(
+                    execute.TaskId,
+                    $"Runtime returned a result for unexpected task id '{parsed.EnvelopeTaskId}'.",
+                    GraphId: execute.GraphId));
         }
 
         if (parsed.Outcome == StructuredTaskResultParser.ParsedTaskOutcome.Failed ||
             !string.IsNullOrWhiteSpace(parsed.FailureReason))
         {
-            parent.Tell(new TaskFailed(
-                execute.TaskId,
-                parsed.FailureReason ?? parsed.Summary ?? "Runtime reported task failure.",
-                GraphId: execute.GraphId));
-            return;
+            return new FinalResultEvaluation(
+                Failed: new TaskFailed(
+                    execute.TaskId,
+                    parsed.FailureReason ?? parsed.Summary ?? "Runtime reported task failure.",
+                    GraphId: execute.GraphId));
         }
 
         if (parsed.Outcome == StructuredTaskResultParser.ParsedTaskOutcome.Decompose)
         {
             if (parsed.Subplan is null)
             {
-                parent.Tell(new TaskFailed(
-                    execute.TaskId,
-                    "Runtime requested decomposition without a valid subplan.",
-                    GraphId: execute.GraphId));
-                return;
+                return new FinalResultEvaluation(
+                    Failed: new TaskFailed(
+                        execute.TaskId,
+                        "Runtime requested decomposition without a valid subplan.",
+                        GraphId: execute.GraphId));
             }
         }
         else if (parsed.Outcome != StructuredTaskResultParser.ParsedTaskOutcome.Completed)
         {
-            parent.Tell(new TaskFailed(
-                execute.TaskId,
-                "Runtime returned an unknown task outcome.",
-                GraphId: execute.GraphId));
-            return;
+            return new FinalResultEvaluation(
+                Failed: new TaskFailed(
+                    execute.TaskId,
+                    "Runtime returned an unknown task outcome.",
+                    GraphId: execute.GraphId));
         }
 
         if (parsed.ExpectedArtifactTypes.Count > 0 && attempt.Artifacts.Count == 0 && !(execute.AllowNoOpCompletion && parsed.NoOp))
         {
-            parent.Tell(new TaskFailed(
-                execute.TaskId,
-                "Runtime declared expected artifacts but no workspace changes were detected.",
-                GraphId: execute.GraphId));
-            return;
+            return new FinalResultEvaluation(
+                Failed: new TaskFailed(
+                    execute.TaskId,
+                    "Runtime declared expected artifacts but no workspace changes were detected.",
+                    GraphId: execute.GraphId));
         }
 
         if (parsed.NoOp && !execute.AllowNoOpCompletion && attempt.Artifacts.Count == 0)
         {
-            parent.Tell(new TaskFailed(
-                execute.TaskId,
-                "Runtime reported no-op completion for a task that does not allow it.",
-                GraphId: execute.GraphId));
-            return;
+            return new FinalResultEvaluation(
+                Failed: new TaskFailed(
+                    execute.TaskId,
+                    "Runtime reported no-op completion for a task that does not allow it.",
+                    GraphId: execute.GraphId));
         }
 
         if (parsed.Subplan is null && attempt.Artifacts.Count == 0 && string.IsNullOrWhiteSpace(parsed.Summary))
         {
-            parent.Tell(new TaskFailed(
-                execute.TaskId,
-                "Runtime completed without artifacts, subplan, or a usable summary.",
-                GraphId: execute.GraphId));
-            return;
+            return new FinalResultEvaluation(
+                Failed: new TaskFailed(
+                    execute.TaskId,
+                    "Runtime completed without artifacts, subplan, or a usable summary.",
+                    GraphId: execute.GraphId));
         }
 
-        parent.Tell(new TaskCompleted(
-            execute.TaskId,
-            _agentId,
-            Success: true,
-            Summary: parsed.Summary ?? BuildSummary(attempt.Artifacts),
-            GraphId: execute.GraphId,
-            Artifacts: attempt.Artifacts,
-            Subplan: parsed.Subplan));
+        return new FinalResultEvaluation(
+            Completed: new TaskCompleted(
+                execute.TaskId,
+                agentId,
+                Success: true,
+                Summary: parsed.Summary ?? BuildSummary(attempt.Artifacts),
+                GraphId: execute.GraphId,
+                Artifacts: attempt.Artifacts,
+                Subplan: parsed.Subplan));
     }
 
     private static string BuildRetryPrompt(ExecuteTaskPrompt execute)
@@ -436,3 +455,7 @@ public sealed record RuntimeAttemptResult(
     string Transcript,
     bool Retryable = false,
     string? RetryReason = null);
+
+internal sealed record FinalResultEvaluation(
+    TaskCompleted? Completed = null,
+    TaskFailed? Failed = null);

@@ -1,0 +1,34 @@
+{
+  "graph_id_prefix": "feature-retry-noop-recovery-helper-tests",
+  "agents_per_runtime": 1,
+  "validators": [
+    {
+      "name": "agent-review",
+      "runtime_id": "pi",
+      "applies_to": "Code",
+      "rubric": "Review the produced code and tests for exact task fidelity, correctness, and scope control. Pass only if the internal helper exactly captures the retry/no-op acceptance rule and the tests cover both acceptance and rejection cases."
+    }
+  ],
+  "nodes": [
+    {
+      "task_id": "retry-noop-helper-tests",
+      "preferred_runtime_id": "pi",
+      "owned_paths": [
+        "project/plugins/Plugin.Actors/AgentRuntimeActor.cs",
+        "project/tests/Plugin.Actors.Tests/AgentRuntimeActorTests.cs"
+      ],
+      "expected_files": [
+        "project/plugins/Plugin.Actors/AgentRuntimeActor.cs",
+        "project/tests/Plugin.Actors.Tests/AgentRuntimeActorTests.cs"
+      ],
+      "required_capabilities": [
+        "code_edit"
+      ],
+      "required_validators": [
+        "agent-review"
+      ],
+      "description": "Make the retry/no-op acceptance rule directly testable. In project/plugins/Plugin.Actors/AgentRuntimeActor.cs, extract the final no-op acceptance condition into a small internal static helper method with a clear name. Then create only project/tests/Plugin.Actors.Tests/AgentRuntimeActorTests.cs with two focused tests: one proving no_op with artifacts is accepted even when AllowNoOpCompletion is false, and one proving no_op without artifacts is still rejected when AllowNoOpCompletion is false. Keep the change tightly scoped to those two files and do not modify any other production behavior."
+    }
+  ],
+  "edges": []
+}

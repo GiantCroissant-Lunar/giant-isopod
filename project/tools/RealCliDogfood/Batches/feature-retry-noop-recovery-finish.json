@@ -1,0 +1,32 @@
+{
+  "graph_id_prefix": "feature-retry-noop-recovery-finish",
+  "agents_per_runtime": 1,
+  "validators": [
+    {
+      "name": "agent-review",
+      "runtime_id": "pi",
+      "applies_to": "Code",
+      "rubric": "Review the produced regression tests for exact task fidelity, correctness, and scope control. Pass only if the tests directly cover the retry/no-op recovery behavior and stay limited to the requested test file."
+    }
+  ],
+  "nodes": [
+    {
+      "task_id": "retry-noop-tests",
+      "preferred_runtime_id": "pi",
+      "owned_paths": [
+        "project/tests/Plugin.Actors.Tests/AgentRuntimeActorTests.cs"
+      ],
+      "expected_files": [
+        "project/tests/Plugin.Actors.Tests/AgentRuntimeActorTests.cs"
+      ],
+      "required_capabilities": [
+        "code_edit"
+      ],
+      "required_validators": [
+        "agent-review"
+      ],
+      "description": "Create only project/tests/Plugin.Actors.Tests/AgentRuntimeActorTests.cs with focused regression tests for the retry/no-op recovery behavior already implemented on this branch. Cover at least these cases: no_op with artifacts from the current task worktree is accepted as completion; no_op without artifacts still fails when AllowNoOpCompletion is false. Do not edit any production file."
+    }
+  ],
+  "edges": []
+}
