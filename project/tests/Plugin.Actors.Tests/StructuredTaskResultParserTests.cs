@@ -272,4 +272,30 @@ Processing the actual request...
         Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
     }
 
+    [Fact]
+    public void Parse_SkipsEarlierDifferentTaskIdEnvelope_AndReturnsLastForRequestedTaskId()
+    {
+        var output = """
+<giant-isopod-result>
+{"task_id":"different-task-123","outcome":"decompose","summary":"Result from unrelated task.","artifacts_expected":[],"failure_reason":null,"subplan":{"reason":"Ambiguity","subtasks":[],"stop_when":null}}
+</giant-isopod-result>
+
+Processing the actual request...
+
+<giant-isopod-result>
+{"task_id":"requested-task-id","outcome":"completed","summary":"Successful completion of the requested task.","artifacts_expected":["Code"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+""";
+
+        var parsed = StructuredTaskResultParser.Parse(output, "requested-task-id");
+
+        Assert.True(parsed.HasEnvelope);
+        Assert.Equal("requested-task-id", parsed.EnvelopeTaskId);
+        Assert.Equal(StructuredTaskResultParser.ParsedTaskOutcome.Completed, parsed.Outcome);
+        Assert.Equal("Successful completion of the requested task.", parsed.Summary);
+        Assert.Null(parsed.FailureReason);
+        Assert.Null(parsed.Subplan);
+        Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
+    }
+
 }
