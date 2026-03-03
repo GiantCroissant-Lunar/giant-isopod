@@ -42,8 +42,11 @@
       "id": "kimi",
       "displayName": "Kimi",
       "executable": "kimi",
-      "args": ["--print", "--yolo", "--agent", "default", "--output-format", "text", "-p", "{prompt}"],
-      "env": {},
+      "args": ["--print", "--final-message-only", "--yolo", "--agent", "default", "--output-format", "text", "-p", "{prompt}"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
       "defaults": {}
     }
   ]

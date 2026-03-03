@@ -27,6 +27,7 @@ var tempRepo = Path.Combine(tempRoot, "repo");
 var tempMemory = Path.Combine(tempRoot, "memory");
 Directory.CreateDirectory(tempRepo);
 Directory.CreateDirectory(tempMemory);
+var cleanupStarted = 0;
 
 Console.WriteLine($"Smoke root: {tempRoot}");
 Console.WriteLine($"Runtime: {runtimeId}");
@@ -34,43 +35,37 @@ Console.WriteLine($"Scenario: {scenario}");
 
 AppDomain.CurrentDomain.ProcessExit += (_, _) =>
 {
-    try
-    {
-        if (Directory.Exists(tempRoot))
-            Directory.Delete(tempRoot, recursive: true);
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"Failed to delete smoke temp directory '{tempRoot}': {ex}");
-    }
+    TryDeleteDirectory(tempRoot, ref cleanupStarted, allowDeferredDelete: false, reportFailure: false);
 };
 
-await InitializeRepoAsync(tempRepo);
-
-var runtimes = RuntimeRegistry.LoadFromJson(await File.ReadAllTextAsync(runtimesPath));
-var runtimeEnv = BuildRuntimeEnvironment();
-
-var config = new AgentWorldConfig
+try
 {
-    SkillsBasePath = Path.Combine(repoRoot, "project", "hosts", "complete-app", "Data", "Skills"),
-    MemoryBasePath = tempMemory,
-    AgentDataPath = Path.Combine(repoRoot, "project", "hosts", "complete-app", "Data", "Agents"),
-    Runtimes = runtimes,
-    DefaultRuntimeId = runtimeId,
-    RuntimeWorkingDirectory = tempRepo,
-    AnchorRepoPath = tempRepo,
-    RuntimeEnvironment = runtimeEnv,
-    MemvidExecutable = "memvid",
-    MemorySidecarExecutable = "memory-sidecar"
-};
+    await InitializeRepoAsync(tempRepo);
 
-var bridge = new SmokeViewportBridge();
-using var world = new AgentWorldSystem(config, NullLoggerFactory.Instance);
-world.SetViewportBridge(bridge);
+    var runtimes = RuntimeRegistry.LoadFromJson(await File.ReadAllTextAsync(runtimesPath));
+    var runtimeEnv = BuildRuntimeEnvironment();
 
-var agentId = $"{runtimeId}-smoke";
-var marker = $"smoke-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
-var profileJson = """
+    var config = new AgentWorldConfig
+    {
+        SkillsBasePath = Path.Combine(repoRoot, "project", "hosts", "complete-app", "Data", "Skills"),
+        MemoryBasePath = tempMemory,
+        AgentDataPath = Path.Combine(repoRoot, "project", "hosts", "complete-app", "Data", "Agents"),
+        Runtimes = runtimes,
+        DefaultRuntimeId = runtimeId,
+        RuntimeWorkingDirectory = tempRepo,
+        AnchorRepoPath = tempRepo,
+        RuntimeEnvironment = runtimeEnv,
+        MemvidExecutable = "memvid",
+        MemorySidecarExecutable = "memory-sidecar"
+    };
+
+    var bridge = new SmokeViewportBridge();
+    using var world = new AgentWorldSystem(config, NullLoggerFactory.Instance);
+    world.SetViewportBridge(bridge);
+
+    var agentId = $"{runtimeId}-smoke";
+    var marker = $"smoke-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
+    var profileJson = """
 {
   "standard": { "protocol": "AIEOS", "version": "1.2.0" },
   "metadata": { "entity_id": "", "alias": "smoke" },
@@ -83,129 +78,135 @@ var profileJson = """
 }
 """;
 
-world.AgentSupervisor.Tell(new SpawnAgent(agentId, profileJson, "builder", RuntimeId: runtimeId), ActorRefs.NoSender);
-await Task.Delay(TimeSpan.FromSeconds(2));
+    world.AgentSupervisor.Tell(new SpawnAgent(agentId, profileJson, "builder", RuntimeId: runtimeId), ActorRefs.NoSender);
+    await Task.Delay(TimeSpan.FromSeconds(2));
 
-var graphId = $"smoke-{runtimeId}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
-var node = BuildScenarioNode(scenario, marker);
-await RegisterScenarioValidatorAsync(world, scenario, runtimeId, marker);
+    var graphId = $"smoke-{runtimeId}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
+    var node = BuildScenarioNode(scenario, marker);
+    await RegisterScenarioValidatorAsync(world, scenario, runtimeId, marker);
 
-var accepted = await world.TaskGraph.Ask<TaskGraphAccepted>(
-    new SubmitTaskGraph(
-        graphId,
-        new[] { node },
-        Array.Empty<TaskEdge>()),
-    TimeSpan.FromSeconds(10));
+    var accepted = await world.TaskGraph.Ask<TaskGraphAccepted>(
+        new SubmitTaskGraph(
+            graphId,
+            new[] { node },
+            Array.Empty<TaskEdge>()),
+        TimeSpan.FromSeconds(10));
 
-Console.WriteLine($"Graph accepted: {accepted.GraphId}");
+    Console.WriteLine($"Graph accepted: {accepted.GraphId}");
 
-var completed = await bridge.WaitForCompletionAsync(graphId, timeout);
-var smokeFile = Path.Combine(tempRepo, "SmokeRuntimeE2E.cs");
-var runtimeTranscript = bridge.GetRuntimeTranscript(agentId);
-var statusHistory = bridge.GetTaskStatusHistory(graphId, "smoke-edit");
+    var completed = await bridge.WaitForCompletionAsync(graphId, timeout);
+    var smokeFile = Path.Combine(tempRepo, "SmokeRuntimeE2E.cs");
+    var runtimeTranscript = bridge.GetRuntimeTranscript(agentId);
+    var statusHistory = bridge.GetTaskStatusHistory(graphId, "smoke-edit");
 
-Console.WriteLine($"Graph completed: {completed.GraphId}");
-foreach (var (taskId, success) in completed.Results)
-    Console.WriteLine($"  {taskId}: {(success ? "PASS" : "FAIL")}");
+    Console.WriteLine($"Graph completed: {completed.GraphId}");
+    foreach (var (taskId, success) in completed.Results)
+        Console.WriteLine($"  {taskId}: {(success ? "PASS" : "FAIL")}");
 
-if (!completed.Results.TryGetValue("smoke-edit", out var taskPassed))
-{
-    Console.Error.WriteLine("Task graph did not report a result for smoke-edit.");
-    return 2;
+    if (!completed.Results.TryGetValue("smoke-edit", out var taskPassed))
+    {
+        Console.Error.WriteLine("Task graph did not report a result for smoke-edit.");
+        return 2;
+    }
+
+    switch (scenario.ToLowerInvariant())
+    {
+        case "basic":
+            if (!taskPassed)
+            {
+                Console.Error.WriteLine("Task graph reported failure.");
+                return 2;
+            }
+
+            if (!File.Exists(smokeFile))
+            {
+                Console.Error.WriteLine($"Expected merged file was not found: {smokeFile}");
+                return 3;
+            }
+
+            var content = await File.ReadAllTextAsync(smokeFile);
+            if (!content.Contains(marker, StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine("Merged file did not contain the expected marker.");
+                return 4;
+            }
+
+            break;
+
+        case "review-pass":
+            if (!taskPassed)
+            {
+                Console.Error.WriteLine("Review-pass scenario unexpectedly failed.");
+                return 10;
+            }
+
+            if (!File.Exists(smokeFile))
+            {
+                Console.Error.WriteLine($"Expected merged file was not found: {smokeFile}");
+                return 11;
+            }
+
+            var reviewPassContent = await File.ReadAllTextAsync(smokeFile);
+            if (!reviewPassContent.Contains(marker, StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine("Merged file did not contain the expected marker after review pass.");
+                return 12;
+            }
+
+            if (!statusHistory.Contains(TaskNodeStatus.Validating))
+            {
+                Console.Error.WriteLine("Review-pass scenario never entered Validating state.");
+                return 13;
+            }
+
+            break;
+
+        case "review-fail":
+            if (taskPassed)
+            {
+                Console.Error.WriteLine("Review-fail scenario unexpectedly passed.");
+                return 20;
+            }
+
+            if (File.Exists(smokeFile))
+            {
+                Console.Error.WriteLine("Review-fail scenario should not have merged SmokeRuntimeE2E.cs into main.");
+                return 21;
+            }
+
+            var validatingCount = statusHistory.Count(status => status == TaskNodeStatus.Validating);
+            var dispatchedCount = statusHistory.Count(status => status == TaskNodeStatus.Dispatched);
+            if (validatingCount < 2 || dispatchedCount < 2)
+            {
+                Console.Error.WriteLine("Review-fail scenario did not exercise the expected revision loop.");
+                return 22;
+            }
+
+            break;
+
+        default:
+            Console.Error.WriteLine($"Unknown scenario '{scenario}'.");
+            return 30;
+    }
+
+    if (!runtimeTranscript.Contains("<giant-isopod-result>", StringComparison.Ordinal))
+    {
+        Console.Error.WriteLine("Runtime output did not contain the structured result envelope.");
+        return 5;
+    }
+
+    var log = await RunGitAsync(tempRepo, "log", "--format=%s", "-n", "1");
+    Console.WriteLine($"Merge head commit: {log.Trim()}");
+    Console.WriteLine($"Status history: {string.Join(" -> ", statusHistory)}");
+    Console.WriteLine("Structured envelope detected.");
+    Console.WriteLine("Smoke test passed.");
+    return 0;
 }
-
-switch (scenario.ToLowerInvariant())
+finally
 {
-    case "basic":
-        if (!taskPassed)
-        {
-            Console.Error.WriteLine("Task graph reported failure.");
-            return 2;
-        }
-
-        if (!File.Exists(smokeFile))
-        {
-            Console.Error.WriteLine($"Expected merged file was not found: {smokeFile}");
-            return 3;
-        }
-
-        var content = await File.ReadAllTextAsync(smokeFile);
-        if (!content.Contains(marker, StringComparison.Ordinal))
-        {
-            Console.Error.WriteLine("Merged file did not contain the expected marker.");
-            return 4;
-        }
-
-        break;
-
-    case "review-pass":
-        if (!taskPassed)
-        {
-            Console.Error.WriteLine("Review-pass scenario unexpectedly failed.");
-            return 10;
-        }
-
-        if (!File.Exists(smokeFile))
-        {
-            Console.Error.WriteLine($"Expected merged file was not found: {smokeFile}");
-            return 11;
-        }
-
-        var reviewPassContent = await File.ReadAllTextAsync(smokeFile);
-        if (!reviewPassContent.Contains(marker, StringComparison.Ordinal))
-        {
-            Console.Error.WriteLine("Merged file did not contain the expected marker after review pass.");
-            return 12;
-        }
-
-        if (!statusHistory.Contains(TaskNodeStatus.Validating))
-        {
-            Console.Error.WriteLine("Review-pass scenario never entered Validating state.");
-            return 13;
-        }
-
-        break;
-
-    case "review-fail":
-        if (taskPassed)
-        {
-            Console.Error.WriteLine("Review-fail scenario unexpectedly passed.");
-            return 20;
-        }
-
-        if (File.Exists(smokeFile))
-        {
-            Console.Error.WriteLine("Review-fail scenario should not have merged SmokeRuntimeE2E.cs into main.");
-            return 21;
-        }
-
-        var validatingCount = statusHistory.Count(status => status == TaskNodeStatus.Validating);
-        var dispatchedCount = statusHistory.Count(status => status == TaskNodeStatus.Dispatched);
-        if (validatingCount < 2 || dispatchedCount < 2)
-        {
-            Console.Error.WriteLine("Review-fail scenario did not exercise the expected revision loop.");
-            return 22;
-        }
-
-        break;
-
-    default:
-        Console.Error.WriteLine($"Unknown scenario '{scenario}'.");
-        return 30;
+    await Task.Delay(TimeSpan.FromMilliseconds(250));
+    TryDeleteDirectory(tempRoot, ref cleanupStarted, allowDeferredDelete: true, reportFailure: true);
 }
-
-if (!runtimeTranscript.Contains("<giant-isopod-result>", StringComparison.Ordinal))
-{
-    Console.Error.WriteLine("Runtime output did not contain the structured result envelope.");
-    return 5;
-}
-
-var log = await RunGitAsync(tempRepo, "log", "--format=%s", "-n", "1");
-Console.WriteLine($"Merge head commit: {log.Trim()}");
-Console.WriteLine($"Status history: {string.Join(" -> ", statusHistory)}");
-Console.WriteLine("Structured envelope detected.");
-Console.WriteLine("Smoke test passed.");
-return 0;
 
 static Dictionary<string, string> BuildRuntimeEnvironment()
 {
@@ -300,6 +301,70 @@ static async Task<string> RunGitAsync(string workDir, params string[] args)
         throw new InvalidOperationException($"git {string.Join(" ", args)} failed: {result.StandardError}");
 
     return result.StandardOutput;
+}
+
+static void TryDeleteDirectory(string path, ref int cleanupStarted, bool allowDeferredDelete, bool reportFailure)
+{
+    if (Interlocked.Exchange(ref cleanupStarted, 1) != 0)
+        return;
+
+    if (!Directory.Exists(path))
+        return;
+
+    Exception? lastError = null;
+    for (var attempt = 1; attempt <= 5; attempt++)
+    {
+        try
+        {
+            Directory.Delete(path, recursive: true);
+            return;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            lastError = ex;
+            Thread.Sleep(TimeSpan.FromMilliseconds(200 * attempt));
+        }
+    }
+
+    if (allowDeferredDelete && ScheduleDeferredDelete(path))
+        return;
+
+    if (reportFailure && lastError is not null)
+        Console.Error.WriteLine($"Failed to delete smoke temp directory '{path}': {lastError}");
+}
+
+static bool ScheduleDeferredDelete(string path)
+{
+    try
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var escapedPath = path.Replace("\"", "\"\"", StringComparison.Ordinal);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c ping 127.0.0.1 -n 4 >nul && rmdir /s /q \"{escapedPath}\"",
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+            });
+            return true;
+        }
+
+        var unixEscapedPath = path.Replace("'", "'\\''", StringComparison.Ordinal);
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "sh",
+            Arguments = $"-c 'sleep 2; rm -rf ''{unixEscapedPath}'''",
+            CreateNoWindow = true,
+            UseShellExecute = false
+        });
+        return true;
+    }
+    catch
+    {
+        return false;
+    }
 }
 
 sealed class SmokeViewportBridge : IViewportBridge
