@@ -2,6 +2,7 @@ using Akka.Actor;
 using GiantIsopod.Contracts.Core;
 using Microsoft.Extensions.Logging;
 using Plate.ModernSatsuma;
+using System.Text;
 
 namespace GiantIsopod.Plugin.Actors;
 
@@ -18,18 +19,33 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     private readonly IActorRef _viewport;
     private readonly IActorRef _workspace;
     private readonly IActorRef _validator;
+    private readonly IActorRef _knowledgeSupervisor;
     private readonly ILogger<TaskGraphActor> _logger;
     private readonly Dictionary<string, GraphState> _graphs = new();
+    private const string PlannerKnowledgeAgentId = "task-planner";
 
     public ITimerScheduler Timers { get; set; } = null!;
 
     public TaskGraphActor(IActorRef dispatch, IActorRef agentSupervisor, IActorRef viewport, IActorRef workspace, IActorRef validator, ILogger<TaskGraphActor> logger)
+        : this(dispatch, agentSupervisor, viewport, workspace, validator, ActorRefs.Nobody, logger)
+    {
+    }
+
+    public TaskGraphActor(
+        IActorRef dispatch,
+        IActorRef agentSupervisor,
+        IActorRef viewport,
+        IActorRef workspace,
+        IActorRef validator,
+        IActorRef knowledgeSupervisor,
+        ILogger<TaskGraphActor> logger)
     {
         _dispatch = dispatch;
         _agentSupervisor = agentSupervisor;
         _viewport = viewport;
         _workspace = workspace;
         _validator = validator;
+        _knowledgeSupervisor = knowledgeSupervisor;
         _logger = logger;
     }
 
@@ -140,7 +156,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             {
                 _validator.Tell(new ValidateArtifact(
                     artifact.ArtifactId, artifact,
-                    completed.TaskId, requiredValidators));
+                    completed.TaskId,
+                    requiredValidators,
+                    node?.OwnedPaths,
+                    node?.ExpectedFiles));
             }
             return; // Wait for ValidationComplete messages
         }
@@ -231,8 +250,28 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             var proposal = subplan.Subtasks[i];
             var subtaskId = subtaskIds[i];
 
-            var node = new TaskNode(subtaskId, proposal.Description, proposal.RequiredCapabilities,
-                proposal.BudgetCap != null ? new TaskBudget(Deadline: proposal.BudgetCap) : null);
+            if (proposal.OwnedPaths is not { Count: > 0 })
+            {
+                RejectDecomposition(graphId, state, completed,
+                    $"Subtask {i} must declare owned_paths.");
+                return;
+            }
+
+            if (proposal.ExpectedFiles is not { Count: > 0 })
+            {
+                RejectDecomposition(graphId, state, completed,
+                    $"Subtask {i} must declare expected_files.");
+                return;
+            }
+
+            var node = new TaskNode(
+                subtaskId,
+                proposal.Description,
+                proposal.RequiredCapabilities,
+                proposal.BudgetCap != null ? new TaskBudget(Deadline: proposal.BudgetCap) : null,
+                OwnedPaths: proposal.OwnedPaths,
+                ExpectedFiles: proposal.ExpectedFiles,
+                AllowNoOpCompletion: proposal.AllowNoOpCompletion);
 
             state.Nodes[subtaskId] = node;
             state.Status[subtaskId] = TaskNodeStatus.Pending;
@@ -251,6 +290,8 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         }
 
         // Set parent to WaitingForSubtasks
+        GraphState.AddImplicitOwnershipEdges(state.Nodes, state.IncomingEdges, state.OutgoingEdges, subtaskIds, _logger);
+
         state.Status[parentId] = TaskNodeStatus.WaitingForSubtasks;
         _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, parentId, TaskNodeStatus.WaitingForSubtasks, completed.AgentId));
 
@@ -270,6 +311,15 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     {
         _logger.LogWarning("Graph {GraphId}: decomposition rejected for task {TaskId}: {Reason}",
             graphId, completed.TaskId, reason);
+        StorePlanningFeedback(
+            "planning-pitfall",
+            $"Planning pitfall for graph {graphId}, task {completed.TaskId}: decomposition rejected. Reason={reason}. Re-plan with explicit owned_paths and expected_files per subtask.",
+            new Dictionary<string, string>
+            {
+                ["kind"] = "decomposition_rejected",
+                ["graphId"] = graphId,
+                ["taskId"] = completed.TaskId
+            });
 
         // Leave parent as Dispatched so it can complete normally
         _agentSupervisor.Tell(new ForwardToAgent(
@@ -391,6 +441,15 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
         _logger.LogWarning("Graph {GraphId}: task {TaskId} merge conflict on [{Files}]",
             graphId, conflict.TaskId, string.Join(", ", conflict.ConflictingFiles));
+        StorePlanningFeedback(
+            "planning-pitfall",
+            BuildMergeConflictFeedback(graphId, state, conflict),
+            new Dictionary<string, string>
+            {
+                ["kind"] = "merge_conflict",
+                ["graphId"] = graphId,
+                ["taskId"] = conflict.TaskId
+            });
 
         // Fail the task — conflict resolution subtask is future work
         state.Status[conflict.TaskId] = TaskNodeStatus.Failed;
@@ -508,14 +567,40 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 var revisedDesc = $"{node?.Description ?? "task"} [REVISION {attempts}: validation failed — {failureSummary}]";
 
                 TaskRequest request = node?.Budget != null
-                    ? new TaskRequestWithBudget(taskId, revisedDesc, node.RequiredCapabilities, node.Budget, graphId, node.PreferredRuntimeId)
-                    : new TaskRequest(taskId, revisedDesc, node?.RequiredCapabilities ?? new HashSet<string>(), graphId, node?.PreferredRuntimeId);
+                    ? new TaskRequestWithBudget(
+                        taskId,
+                        revisedDesc,
+                        node.RequiredCapabilities,
+                        node.Budget,
+                        graphId,
+                        node.PreferredRuntimeId,
+                        node.OwnedPaths,
+                        node.ExpectedFiles,
+                        node.AllowNoOpCompletion)
+                    : new TaskRequest(
+                        taskId,
+                        revisedDesc,
+                        node?.RequiredCapabilities ?? new HashSet<string>(),
+                        graphId,
+                        node?.PreferredRuntimeId,
+                        node?.OwnedPaths,
+                        node?.ExpectedFiles,
+                        node?.AllowNoOpCompletion ?? false);
                 _dispatch.Tell(request);
             }
             else
             {
                 _logger.LogWarning("Graph {GraphId}: task {TaskId} failed validation after {Max} attempts, marking failed",
                     graphId, taskId, maxAttempts);
+                StorePlanningFeedback(
+                    "planning-pitfall",
+                    BuildValidationFailureFeedback(graphId, taskId, node, failures),
+                    new Dictionary<string, string>
+                    {
+                        ["kind"] = "validation_failure",
+                        ["graphId"] = graphId,
+                        ["taskId"] = taskId
+                    });
                 if (state.AssignedAgent.TryGetValue(taskId, out var assignedAgentId))
                 {
                     _viewport.Tell(new RuntimeOutput(
@@ -558,6 +643,15 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, failed.TaskId, TaskNodeStatus.Failed));
         _logger.LogWarning("Graph {GraphId}: task {TaskId} failed — {Reason}",
             graphId, failed.TaskId, failed.Reason);
+        StorePlanningFeedback(
+            "planning-pitfall",
+            BuildTaskFailureFeedback(graphId, state, failed),
+            new Dictionary<string, string>
+            {
+                ["kind"] = "task_failure",
+                ["graphId"] = graphId,
+                ["taskId"] = failed.TaskId
+            });
 
         CancelDependents(state, failed.TaskId);
         RequestWorkspaceRelease(state, failed.TaskId);
@@ -633,8 +727,25 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             _logger.LogDebug("Graph {GraphId}: dispatching task {TaskId}", state.GraphId, taskId);
 
             var request = node.Budget is not null
-                ? new TaskRequestWithBudget(taskId, node.Description, node.RequiredCapabilities, node.Budget, state.GraphId, node.PreferredRuntimeId)
-                : new TaskRequest(taskId, node.Description, node.RequiredCapabilities, state.GraphId, node.PreferredRuntimeId);
+                ? new TaskRequestWithBudget(
+                    taskId,
+                    node.Description,
+                    node.RequiredCapabilities,
+                    node.Budget,
+                    state.GraphId,
+                    node.PreferredRuntimeId,
+                    node.OwnedPaths,
+                    node.ExpectedFiles,
+                    node.AllowNoOpCompletion)
+                : new TaskRequest(
+                    taskId,
+                    node.Description,
+                    node.RequiredCapabilities,
+                    state.GraphId,
+                    node.PreferredRuntimeId,
+                    node.OwnedPaths,
+                    node.ExpectedFiles,
+                    node.AllowNoOpCompletion);
 
             _dispatch.Tell(request);
         }
@@ -712,6 +823,66 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             results.Count);
     }
 
+    private void StorePlanningFeedback(string category, string content, IDictionary<string, string> tags)
+    {
+        if (_knowledgeSupervisor == ActorRefs.Nobody || string.IsNullOrWhiteSpace(content))
+            return;
+
+        _knowledgeSupervisor.Tell(new StoreKnowledge(PlannerKnowledgeAgentId, content, category, tags));
+    }
+
+    private static string BuildValidationFailureFeedback(
+        string graphId,
+        string taskId,
+        TaskNode? node,
+        IReadOnlyList<ValidatorResult> failures)
+    {
+        var sb = new StringBuilder();
+        sb.Append("Planning pitfall for graph ").Append(graphId)
+            .Append(", task ").Append(taskId)
+            .Append(": validation failed after retries. ");
+        if (node?.OwnedPaths is { Count: > 0 })
+            sb.Append("owned_paths=[").Append(string.Join(", ", node.OwnedPaths)).Append("] ");
+        if (node?.ExpectedFiles is { Count: > 0 })
+            sb.Append("expected_files=[").Append(string.Join(", ", node.ExpectedFiles)).Append("] ");
+        sb.Append("Failures: ")
+            .Append(string.Join("; ", failures.Select(f => $"{f.ValidatorName}: {f.Details}")))
+            .Append(". Consider narrowing the task scope or sequencing related file clusters.");
+        return sb.ToString();
+    }
+
+    private static string BuildMergeConflictFeedback(string graphId, GraphState state, MergeConflict conflict)
+    {
+        var node = state.Nodes.GetValueOrDefault(conflict.TaskId);
+        var sb = new StringBuilder();
+        sb.Append("Planning pitfall for graph ").Append(graphId)
+            .Append(", task ").Append(conflict.TaskId)
+            .Append(": merge conflict occurred.");
+        if (node?.OwnedPaths is { Count: > 0 })
+            sb.Append(" owned_paths=[").Append(string.Join(", ", node.OwnedPaths)).Append("].");
+        if (conflict.ConflictingFiles.Count > 0)
+            sb.Append(" conflicting_files=[").Append(string.Join(", ", conflict.ConflictingFiles)).Append("].");
+        sb.Append(" Do not split these file clusters in parallel.");
+        return sb.ToString();
+    }
+
+    private static string BuildTaskFailureFeedback(string graphId, GraphState state, TaskFailed failed)
+    {
+        var node = state.Nodes.GetValueOrDefault(failed.TaskId);
+        var sb = new StringBuilder();
+        sb.Append("Planning pitfall for graph ").Append(graphId)
+            .Append(", task ").Append(failed.TaskId)
+            .Append(": task failed.");
+        if (!string.IsNullOrWhiteSpace(failed.Reason))
+            sb.Append(" reason=").Append(failed.Reason).Append('.');
+        if (node?.OwnedPaths is { Count: > 0 })
+            sb.Append(" owned_paths=[").Append(string.Join(", ", node.OwnedPaths)).Append("].");
+        if (node?.ExpectedFiles is { Count: > 0 })
+            sb.Append(" expected_files=[").Append(string.Join(", ", node.ExpectedFiles)).Append("].");
+        sb.Append(" Re-plan this task instead of reusing the same split unchanged.");
+        return sb.ToString();
+    }
+
     // ── Constants ──
 
     internal const int MaxDepth = 3;
@@ -782,6 +953,19 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 graph.AddArc(nodeMap[edge.FromTaskId], nodeMap[edge.ToTaskId], Directedness.Directed);
             }
 
+            AddImplicitOwnershipEdges(nodes, incoming, outgoing, submit.Nodes.Select(node => node.TaskId).ToArray(), logger);
+
+            graph = new CustomGraph();
+            nodeMap = new Dictionary<string, Node>();
+            foreach (var node in submit.Nodes)
+                nodeMap[node.TaskId] = graph.AddNode();
+
+            foreach (var (fromTaskId, toTaskIds) in outgoing)
+            {
+                foreach (var toTaskId in toTaskIds)
+                    graph.AddArc(nodeMap[fromTaskId], nodeMap[toTaskId], Directedness.Directed);
+            }
+
             // Use ModernSatsuma TopologicalSort for cycle detection
             var topoSort = new Plate.ModernSatsuma.TopologicalSort(graph);
             if (!topoSort.IsAcyclic)
@@ -810,6 +994,120 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 Depth = depth,
                 ParentTaskId = parentTaskId,
             }, null);
+        }
+
+        internal static void AddImplicitOwnershipEdges(
+            IReadOnlyDictionary<string, TaskNode> nodes,
+            Dictionary<string, List<string>> incoming,
+            Dictionary<string, List<string>> outgoing,
+            IReadOnlyList<string> orderedTaskIds,
+            ILogger logger)
+        {
+            for (var i = 0; i < orderedTaskIds.Count; i++)
+            {
+                var firstId = orderedTaskIds[i];
+                if (!nodes.TryGetValue(firstId, out var firstNode) ||
+                    firstNode.OwnedPaths is not { Count: > 0 })
+                {
+                    continue;
+                }
+
+                for (var j = i + 1; j < orderedTaskIds.Count; j++)
+                {
+                    var secondId = orderedTaskIds[j];
+                    if (!nodes.TryGetValue(secondId, out var secondNode) ||
+                        secondNode.OwnedPaths is not { Count: > 0 } ||
+                        !OwnedPathsOverlap(firstNode.OwnedPaths, secondNode.OwnedPaths))
+                    {
+                        continue;
+                    }
+
+                    if (HasPath(outgoing, firstId, secondId) || HasPath(outgoing, secondId, firstId))
+                        continue;
+
+                    outgoing[firstId].Add(secondId);
+                    incoming[secondId].Add(firstId);
+                    logger.LogInformation(
+                        "Implicitly sequencing task {FirstTaskId} before {SecondTaskId} because owned_paths overlap.",
+                        firstId,
+                        secondId);
+                }
+            }
+        }
+
+        private static bool OwnedPathsOverlap(IReadOnlyList<string> leftPaths, IReadOnlyList<string> rightPaths)
+        {
+            foreach (var left in leftPaths)
+            {
+                var normalizedLeft = NormalizeOwnedPath(left);
+                if (string.IsNullOrEmpty(normalizedLeft))
+                    continue;
+
+                foreach (var right in rightPaths)
+                {
+                    var normalizedRight = NormalizeOwnedPath(right);
+                    if (string.IsNullOrEmpty(normalizedRight))
+                        continue;
+
+                    if (PathPrefixesOverlap(normalizedLeft, normalizedRight))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool HasPath(Dictionary<string, List<string>> outgoing, string fromTaskId, string toTaskId)
+        {
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            var stack = new Stack<string>();
+            stack.Push(fromTaskId);
+
+            while (stack.Count > 0)
+            {
+                var current = stack.Pop();
+                if (!visited.Add(current))
+                    continue;
+
+                if (!outgoing.TryGetValue(current, out var next))
+                    continue;
+
+                foreach (var candidate in next)
+                {
+                    if (string.Equals(candidate, toTaskId, StringComparison.Ordinal))
+                        return true;
+
+                    stack.Push(candidate);
+                }
+            }
+
+            return false;
+        }
+
+        private static string NormalizeOwnedPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return string.Empty;
+
+            var normalized = path.Trim().Replace('\\', '/');
+            while (normalized.StartsWith("./", StringComparison.Ordinal))
+                normalized = normalized[2..];
+
+            normalized = normalized.Trim('/');
+            return normalized;
+        }
+
+        private static bool PathPrefixesOverlap(string left, string right)
+        {
+            return IsPathPrefix(left, right) || IsPathPrefix(right, left);
+        }
+
+        private static bool IsPathPrefix(string prefix, string candidate)
+        {
+            if (string.Equals(prefix, candidate, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return candidate.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase);
         }
     }
 

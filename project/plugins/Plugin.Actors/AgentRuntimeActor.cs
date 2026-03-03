@@ -283,7 +283,7 @@ public sealed class AgentRuntimeActor : UntypedActor
         if (parsed.Outcome != StructuredTaskResultParser.ParsedTaskOutcome.Completed)
             return false;
 
-        if (parsed.ExpectedArtifactTypes.Count > 0 && attempt.Artifacts.Count == 0)
+        if (parsed.ExpectedArtifactTypes.Count > 0 && attempt.Artifacts.Count == 0 && !(execute.AllowNoOpCompletion && parsed.NoOp))
             return false;
 
         if (attempt.Artifacts.Count > 0)
@@ -352,11 +352,20 @@ public sealed class AgentRuntimeActor : UntypedActor
             return;
         }
 
-        if (parsed.ExpectedArtifactTypes.Count > 0 && attempt.Artifacts.Count == 0)
+        if (parsed.ExpectedArtifactTypes.Count > 0 && attempt.Artifacts.Count == 0 && !(execute.AllowNoOpCompletion && parsed.NoOp))
         {
             parent.Tell(new TaskFailed(
                 execute.TaskId,
                 "Runtime declared expected artifacts but no workspace changes were detected.",
+                GraphId: execute.GraphId));
+            return;
+        }
+
+        if (parsed.NoOp && !execute.AllowNoOpCompletion)
+        {
+            parent.Tell(new TaskFailed(
+                execute.TaskId,
+                "Runtime reported no-op completion for a task that does not allow it.",
                 GraphId: execute.GraphId));
             return;
         }
@@ -403,7 +412,13 @@ The final line of your response must be a <giant-isopod-result> envelope whose t
     }
 }
 
-public record ExecuteTaskPrompt(string AgentId, string TaskId, string Prompt, string? GraphId = null, string? WorkspacePath = null);
+public record ExecuteTaskPrompt(
+    string AgentId,
+    string TaskId,
+    string Prompt,
+    string? GraphId = null,
+    string? WorkspacePath = null,
+    bool AllowNoOpCompletion = false);
 
 /// <summary>Sets the token budget for the active task on this runtime actor.</summary>
 public record SetTokenBudget(string TaskId, int MaxTokens);

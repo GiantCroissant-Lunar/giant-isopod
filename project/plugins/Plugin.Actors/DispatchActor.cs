@@ -212,7 +212,16 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         // Risk approval gate: Critical tasks require viewport approval before assignment
         if (budget?.Risk == RiskLevel.Critical)
         {
-            _pendingApprovals[taskId] = new PendingApproval(taskId, selectedAgentId, session.Request.Description, budget, session.OriginalSender, session.Request.GraphId);
+            _pendingApprovals[taskId] = new PendingApproval(
+                taskId,
+                selectedAgentId,
+                session.Request.Description,
+                budget,
+                session.OriginalSender,
+                session.Request.GraphId,
+                session.Request.OwnedPaths,
+                session.Request.ExpectedFiles,
+                session.Request.AllowNoOpCompletion);
             var approval = new RiskApprovalRequired(taskId, RiskLevel.Critical, session.Request.Description);
             Context.System.EventStream.Publish(approval);
 
@@ -227,10 +236,28 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             return;
         }
 
-        AwardTask(taskId, selectedAgentId, session.Request.Description, budget, session.OriginalSender, session.Request.GraphId);
+        AwardTask(
+            taskId,
+            selectedAgentId,
+            session.Request.Description,
+            budget,
+            session.OriginalSender,
+            session.Request.GraphId,
+            session.Request.OwnedPaths,
+            session.Request.ExpectedFiles,
+            session.Request.AllowNoOpCompletion);
     }
 
-    private void AwardTask(string taskId, string agentId, string? description, TaskBudget? budget, IActorRef originalSender, string? graphId = null)
+    private void AwardTask(
+        string taskId,
+        string agentId,
+        string? description,
+        TaskBudget? budget,
+        IActorRef originalSender,
+        string? graphId = null,
+        IReadOnlyList<string>? ownedPaths = null,
+        IReadOnlyList<string>? expectedFiles = null,
+        bool allowNoOpCompletion = false)
     {
         // Attempt workspace allocation; on failure or timeout, award without workspace (graceful degradation)
         _workspace.Ask<object>(new AllocateWorkspace(taskId, "HEAD"), AllocationTimeout)
@@ -240,7 +267,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
                 if (t.IsCompletedSuccessfully && t.Result is WorkspaceAllocated allocated)
                     workspacePath = allocated.WorktreePath;
 
-                return new WorkspaceAllocationDone(taskId, agentId, description, budget, originalSender, graphId, workspacePath);
+                return new WorkspaceAllocationDone(taskId, agentId, description, budget, originalSender, graphId, workspacePath, ownedPaths, expectedFiles, allowNoOpCompletion);
             })
             .PipeTo(Self);
 
@@ -258,7 +285,16 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             _logger.LogDebug("Task {TaskId} awarded without workspace (allocation skipped or failed)", done.TaskId);
         }
 
-        var assignment = new TaskAssigned(done.TaskId, done.AgentId, done.Description, done.Budget, done.GraphId, done.WorkspacePath);
+        var assignment = new TaskAssigned(
+            done.TaskId,
+            done.AgentId,
+            done.Description,
+            done.Budget,
+            done.GraphId,
+            done.WorkspacePath,
+            done.OwnedPaths,
+            done.ExpectedFiles,
+            done.AllowNoOpCompletion);
         _agentSupervisor.Tell(assignment);
         done.OriginalSender.Tell(assignment);
     }
@@ -347,7 +383,16 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
         Timers.Cancel($"approval-{taskId}");
         _logger.LogInformation("Task {TaskId} risk approved — assigning to {AgentId}", taskId, pending.AgentId);
-        AwardTask(taskId, pending.AgentId, pending.Description, pending.Budget, pending.OriginalSender, pending.GraphId);
+        AwardTask(
+            taskId,
+            pending.AgentId,
+            pending.Description,
+            pending.Budget,
+            pending.OriginalSender,
+            pending.GraphId,
+            pending.OwnedPaths,
+            pending.ExpectedFiles,
+            pending.AllowNoOpCompletion);
     }
 
     private void HandleRiskDenied(string taskId, string reason)
@@ -391,8 +436,27 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
     private sealed record BidWindowClosed(string TaskId);
     private sealed record RetryBidSession(TaskRequest Request, IReadOnlyList<string> CapableAgents, IActorRef OriginalSender);
     private sealed record ApprovalTimedOut(string TaskId);
-    private sealed record PendingApproval(string TaskId, string AgentId, string? Description, TaskBudget? Budget, IActorRef OriginalSender, string? GraphId = null);
-    private sealed record WorkspaceAllocationDone(string TaskId, string AgentId, string? Description, TaskBudget? Budget, IActorRef OriginalSender, string? GraphId, string? WorkspacePath);
+    private sealed record PendingApproval(
+        string TaskId,
+        string AgentId,
+        string? Description,
+        TaskBudget? Budget,
+        IActorRef OriginalSender,
+        string? GraphId = null,
+        IReadOnlyList<string>? OwnedPaths = null,
+        IReadOnlyList<string>? ExpectedFiles = null,
+        bool AllowNoOpCompletion = false);
+    private sealed record WorkspaceAllocationDone(
+        string TaskId,
+        string AgentId,
+        string? Description,
+        TaskBudget? Budget,
+        IActorRef OriginalSender,
+        string? GraphId,
+        string? WorkspacePath,
+        IReadOnlyList<string>? OwnedPaths,
+        IReadOnlyList<string>? ExpectedFiles,
+        bool AllowNoOpCompletion);
 }
 
 /// <summary>

@@ -167,7 +167,7 @@ public sealed class AgentActor : UntypedActor
 
             case TaskAssigned task:
                 _activeTaskCount++;
-                _activeTasks[task.TaskId] = new ActiveTaskContext(task.TaskId, task.GraphId, task.WorkspacePath);
+                _activeTasks[task.TaskId] = new ActiveTaskContext(task.TaskId, task.GraphId, task.WorkspacePath, task.AllowNoOpCompletion);
 
                 if (task.Budget?.MaxTokens is { } maxTokens)
                     _rpcActor?.Tell(new SetTokenBudget(task.TaskId, maxTokens));
@@ -196,7 +196,13 @@ public sealed class AgentActor : UntypedActor
 
             case RetrievalComplete retrieval:
                 var taskPrompt = retrieval.Entries.Count > 0
-                    ? PromptBuilder.BuildTaskPrompt(retrieval.Task.TaskId, retrieval.Task.Description!, retrieval.Entries)
+                    ? PromptBuilder.BuildTaskPrompt(
+                        retrieval.Task.TaskId,
+                        retrieval.Task.Description!,
+                        retrieval.Entries,
+                        retrieval.Task.OwnedPaths,
+                        retrieval.Task.ExpectedFiles,
+                        retrieval.Task.AllowNoOpCompletion)
                     : BuildFallbackPrompt(retrieval.Task);
 
                 if (retrieval.Entries.Count > 0)
@@ -278,7 +284,8 @@ public sealed class AgentActor : UntypedActor
                         subtasksCompleted.ParentTaskId,
                         synthesisPrompt,
                         synthesisTask.GraphId,
-                        synthesisTask.WorkspacePath));
+                        synthesisTask.WorkspacePath,
+                        synthesisTask.AllowNoOpCompletion));
                     _logger.LogInformation("Agent {AgentId} received {Count} subtask results for synthesis of {TaskId}",
                         _agentId, subtasksCompleted.Results.Count, subtasksCompleted.ParentTaskId);
                 }
@@ -299,7 +306,8 @@ public sealed class AgentActor : UntypedActor
                         rejected.ParentTaskId,
                         $"Your proposed subtask decomposition for task {rejected.ParentTaskId} was rejected: {rejected.Reason}. Please complete the task directly.",
                         rejectedTask.GraphId,
-                        rejectedTask.WorkspacePath));
+                        rejectedTask.WorkspacePath,
+                        rejectedTask.AllowNoOpCompletion));
                 }
                 break;
 
@@ -352,7 +360,8 @@ public sealed class AgentActor : UntypedActor
             task.TaskId,
             prompt,
             task.GraphId,
-            task.WorkspacePath));
+            task.WorkspacePath,
+            task.AllowNoOpCompletion));
     }
 
     private void RegisterArtifacts(TaskCompleted completed)
@@ -468,7 +477,12 @@ public sealed class AgentActor : UntypedActor
 
     private static string BuildFallbackPrompt(TaskAssigned task)
     {
-        return PromptBuilder.BuildTaskPrompt(task.TaskId, task.Description ?? $"Complete task {task.TaskId}.");
+        return PromptBuilder.BuildTaskPrompt(
+            task.TaskId,
+            task.Description ?? $"Complete task {task.TaskId}.",
+            ownedPaths: task.OwnedPaths,
+            expectedFiles: task.ExpectedFiles,
+            allowNoOpCompletion: task.AllowNoOpCompletion);
     }
 
     private static AgentActivityState MapTextToState(string text)
@@ -485,7 +499,7 @@ public sealed class AgentActor : UntypedActor
     private sealed record RetrievalComplete(TaskAssigned Task, IReadOnlyList<KnowledgeEntry> Entries);
     private sealed record RetrievalFailed(TaskAssigned Task, string Reason);
     private sealed record DemoTick(int Index);
-    private sealed record ActiveTaskContext(string TaskId, string? GraphId, string? WorkspacePath);
+    private sealed record ActiveTaskContext(string TaskId, string? GraphId, string? WorkspacePath, bool AllowNoOpCompletion);
     private sealed record RegisteredTaskCompleted(TaskCompleted Completed);
     private sealed record ArtifactRegistrationFailed(TaskCompleted Completed, string Reason);
 }

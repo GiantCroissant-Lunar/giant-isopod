@@ -113,7 +113,7 @@ public sealed class AgentWorldSystem : IDisposable
 
         TaskGraph = _system.ActorOf(
             Props.Create(() => new TaskGraphActor(
-                Dispatch, AgentSupervisor, Viewport, Workspace, Validator,
+                Dispatch, AgentSupervisor, Viewport, Workspace, Validator, KnowledgeSupervisor,
                 loggerFactory.CreateLogger<TaskGraphActor>())),
             "taskgraph");
 

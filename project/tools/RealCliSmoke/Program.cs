@@ -229,18 +229,24 @@ static TaskNode BuildScenarioNode(string scenario, string marker)
         "basic" => new TaskNode(
             "smoke-edit",
             $"In the current git worktree, create a new file named SmokeRuntimeE2E.cs containing a public static class SmokeRuntimeE2E with a public const string Message = \"{marker}\"; do not modify any other files; then exit.",
-            new HashSet<string> { "code_edit" }),
+            new HashSet<string> { "code_edit" },
+            OwnedPaths: new[] { "SmokeRuntimeE2E.cs" },
+            ExpectedFiles: new[] { "SmokeRuntimeE2E.cs" }),
         "review-pass" => new TaskNode(
             "smoke-edit",
             $"In the current git worktree, create a new file named SmokeRuntimeE2E.cs containing a public static class SmokeRuntimeE2E with a public const string Message = \"{marker}\"; do not modify any other files; then exit.",
             new HashSet<string> { "code_edit" },
-            RequiredValidators: new[] { "agent-review" }),
+            RequiredValidators: new[] { "agent-review" },
+            OwnedPaths: new[] { "SmokeRuntimeE2E.cs" },
+            ExpectedFiles: new[] { "SmokeRuntimeE2E.cs" }),
         "review-fail" => new TaskNode(
             "smoke-edit",
             $"In the current git worktree, create a new file named SmokeRuntimeE2E.cs containing a public static class SmokeRuntimeE2E with a public const string Message = \"{marker}\"; do not modify any other files; then exit.",
             new HashSet<string> { "code_edit" },
             RequiredValidators: new[] { "agent-review" },
-            MaxValidationAttempts: 2),
+            MaxValidationAttempts: 2,
+            OwnedPaths: new[] { "SmokeRuntimeE2E.cs" },
+            ExpectedFiles: new[] { "SmokeRuntimeE2E.cs" }),
         _ => throw new InvalidOperationException($"Unknown scenario '{scenario}'.")
     };
 }

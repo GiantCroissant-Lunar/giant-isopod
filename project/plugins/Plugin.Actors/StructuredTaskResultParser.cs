@@ -46,6 +46,7 @@ public static partial class StructuredTaskResultParser
                     Outcome: outcome,
                     Summary: string.IsNullOrWhiteSpace(dto.Summary) ? null : dto.Summary.Trim(),
                     FailureReason: string.IsNullOrWhiteSpace(dto.FailureReason) ? null : dto.FailureReason.Trim(),
+                    NoOp: dto.NoOp ?? false,
                     Subplan: subplan,
                     ExpectedArtifactTypes: expectedArtifactTypes);
             }
@@ -60,6 +61,7 @@ public static partial class StructuredTaskResultParser
             Outcome: ParsedTaskOutcome.Unknown,
             Summary: null,
             FailureReason: null,
+            NoOp: false,
             Subplan: null,
             ExpectedArtifactTypes: Array.Empty<ArtifactType>());
     }
@@ -100,7 +102,10 @@ public static partial class StructuredTaskResultParser
             dto.RequiredCapabilities is null ? new HashSet<string>() : new HashSet<string>(dto.RequiredCapabilities),
             dto.DependsOnSubtasks ?? Array.Empty<string>(),
             budget,
-            dto.ExpectedOutputTypes);
+            dto.ExpectedOutputTypes,
+            dto.OwnedPaths,
+            dto.ExpectedFiles,
+            dto.AllowNoOpCompletion ?? false);
     }
 
     [GeneratedRegex(@"<giant-isopod-result>\s*(?<json>\{.*?\})\s*</giant-isopod-result>", RegexOptions.Singleline | RegexOptions.RightToLeft)]
@@ -112,6 +117,7 @@ public static partial class StructuredTaskResultParser
         ParsedTaskOutcome Outcome,
         string? Summary,
         string? FailureReason,
+        bool NoOp,
         ProposedSubplan? Subplan,
         IReadOnlyList<ArtifactType> ExpectedArtifactTypes);
 
@@ -127,6 +133,7 @@ public static partial class StructuredTaskResultParser
         [property: JsonPropertyName("task_id")] string? TaskId,
         string? Outcome,
         string? Summary,
+        [property: JsonPropertyName("no_op")] bool? NoOp,
         [property: JsonPropertyName("failure_reason")] string? FailureReason,
         [property: JsonPropertyName("artifacts_expected")] IReadOnlyList<ArtifactType>? ArtifactsExpected,
         SubplanDto? Subplan);
@@ -145,5 +152,8 @@ public static partial class StructuredTaskResultParser
         [property: JsonPropertyName("required_capabilities")] List<string>? RequiredCapabilities,
         [property: JsonPropertyName("depends_on_subtasks")] IReadOnlyList<string>? DependsOnSubtasks,
         [property: JsonPropertyName("budget_cap_seconds")] int? BudgetCapSeconds,
-        [property: JsonPropertyName("expected_output_types")] IReadOnlyList<ArtifactType>? ExpectedOutputTypes);
+        [property: JsonPropertyName("expected_output_types")] IReadOnlyList<ArtifactType>? ExpectedOutputTypes,
+        [property: JsonPropertyName("owned_paths")] IReadOnlyList<string>? OwnedPaths,
+        [property: JsonPropertyName("expected_files")] IReadOnlyList<string>? ExpectedFiles,
+        [property: JsonPropertyName("allow_no_op_completion")] bool? AllowNoOpCompletion);
 }

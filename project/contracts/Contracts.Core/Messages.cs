@@ -28,12 +28,25 @@ public record TaskRequest(
     string Description,
     IReadOnlySet<string> RequiredCapabilities,
     string? GraphId = null,
-    string? PreferredRuntimeId = null);
+    string? PreferredRuntimeId = null,
+    IReadOnlyList<string>? OwnedPaths = null,
+    IReadOnlyList<string>? ExpectedFiles = null,
+    bool AllowNoOpCompletion = false);
 public record TaskRequestWithBudget(
     string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities,
-    TaskBudget Budget, string? GraphId = null, string? PreferredRuntimeId = null)
-    : TaskRequest(TaskId, Description, RequiredCapabilities, GraphId, PreferredRuntimeId);
-public record TaskAssigned(string TaskId, string AgentId, string? Description = null, TaskBudget? Budget = null, string? GraphId = null, string? WorkspacePath = null);
+    TaskBudget Budget, string? GraphId = null, string? PreferredRuntimeId = null,
+    IReadOnlyList<string>? OwnedPaths = null, IReadOnlyList<string>? ExpectedFiles = null, bool AllowNoOpCompletion = false)
+    : TaskRequest(TaskId, Description, RequiredCapabilities, GraphId, PreferredRuntimeId, OwnedPaths, ExpectedFiles, AllowNoOpCompletion);
+public record TaskAssigned(
+    string TaskId,
+    string AgentId,
+    string? Description = null,
+    TaskBudget? Budget = null,
+    string? GraphId = null,
+    string? WorkspacePath = null,
+    IReadOnlyList<string>? OwnedPaths = null,
+    IReadOnlyList<string>? ExpectedFiles = null,
+    bool AllowNoOpCompletion = false);
 public record TaskCompleted(string TaskId, string AgentId, bool Success, string? Summary = null, string? GraphId = null, IReadOnlyList<ArtifactRef>? Artifacts = null, ProposedSubplan? Subplan = null);
 public record TaskFailed(string TaskId, string? Reason = null, IReadOnlySet<string>? UnmetCapabilities = null, string? GraphId = null);
 public record TaskTimedOut(string TaskId);
@@ -65,12 +78,24 @@ public record TaskNode(
     TaskBudget? Budget = null,
     IReadOnlyList<string>? RequiredValidators = null,
     int MaxValidationAttempts = 2,
-    string? PreferredRuntimeId = null);
+    string? PreferredRuntimeId = null,
+    IReadOnlyList<string>? OwnedPaths = null,
+    IReadOnlyList<string>? ExpectedFiles = null,
+    bool AllowNoOpCompletion = false);
 public record TaskEdge(string FromTaskId, string ToTaskId);
 public record SubmitTaskGraph(string GraphId, IReadOnlyList<TaskNode> Nodes, IReadOnlyList<TaskEdge> Edges, TaskBudget? GraphBudget = null);
 public record TaskGraphAccepted(string GraphId, int NodeCount, int EdgeCount);
 public record TaskGraphRejected(string GraphId, string Reason);
-public record TaskReadyForDispatch(string GraphId, string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities, TaskBudget? Budget = null, string? PreferredRuntimeId = null);
+public record TaskReadyForDispatch(
+    string GraphId,
+    string TaskId,
+    string Description,
+    IReadOnlySet<string> RequiredCapabilities,
+    TaskBudget? Budget = null,
+    string? PreferredRuntimeId = null,
+    IReadOnlyList<string>? OwnedPaths = null,
+    IReadOnlyList<string>? ExpectedFiles = null,
+    bool AllowNoOpCompletion = false);
 public record TaskNodeCompleted(string GraphId, string TaskId, bool Success, string? Summary = null);
 public record TaskGraphCompleted(string GraphId, IReadOnlyDictionary<string, bool> Results);
 
@@ -210,7 +235,10 @@ public record SubtaskProposal(
     IReadOnlySet<string> RequiredCapabilities,
     IReadOnlyList<string> DependsOnSubtasks,
     TimeSpan? BudgetCap = null,
-    IReadOnlyList<ArtifactType>? ExpectedOutputTypes = null);
+    IReadOnlyList<ArtifactType>? ExpectedOutputTypes = null,
+    IReadOnlyList<string>? OwnedPaths = null,
+    IReadOnlyList<string>? ExpectedFiles = null,
+    bool AllowNoOpCompletion = false);
 
 public record ProposedSubplan(
     string ParentTaskId,
@@ -237,7 +265,9 @@ public record ValidatorRegistered(string Name);
 public record ValidateArtifact(
     string ArtifactId, ArtifactRef Artifact,
     string? TaskId = null,
-    IReadOnlyList<string>? RequiredValidators = null);
+    IReadOnlyList<string>? RequiredValidators = null,
+    IReadOnlyList<string>? OwnedPaths = null,
+    IReadOnlyList<string>? ExpectedFiles = null);
 
 public record ValidationComplete(
     string ArtifactId, IReadOnlyList<ValidatorResult> Results, string? TaskId = null);

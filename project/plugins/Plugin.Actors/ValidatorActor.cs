@@ -80,6 +80,14 @@ public sealed class ValidatorActor : UntypedActor
     private void HandleValidate(ValidateArtifact msg)
     {
         var sender = Sender;
+        var scopeFailure = ValidateArtifactScope(msg);
+        if (scopeFailure is not null)
+        {
+            _artifactRegistry.Tell(new UpdateValidation(msg.ArtifactId, scopeFailure));
+            sender.Tell(new ValidationComplete(msg.ArtifactId, new[] { scopeFailure }, msg.TaskId));
+            return;
+        }
+
         var applicable = GetApplicableValidators(msg.Artifact.Type, msg.RequiredValidators);
 
         if (applicable.Count == 0)
@@ -117,7 +125,13 @@ public sealed class ValidatorActor : UntypedActor
                     break;
 
                 case ValidatorKind.AgentReview:
-                    RunAgentReviewValidator(msg.ArtifactId, msg.Artifact, msg.TaskId, spec);
+                    RunAgentReviewValidator(
+                        msg.ArtifactId,
+                        msg.Artifact,
+                        msg.TaskId,
+                        spec,
+                        msg.OwnedPaths,
+                        msg.ExpectedFiles);
                     break;
             }
         }
@@ -150,11 +164,17 @@ public sealed class ValidatorActor : UntypedActor
             .PipeTo(self);
     }
 
-    private void RunAgentReviewValidator(string artifactId, ArtifactRef artifact, string? taskId, ValidatorSpec spec)
+    private void RunAgentReviewValidator(
+        string artifactId,
+        ArtifactRef artifact,
+        string? taskId,
+        ValidatorSpec spec,
+        IReadOnlyList<string>? ownedPaths,
+        IReadOnlyList<string>? expectedFiles)
     {
         var self = Self;
 
-        RunAgentReviewAsync(artifactId, artifact, taskId, spec)
+        RunAgentReviewAsync(artifactId, artifact, taskId, spec, ownedPaths, expectedFiles)
             .ContinueWith(t =>
             {
                 if (t.IsCanceled)
@@ -239,7 +259,9 @@ public sealed class ValidatorActor : UntypedActor
         string artifactId,
         ArtifactRef artifact,
         string? taskId,
-        ValidatorSpec spec)
+        ValidatorSpec spec,
+        IReadOnlyList<string>? ownedPaths,
+        IReadOnlyList<string>? expectedFiles)
     {
         if (_config is null)
         {
@@ -254,7 +276,7 @@ public sealed class ValidatorActor : UntypedActor
         var runtimeConfig = _config.Runtimes.ResolveOrDefault(runtimeId);
         var model = ResolveReviewModel(spec);
         var workingDirectory = ResolveReviewWorkingDirectory(artifact);
-        var prompt = BuildAgentReviewPrompt(artifactId, artifact, taskId, spec);
+        var prompt = BuildAgentReviewPrompt(artifactId, artifact, taskId, spec, ownedPaths, expectedFiles);
 
         var output = new StringBuilder();
         await using var runtime = RuntimeFactory.Create(
@@ -358,7 +380,13 @@ public sealed class ValidatorActor : UntypedActor
         return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     }
 
-    private string BuildAgentReviewPrompt(string artifactId, ArtifactRef artifact, string? taskId, ValidatorSpec spec)
+    private string BuildAgentReviewPrompt(
+        string artifactId,
+        ArtifactRef artifact,
+        string? taskId,
+        ValidatorSpec spec,
+        IReadOnlyList<string>? ownedPaths,
+        IReadOnlyList<string>? expectedFiles)
     {
         var sb = new StringBuilder();
         sb.AppendLine("You are validating a generated artifact.");
@@ -369,6 +397,18 @@ public sealed class ValidatorActor : UntypedActor
         sb.Append("Artifact type: ").AppendLine(artifact.Type.ToString());
         sb.Append("Artifact format: ").AppendLine(artifact.Format);
         sb.Append("Artifact URI: ").AppendLine(artifact.Uri);
+        if (ownedPaths is { Count: > 0 })
+        {
+            sb.AppendLine("Owned paths:");
+            foreach (var path in ownedPaths)
+                sb.Append("- ").AppendLine(path);
+        }
+        if (expectedFiles is { Count: > 0 })
+        {
+            sb.AppendLine("Expected files:");
+            foreach (var file in expectedFiles)
+                sb.Append("- ").AppendLine(file);
+        }
         if (!string.IsNullOrWhiteSpace(spec.Rubric))
         {
             sb.AppendLine();
@@ -411,6 +451,70 @@ public sealed class ValidatorActor : UntypedActor
         sb.AppendLine("{\"validator\":\"validator-name\",\"artifact_id\":\"artifact-id\",\"passed\":true,\"summary\":\"Looks good.\",\"issues\":[]}");
         sb.AppendLine("</giant-isopod-review>");
         return sb.ToString();
+    }
+
+    private static ValidatorResult? ValidateArtifactScope(ValidateArtifact msg)
+    {
+        var relativePath = GetArtifactRelativePath(msg.Artifact);
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return null;
+
+        if (msg.ExpectedFiles is { Count: > 0 } &&
+            !msg.ExpectedFiles.Any(expected => PathsMatch(expected, relativePath)))
+        {
+            return new ValidatorResult(
+                "expected-files",
+                false,
+                $"Artifact path '{relativePath}' is outside expected_files [{string.Join(", ", msg.ExpectedFiles)}].");
+        }
+
+        if (msg.OwnedPaths is { Count: > 0 } &&
+            !msg.OwnedPaths.Any(owned => PathWithinOwnedPath(relativePath, owned)))
+        {
+            return new ValidatorResult(
+                "owned-paths",
+                false,
+                $"Artifact path '{relativePath}' is outside owned_paths [{string.Join(", ", msg.OwnedPaths)}].");
+        }
+
+        return null;
+    }
+
+    private static string? GetArtifactRelativePath(ArtifactRef artifact)
+    {
+        if (artifact.Metadata is null ||
+            !artifact.Metadata.TryGetValue("relativePath", out var relativePath) ||
+            string.IsNullOrWhiteSpace(relativePath))
+        {
+            return null;
+        }
+
+        return NormalizePath(relativePath);
+    }
+
+    private static bool PathsMatch(string expectedPath, string relativePath)
+    {
+        return string.Equals(NormalizePath(expectedPath), NormalizePath(relativePath), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool PathWithinOwnedPath(string relativePath, string ownedPath)
+    {
+        var normalizedOwnedPath = NormalizePath(ownedPath);
+        var normalizedRelativePath = NormalizePath(relativePath);
+        if (string.IsNullOrWhiteSpace(normalizedOwnedPath) || string.IsNullOrWhiteSpace(normalizedRelativePath))
+            return false;
+
+        return string.Equals(normalizedOwnedPath, normalizedRelativePath, StringComparison.OrdinalIgnoreCase)
+               || normalizedRelativePath.StartsWith(normalizedOwnedPath + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizePath(string path)
+    {
+        var normalized = path.Trim().Replace('\\', '/');
+        while (normalized.StartsWith("./", StringComparison.Ordinal))
+            normalized = normalized[2..];
+
+        return normalized.Trim('/');
     }
 
     private static string? TryReadArtifactContent(ArtifactRef artifact)

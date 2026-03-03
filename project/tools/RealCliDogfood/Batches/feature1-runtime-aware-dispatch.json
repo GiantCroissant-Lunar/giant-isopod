@@ -13,6 +13,13 @@
     {
       "task_id": "dispatch-contract",
       "preferred_runtime_id": "pi",
+      "owned_paths": [
+        "project/contracts/Contracts.Core/Messages.cs"
+      ],
+      "expected_files": [
+        "project/contracts/Contracts.Core/Messages.cs"
+      ],
+      "allow_no_op_completion": true,
       "required_capabilities": [
         "code_edit"
       ],
@@ -24,28 +31,46 @@
     {
       "task_id": "dispatch-selection",
       "preferred_runtime_id": "pi",
+      "owned_paths": [
+        "project/plugins/Plugin.Actors/DispatchActor.cs"
+      ],
+      "expected_files": [
+        "project/plugins/Plugin.Actors/DispatchActor.cs"
+      ],
       "required_capabilities": [
         "code_edit"
       ],
       "required_validators": [
         "agent-review"
       ],
-      "description": "Update project/plugins/Plugin.Actors/DispatchActor.cs so bidder selection prefers agents whose runtime matches the task's preferred runtime id when such bids are available. Keep fallback behavior intact when no preferred-runtime bid is available. Do not encode runtime preference as a fake capability."
+      "description": "Update only project/plugins/Plugin.Actors/DispatchActor.cs so bidder selection prefers agents whose runtime matches the task's preferred runtime id when such bids are available. Assume the contract fields already exist from the predecessor task. Keep fallback behavior intact when no preferred-runtime bid is available. Do not modify any contract or test file. If you believe a contract change is required, return failure_reason instead of editing another file."
     },
     {
       "task_id": "dispatch-tests",
       "preferred_runtime_id": "kimi",
+      "owned_paths": [
+        "project/tests/Plugin.Actors.Tests/DispatchActorTests.cs"
+      ],
+      "expected_files": [
+        "project/tests/Plugin.Actors.Tests/DispatchActorTests.cs"
+      ],
       "required_capabilities": [
         "code_edit"
       ],
       "required_validators": [
         "agent-review"
       ],
-      "description": "Add or update tests in project/tests/Plugin.Actors.Tests/DispatchActorTests.cs to prove: preferred runtime wins when available; non-preferred runtime still wins when no preferred-runtime bid exists; existing duplicate/non-capable bid protections still hold. Edit only the dispatch test file unless a compile fix is strictly required."
+      "description": "Edit only project/tests/Plugin.Actors.Tests/DispatchActorTests.cs to prove: preferred runtime wins when available; non-preferred runtime still wins when no preferred-runtime bid exists; existing duplicate/non-capable bid protections still hold. Assume the contract and dispatch-selection tasks have already completed. Do not modify production code. If the production behavior is insufficient, return failure_reason instead of editing any non-test file."
     },
     {
       "task_id": "dispatch-parallel-smoke",
       "preferred_runtime_id": "kimi",
+      "owned_paths": [
+        "project/tools/RealCliParallelSmoke/Program.cs"
+      ],
+      "expected_files": [
+        "project/tools/RealCliParallelSmoke/Program.cs"
+      ],
       "required_capabilities": [
         "code_edit"
       ],
@@ -57,6 +82,18 @@
     {
       "task_id": "dispatch-review",
       "preferred_runtime_id": "pi",
+      "owned_paths": [
+        "project/contracts/Contracts.Core/Messages.cs",
+        "project/plugins/Plugin.Actors/DispatchActor.cs",
+        "project/tests/Plugin.Actors.Tests/DispatchActorTests.cs",
+        "project/tools/RealCliParallelSmoke/Program.cs"
+      ],
+      "expected_files": [
+        "project/contracts/Contracts.Core/Messages.cs",
+        "project/plugins/Plugin.Actors/DispatchActor.cs",
+        "project/tests/Plugin.Actors.Tests/DispatchActorTests.cs",
+        "project/tools/RealCliParallelSmoke/Program.cs"
+      ],
       "required_capabilities": [
         "code_edit"
       ],
@@ -73,6 +110,10 @@
     },
     {
       "from_task_id": "dispatch-contract",
+      "to_task_id": "dispatch-tests"
+    },
+    {
+      "from_task_id": "dispatch-selection",
       "to_task_id": "dispatch-tests"
     },
     {

@@ -24,9 +24,14 @@ public class ValidatorActorTests : TestKit
                 NullLogger<ValidatorActor>.Instance)));
     }
 
-    private static ArtifactRef MakeArtifact(string id, ArtifactType type = ArtifactType.Code, string uri = "/tmp/test.cs") =>
+    private static ArtifactRef MakeArtifact(
+        string id,
+        ArtifactType type = ArtifactType.Code,
+        string uri = "/tmp/test.cs",
+        IReadOnlyDictionary<string, string>? metadata = null) =>
         new(id, type, "text/plain", uri, null,
-            new ArtifactProvenance("task-1", "agent-1", DateTimeOffset.UtcNow));
+            new ArtifactProvenance("task-1", "agent-1", DateTimeOffset.UtcNow),
+            metadata);
 
     private static ValidatorSpec ScriptSpec(string name, ArtifactType appliesTo, string command) =>
         new(name, ValidatorKind.Script, appliesTo, command);
@@ -202,6 +207,48 @@ public class ValidatorActorTests : TestKit
         Assert.Single(result.Results);
         Assert.False(result.Results[0].Passed);
         Assert.Equal("v2", result.Results[0].ValidatorName);
+    }
+
+    [Fact]
+    public void ValidateArtifact_ExpectedFilesMismatch_ReturnsFailure()
+    {
+        var artifact = MakeArtifact(
+            "art-expected-mismatch",
+            metadata: new Dictionary<string, string> { ["relativePath"] = "project/plugins/Plugin.Actors/Other.cs" });
+
+        _validator.Tell(
+            new ValidateArtifact(
+                "art-expected-mismatch",
+                artifact,
+                ExpectedFiles: new[] { "project/plugins/Plugin.Actors/DispatchActor.cs" }),
+            TestActor);
+
+        var result = ExpectMsg<ValidationComplete>(TimeSpan.FromSeconds(10));
+        Assert.Single(result.Results);
+        Assert.False(result.Results[0].Passed);
+        Assert.Equal("expected-files", result.Results[0].ValidatorName);
+        Assert.Contains("outside expected_files", result.Results[0].Details, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateArtifact_OwnedPathsMismatch_ReturnsFailure()
+    {
+        var artifact = MakeArtifact(
+            "art-owned-mismatch",
+            metadata: new Dictionary<string, string> { ["relativePath"] = "project/plugins/Plugin.Process/MemvidClient.cs" });
+
+        _validator.Tell(
+            new ValidateArtifact(
+                "art-owned-mismatch",
+                artifact,
+                OwnedPaths: new[] { "project/plugins/Plugin.Actors" }),
+            TestActor);
+
+        var result = ExpectMsg<ValidationComplete>(TimeSpan.FromSeconds(10));
+        Assert.Single(result.Results);
+        Assert.False(result.Results[0].Passed);
+        Assert.Equal("owned-paths", result.Results[0].ValidatorName);
+        Assert.Contains("outside owned_paths", result.Results[0].Details, StringComparison.Ordinal);
     }
 
     // ── UpdateValidation forwarding ──

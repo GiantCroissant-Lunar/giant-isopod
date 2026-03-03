@@ -162,6 +162,8 @@ try
     if (graphManifest != null)
     {
         PrintBatchSummary(bridge, graphId, nodes);
+        var planningSummary = await QueryPlanningSummaryAsync(world, graphManifest, completed);
+        PrintPlanningSummary(planningSummary);
         return completed.Results.Values.All(result => result) ? 0 : 4;
     }
 
@@ -331,6 +333,14 @@ static void PrintBatchSummary(DogfoodViewportBridge bridge, string graphId, IRea
     }
 }
 
+static void PrintPlanningSummary(KnowledgeSummary summary)
+{
+    Console.WriteLine($"Planning knowledge query: {summary.Query}");
+    Console.WriteLine($"Planning knowledge hits: {summary.Result.Entries.Count}");
+    foreach (var entry in summary.Result.Entries.Take(3))
+        Console.WriteLine($"  planning relevance={entry.Relevance:F3} category={entry.Category} text={entry.Content}");
+}
+
 static void PrintKnowledgeSummary(KnowledgeSummary summary)
 {
     Console.WriteLine($"Knowledge query: {summary.Query}");
@@ -441,6 +451,33 @@ static async Task<KnowledgeSummary> QueryKnowledgeSummaryAsync(
     return new KnowledgeSummary(lastQuery, lastResult ?? new KnowledgeResult(agentId, Array.Empty<KnowledgeEntry>()));
 }
 
+static async Task<KnowledgeSummary> QueryPlanningSummaryAsync(
+    AgentWorldSystem world,
+    GraphManifest manifest,
+    TaskGraphCompletedEvent completed)
+{
+    var failedTaskIds = completed.Results.Where(kv => !kv.Value).Select(kv => kv.Key).ToList();
+    var queries = failedTaskIds.Count > 0
+        ? failedTaskIds
+        : manifest.Nodes.Select(node => node.TaskId).ToList();
+
+    KnowledgeResult? lastResult = null;
+    var lastQuery = queries[0];
+
+    foreach (var query in queries)
+    {
+        lastQuery = query;
+        lastResult = await world.KnowledgeSupervisor.Ask<KnowledgeResult>(
+            new QueryKnowledge("task-planner", query, TopK: 5),
+            TimeSpan.FromSeconds(30));
+
+        if (lastResult.Entries.Count > 0)
+            return new KnowledgeSummary(query, lastResult);
+    }
+
+    return new KnowledgeSummary(lastQuery, lastResult ?? new KnowledgeResult("task-planner", Array.Empty<KnowledgeEntry>()));
+}
+
 static async Task PrintMemoryDiagnosticsAsync(string sidecarExecutable, string filePath, IReadOnlyList<string> queries)
 {
     foreach (var query in queries.Take(3))
@@ -503,6 +540,7 @@ static TaskNode[] BuildManifestNodes(GraphManifest manifest)
 {
     return manifest.Nodes.Select(node =>
     {
+        ValidateManifestNodeScope(node);
         var requiredValidators = node.RequiredValidators?.Select(name => $"{name}-{node.TaskId}").ToArray();
         return new TaskNode(
             node.TaskId,
@@ -510,8 +548,20 @@ static TaskNode[] BuildManifestNodes(GraphManifest manifest)
             new HashSet<string>(node.RequiredCapabilities, StringComparer.Ordinal),
             RequiredValidators: requiredValidators,
             MaxValidationAttempts: node.MaxValidationAttempts ?? 2,
-            PreferredRuntimeId: node.PreferredRuntimeId);
+            PreferredRuntimeId: node.PreferredRuntimeId,
+            OwnedPaths: node.OwnedPaths,
+            ExpectedFiles: node.ExpectedFiles,
+            AllowNoOpCompletion: node.AllowNoOpCompletion ?? false);
     }).ToArray();
+}
+
+static void ValidateManifestNodeScope(GraphManifestNode node)
+{
+    if (node.OwnedPaths is not { Count: > 0 })
+        throw new InvalidOperationException($"Manifest node '{node.TaskId}' must declare owned_paths.");
+
+    if (node.ExpectedFiles is not { Count: > 0 })
+        throw new InvalidOperationException($"Manifest node '{node.TaskId}' must declare expected_files.");
 }
 
 static IEnumerable<GraphManifestValidator> BuildManifestValidators(GraphManifest manifest)
@@ -530,13 +580,23 @@ static IEnumerable<GraphManifestValidator> BuildManifestValidators(GraphManifest
             yield return template with
             {
                 Name = $"{template.Name}-{node.TaskId}",
-                Rubric = BuildGraphTaskReviewRubric(template.Rubric, node.TaskId, node.Description)
+                Rubric = BuildGraphTaskReviewRubric(
+                    template.Rubric,
+                    node.TaskId,
+                    node.Description,
+                    node.OwnedPaths ?? Array.Empty<string>(),
+                    node.ExpectedFiles ?? Array.Empty<string>())
             };
         }
     }
 }
 
-static string BuildGraphTaskReviewRubric(string rubric, string taskId, string taskDescription)
+static string BuildGraphTaskReviewRubric(
+    string rubric,
+    string taskId,
+    string taskDescription,
+    IReadOnlyList<string> ownedPaths,
+    IReadOnlyList<string> expectedFiles)
 {
     return $"""
 {rubric}
@@ -544,6 +604,12 @@ static string BuildGraphTaskReviewRubric(string rubric, string taskId, string ta
 Validate only task `{taskId}`.
 Submitted task:
 {taskDescription}
+
+owned_paths:
+{string.Join(Environment.NewLine, ownedPaths.Select(path => $"- {path}"))}
+
+expected_files:
+{string.Join(Environment.NewLine, expectedFiles.Select(path => $"- {path}"))}
 
 Judge the artifact against this exact submitted task, not against any other batch node or generic feature summary.
 """;
@@ -571,7 +637,10 @@ sealed record GraphManifestNode(
     [property: JsonPropertyName("required_capabilities")] IReadOnlyList<string> RequiredCapabilities,
     [property: JsonPropertyName("preferred_runtime_id")] string? PreferredRuntimeId,
     [property: JsonPropertyName("required_validators")] IReadOnlyList<string>? RequiredValidators,
-    [property: JsonPropertyName("max_validation_attempts")] int? MaxValidationAttempts);
+    [property: JsonPropertyName("max_validation_attempts")] int? MaxValidationAttempts,
+    [property: JsonPropertyName("owned_paths")] IReadOnlyList<string>? OwnedPaths,
+    [property: JsonPropertyName("expected_files")] IReadOnlyList<string>? ExpectedFiles,
+    [property: JsonPropertyName("allow_no_op_completion")] bool? AllowNoOpCompletion);
 
 sealed record GraphManifestEdge(
     [property: JsonPropertyName("from_task_id")] string FromTaskId,

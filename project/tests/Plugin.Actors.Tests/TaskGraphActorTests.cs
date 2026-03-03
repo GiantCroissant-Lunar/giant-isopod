@@ -45,6 +45,19 @@ public class TaskGraphActorTests : TestKit
     private static TaskNode Node(string id, string desc = "test task", params string[] caps) =>
         new(id, desc, new HashSet<string>(caps));
 
+    private static TaskNode NodeWithPaths(
+        string id,
+        string desc,
+        IReadOnlyList<string> ownedPaths,
+        IReadOnlyList<string>? expectedFiles = null,
+        params string[] caps) =>
+        new(
+            id,
+            desc,
+            new HashSet<string>(caps),
+            OwnedPaths: ownedPaths,
+            ExpectedFiles: expectedFiles);
+
     private static ProposedSubplan MakeSubplan(
         string parentTaskId,
         IReadOnlyList<SubtaskProposal> subtasks,
@@ -55,8 +68,15 @@ public class TaskGraphActorTests : TestKit
     private static SubtaskProposal Proposal(
         string desc = "subtask",
         IReadOnlyList<string>? dependsOn = null,
+        IReadOnlyList<string>? ownedPaths = null,
+        IReadOnlyList<string>? expectedFiles = null,
         params string[] caps) =>
-        new(desc, new HashSet<string>(caps), dependsOn ?? Array.Empty<string>());
+        new(
+            desc,
+            new HashSet<string>(caps),
+            dependsOn ?? Array.Empty<string>(),
+            OwnedPaths: ownedPaths ?? new[] { $"project/tasks/{desc.Replace(' ', '-').ToLowerInvariant()}.txt" },
+            ExpectedFiles: expectedFiles ?? new[] { $"project/tasks/{desc.Replace(' ', '-').ToLowerInvariant()}.txt" });
 
     // ── Graph submission ──
 
@@ -84,6 +104,44 @@ public class TaskGraphActorTests : TestKit
         var rejected = ExpectMsg<TaskGraphRejected>();
         Assert.Equal("g-cycle", rejected.GraphId);
         Assert.Contains("cycle", rejected.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Submit_OverlappingOwnedPaths_AutoSequencesTasks()
+    {
+        Sys.EventStream.Subscribe(TestActor, typeof(TaskGraphCompleted));
+
+        var submit = MakeGraph(
+            "g-owned-paths",
+            new[]
+            {
+                NodeWithPaths("t1", "edit dispatch logic", new[] { "project/plugins/Plugin.Actors/DispatchActor.cs" }, caps: "code_edit"),
+                NodeWithPaths("t2", "edit dispatch tests", new[] { "project/plugins/Plugin.Actors" }, caps: "code_edit")
+            });
+
+        _taskGraph.Tell(submit, TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+
+        var firstDispatch = _dispatchProbe.ExpectMsg<TaskRequest>();
+        Assert.Equal("t1", firstDispatch.TaskId);
+        _dispatchProbe.ExpectNoMsg(TimeSpan.FromMilliseconds(200));
+
+        _taskGraph.Tell(new TaskCompleted("t1", "agent-1", true, "done", "g-owned-paths"));
+        var releaseT1 = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", releaseT1.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1"));
+
+        var secondDispatch = _dispatchProbe.ExpectMsg<TaskRequest>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t2", secondDispatch.TaskId);
+
+        _taskGraph.Tell(new TaskCompleted("t2", "agent-2", true, "done", "g-owned-paths"));
+        var releaseT2 = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t2", releaseT2.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t2"));
+
+        var completed = ExpectMsg<TaskGraphCompleted>(TimeSpan.FromSeconds(5));
+        Assert.True(completed.Results["t1"]);
+        Assert.True(completed.Results["t2"]);
     }
 
     // ── Task completion without decomposition ──
@@ -239,6 +297,67 @@ public class TaskGraphActorTests : TestKit
             Subplan: MakeSubplan("t1", proposals)));
 
         ExpectNoMsg(TimeSpan.FromMilliseconds(200));
+    }
+
+    [Fact]
+    public void Decomposition_SubtaskMissingOwnedPaths_IsRejected()
+    {
+        _taskGraph.Tell(MakeGraph("g-missing-owned", new[] { Node("t1") }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+        _dispatchProbe.ExpectMsg<TaskRequest>(TimeSpan.FromSeconds(5));
+
+        var proposals = new[]
+        {
+            new SubtaskProposal(
+                "subtask",
+                new HashSet<string> { "analysis" },
+                Array.Empty<string>(),
+                OwnedPaths: Array.Empty<string>(),
+                ExpectedFiles: new[] { "project/docs/subtask.md" })
+        };
+
+        _taskGraph.Tell(new TaskCompleted("t1", "a1", true, "d", "g-missing-owned",
+            Subplan: MakeSubplan("t1", proposals)));
+
+        ExpectNoMsg(TimeSpan.FromMilliseconds(200));
+        _dispatchProbe.ExpectNoMsg(TimeSpan.FromMilliseconds(200));
+    }
+
+    [Fact]
+    public void TaskFailed_StoresPlanningPitfallKnowledge()
+    {
+        var knowledgeProbe = CreateTestProbe();
+        var taskGraph = Sys.ActorOf(Props.Create(() =>
+            new TaskGraphActor(
+                _dispatchProbe.Ref,
+                _agentSupervisorProbe.Ref,
+                _viewportProbe.Ref,
+                _workspaceProbe.Ref,
+                _validatorProbe.Ref,
+                knowledgeProbe.Ref,
+                NullLogger<TaskGraphActor>.Instance)));
+
+        var node = new TaskNode(
+            "t1",
+            "test task",
+            new HashSet<string> { "code_edit" },
+            OwnedPaths: new[] { "project/plugins/Plugin.Actors/DispatchActor.cs" },
+            ExpectedFiles: new[] { "project/plugins/Plugin.Actors/DispatchActor.cs" });
+
+        taskGraph.Tell(MakeGraph("g-learning", new[] { node }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+        _dispatchProbe.ExpectMsg<TaskRequest>(TimeSpan.FromSeconds(5));
+
+        taskGraph.Tell(new TaskFailed(
+            "t1",
+            "Runtime declared expected artifacts but no workspace changes were detected.",
+            GraphId: "g-learning"));
+
+        var stored = knowledgeProbe.ExpectMsg<StoreKnowledge>(TimeSpan.FromSeconds(5));
+        Assert.Equal("task-planner", stored.AgentId);
+        Assert.Equal("planning-pitfall", stored.Category);
+        Assert.Contains("t1", stored.Content, StringComparison.Ordinal);
+        Assert.Contains("DispatchActor.cs", stored.Content, StringComparison.Ordinal);
     }
 
     // ── Synthesis trigger ──

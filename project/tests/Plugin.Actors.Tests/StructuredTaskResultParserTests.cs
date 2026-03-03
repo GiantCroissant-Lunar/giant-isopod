@@ -24,6 +24,7 @@ Done.
         Assert.Equal(StructuredTaskResultParser.ParsedTaskOutcome.Completed, parsed.Outcome);
         Assert.Equal("Implemented the requested change.", parsed.Summary);
         Assert.Null(parsed.FailureReason);
+        Assert.False(parsed.NoOp);
         Assert.Null(parsed.Subplan);
         Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
     }
@@ -65,14 +66,18 @@ Done.
         "required_capabilities": ["analysis"],
         "depends_on_subtasks": [],
         "budget_cap_seconds": 120,
-        "expected_output_types": ["Doc"]
+        "expected_output_types": ["Doc"],
+        "owned_paths": ["project/docs"],
+        "expected_files": ["project/docs/inspection.md"]
       },
       {
         "description": "Implement the actual fix",
         "required_capabilities": ["coding"],
         "depends_on_subtasks": ["0"],
         "budget_cap_seconds": 300,
-        "expected_output_types": ["Code"]
+        "expected_output_types": ["Code"],
+        "owned_paths": ["project/src/Fix.cs"],
+        "expected_files": ["project/src/Fix.cs"]
       }
     ],
     "stop_when": {
@@ -96,6 +101,9 @@ Done.
         Assert.Equal(2, parsed.Subplan.Subtasks.Count);
         Assert.Equal(TimeSpan.FromSeconds(120), parsed.Subplan.Subtasks[0].BudgetCap);
         Assert.Equal(ArtifactType.Doc, Assert.Single(parsed.Subplan.Subtasks[0].ExpectedOutputTypes!));
+        Assert.Equal("project/docs", Assert.Single(parsed.Subplan.Subtasks[0].OwnedPaths!));
+        Assert.Equal("project/src/Fix.cs", Assert.Single(parsed.Subplan.Subtasks[1].OwnedPaths!));
+        Assert.Equal("project/src/Fix.cs", Assert.Single(parsed.Subplan.Subtasks[1].ExpectedFiles!));
         Assert.Equal("0", Assert.Single(parsed.Subplan.Subtasks[1].DependsOnSubtasks));
         Assert.Equal(StopKind.AllSubtasksComplete, parsed.Subplan.StopWhen!.Kind);
     }
@@ -118,6 +126,25 @@ Done.
     }
 
     [Fact]
+    public void Parse_ExtractsExplicitNoOpCompletion()
+    {
+        var output = """
+<giant-isopod-result>
+{"task_id":"task-noop","outcome":"completed","summary":"The requested state already exists with no file changes needed.","no_op":true,"artifacts_expected":[],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+""";
+
+        var parsed = StructuredTaskResultParser.Parse(output, "task-noop");
+
+        Assert.True(parsed.HasEnvelope);
+        Assert.Equal("task-noop", parsed.EnvelopeTaskId);
+        Assert.Equal(StructuredTaskResultParser.ParsedTaskOutcome.Completed, parsed.Outcome);
+        Assert.True(parsed.NoOp);
+        Assert.Empty(parsed.ExpectedArtifactTypes);
+        Assert.Equal("The requested state already exists with no file changes needed.", parsed.Summary);
+    }
+
+    [Fact]
     public void BuildTaskPrompt_IncludesStructuredContract()
     {
         var prompt = PromptBuilder.BuildTaskPrompt("task-4", "Do the thing.");
@@ -128,7 +155,11 @@ Done.
         Assert.Contains("\"task_id\":\"string\"", prompt, StringComparison.Ordinal);
         Assert.Contains("\"outcome\":\"completed\"", prompt, StringComparison.Ordinal);
         Assert.Contains("\"artifacts_expected\":[\"Code\"]", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"no_op\":true", prompt, StringComparison.Ordinal);
         Assert.Contains("\"failure_reason\":null", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"owned_paths\":[\"project/path/file.cs\"]", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"expected_files\":[\"project/path/file.cs\"]", prompt, StringComparison.Ordinal);
+        Assert.Contains("Allow no-op completion: no", prompt, StringComparison.Ordinal);
         Assert.Contains("Do the thing.", prompt, StringComparison.Ordinal);
     }
 
