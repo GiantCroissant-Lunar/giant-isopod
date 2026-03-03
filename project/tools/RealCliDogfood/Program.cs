@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 var runtimeId = args.Length > 0 ? args[0] : "pi";
 var timeoutMinutes = args.Length > 1 && int.TryParse(args[1], out var parsedMinutes) ? parsedMinutes : 10;
 var taskDescription = args.Length > 2
-    ? string.Join(" ", args.Skip(2))
+    ? ResolveTaskDescription(args.Skip(2))
     : """
 Add one new unit test method to project/tests/Plugin.Actors.Tests/StructuredTaskResultParserTests.cs.
 The test must verify StructuredTaskResultParser.Parse uses the last <giant-isopod-result> envelope when multiple envelopes appear in one transcript.
@@ -82,13 +82,9 @@ try
         Name: "agent-review",
         Kind: ValidatorKind.AgentReview,
         AppliesTo: ArtifactType.Code,
-        Command: "pi",
-        Rubric: """
-Review the produced code artifact for task fidelity, correctness, and scope control.
-Pass only if the change is limited to the requested test file and clearly verifies the intended parser behavior.
-Fail if unrelated files were modified, the assertion target is wrong, or the test does not actually prove the last envelope wins.
-""",
-        Config: new Dictionary<string, string> { ["runtimeId"] = "pi" });
+        Command: runtimeId,
+        Rubric: BuildReviewRubric(taskDescription),
+        Config: new Dictionary<string, string> { ["runtimeId"] = runtimeId });
 
     var registered = await world.Validator.Ask<ValidatorRegistered>(
         new RegisterValidator(validatorSpec),
@@ -158,6 +154,33 @@ static Dictionary<string, string> BuildRuntimeEnvironment()
     if (!string.IsNullOrWhiteSpace(zaiApiKey))
         env["ZAI_API_KEY"] = zaiApiKey;
     return env;
+}
+
+static string ResolveTaskDescription(IEnumerable<string> args)
+{
+    var parts = args.ToArray();
+    if (parts.Length == 1 && parts[0].StartsWith("@", StringComparison.Ordinal))
+    {
+        var filePath = parts[0][1..];
+        return File.ReadAllText(filePath, System.Text.Encoding.UTF8);
+    }
+
+    return string.Join(" ", parts);
+}
+
+static string BuildReviewRubric(string taskDescription)
+{
+    return
+        $"""
+Review the produced code artifact for exact task fidelity, correctness, and scope control.
+Judge the artifact against the submitted task below, not against any prior dogfood task or default example.
+
+Submitted task:
+{taskDescription}
+
+Pass only if the artifact satisfies that submitted task and stays appropriately scoped.
+Fail if the code changes unrelated files, does not implement the submitted task, or claims completion without matching the requested behavior.
+""";
 }
 
 static void TryDeleteDirectory(string path)
