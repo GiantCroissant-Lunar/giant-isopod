@@ -229,6 +229,8 @@ public sealed class AgentActor : UntypedActor
 
                 _activeTaskCount = Math.Max(0, _activeTaskCount - 1);
                 _activeTasks.Remove(completed.TaskId);
+                Context.System.ActorSelection("/user/dispatch")
+                    .Tell(new AgentCapacityAvailable(_agentId));
                 if (completed.Artifacts is { Count: > 0 })
                     RegisterArtifacts(completed);
                 else
@@ -254,6 +256,8 @@ public sealed class AgentActor : UntypedActor
 
                 _activeTaskCount = Math.Max(0, _activeTaskCount - 1);
                 _activeTasks.Remove(failed.TaskId);
+                Context.System.ActorSelection("/user/dispatch")
+                    .Tell(new AgentCapacityAvailable(_agentId));
                 if (failed.GraphId != null)
                     Context.System.ActorSelection("/user/taskgraph").Tell(failed);
                 if (failed.Reason != null)

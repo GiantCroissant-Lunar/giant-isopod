@@ -23,9 +23,11 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
     /// <summary>Resolved assignments awaiting risk approval, keyed by TaskId.</summary>
     private readonly Dictionary<string, PendingApproval> _pendingApprovals = new();
+    private readonly Dictionary<string, int> _pendingAgentReservations = new(StringComparer.Ordinal);
 
     private static readonly TimeSpan DefaultBidWindow = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan ApprovalTimeout = TimeSpan.FromSeconds(30);
+    private const int MaxConcurrentTasksPerAgent = 1;
 
     /// <summary>Only accept RiskApproved/RiskDenied from the viewport actor.</summary>
     private const string TrustedApproverPath = "/user/viewport";
@@ -88,6 +90,14 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             case WorkspaceAllocationDone done:
                 HandleWorkspaceAllocationDone(done);
                 break;
+
+            case RetryBidSession retry:
+                OpenBidSession(new BidSession(retry.Request, retry.CapableAgents, retry.OriginalSender));
+                break;
+
+            case AgentCapacityAvailable available:
+                ReleaseAgentReservation(available.AgentId);
+                break;
         }
     }
 
@@ -107,30 +117,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
                 return;
             }
 
-            // Start bid session — use captured requester, not Sender (which is now the registry)
-            var session = new BidSession(pendingRequest, result.AgentIds, requester);
-            _bidSessions[pendingRequest.TaskId] = session;
-
-            // Broadcast TaskAvailable to all capable agents
-            var available = new TaskAvailable(
-                pendingRequest.TaskId,
-                pendingRequest.Description,
-                pendingRequest.RequiredCapabilities,
-                DefaultBidWindow);
-
-            foreach (var agentId in result.AgentIds)
-            {
-                _agentSupervisor.Tell(new ForwardToAgent(agentId, available));
-            }
-
-            // Start bid window timer
-            Timers.StartSingleTimer(
-                $"bid-{pendingRequest.TaskId}",
-                new BidWindowClosed(pendingRequest.TaskId),
-                DefaultBidWindow);
-
-            _logger.LogDebug("Bid window opened for task {TaskId} ({Count} agents)",
-                pendingRequest.TaskId, result.AgentIds.Count);
+            OpenBidSession(new BidSession(pendingRequest, result.AgentIds, requester));
         }
         else
         {
@@ -174,12 +161,16 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         string selectedAgentId;
         TaskBudget? budget;
 
-        if (session.Bids.Count > 0)
+        var eligibleBids = session.Bids
+            .Where(b => EffectiveLoad(b) < MaxConcurrentTasksPerAgent)
+            .ToList();
+
+        if (eligibleBids.Count > 0)
         {
             // Select winner: highest fitness, then lowest load, then shortest duration
-            var winner = session.Bids
+            var winner = eligibleBids
                 .OrderByDescending(b => b.Fitness)
-                .ThenBy(b => b.ActiveTaskCount)
+                .ThenBy(b => EffectiveLoad(b))
                 .ThenBy(b => b.EstimatedDuration)
                 .First();
 
@@ -197,9 +188,15 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         }
         else
         {
+            if (session.CapableAgents.All(IsAgentAtCapacity))
+            {
+                RequeueBidSession(session);
+                return;
+            }
+
             // Fallback: first-match assignment (original behavior)
             _logger.LogWarning("No bids received for task {TaskId}, using first-match fallback", taskId);
-            selectedAgentId = session.CapableAgents[0];
+            selectedAgentId = session.CapableAgents.First(agentId => !IsAgentAtCapacity(agentId));
             budget = (session.Request as TaskRequestWithBudget)?.Budget;
         }
 
@@ -237,6 +234,8 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
                 return new WorkspaceAllocationDone(taskId, agentId, description, budget, originalSender, graphId, workspacePath);
             })
             .PipeTo(Self);
+
+        ReserveAgent(agentId);
     }
 
     private void HandleWorkspaceAllocationDone(WorkspaceAllocationDone done)
@@ -258,6 +257,68 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
     private bool IsFromTrustedApprover()
     {
         return Sender.Path.ToString().EndsWith(TrustedApproverPath);
+    }
+
+    private int EffectiveLoad(TaskBid bid)
+    {
+        return bid.ActiveTaskCount + _pendingAgentReservations.GetValueOrDefault(bid.AgentId, 0);
+    }
+
+    private bool IsAgentAtCapacity(string agentId)
+    {
+        return _pendingAgentReservations.GetValueOrDefault(agentId, 0) >= MaxConcurrentTasksPerAgent;
+    }
+
+    private void ReserveAgent(string agentId)
+    {
+        _pendingAgentReservations[agentId] = _pendingAgentReservations.GetValueOrDefault(agentId, 0) + 1;
+    }
+
+    private void ReleaseAgentReservation(string agentId)
+    {
+        if (!_pendingAgentReservations.TryGetValue(agentId, out var current))
+            return;
+
+        if (current <= 1)
+        {
+            _pendingAgentReservations.Remove(agentId);
+            return;
+        }
+
+        _pendingAgentReservations[agentId] = current - 1;
+    }
+
+    private void RequeueBidSession(BidSession session)
+    {
+        _logger.LogDebug("Task {TaskId} deferred because all capable agents are currently at capacity", session.Request.TaskId);
+        Timers.StartSingleTimer(
+            $"retry-bid-{session.Request.TaskId}",
+            new RetryBidSession(session.Request, session.CapableAgents, session.OriginalSender),
+            DefaultBidWindow);
+    }
+
+    private void OpenBidSession(BidSession session)
+    {
+        _bidSessions[session.Request.TaskId] = session;
+
+        var available = new TaskAvailable(
+            session.Request.TaskId,
+            session.Request.Description,
+            session.Request.RequiredCapabilities,
+            DefaultBidWindow);
+
+        foreach (var agentId in session.CapableAgents)
+        {
+            _agentSupervisor.Tell(new ForwardToAgent(agentId, available));
+        }
+
+        Timers.StartSingleTimer(
+            $"bid-{session.Request.TaskId}",
+            new BidWindowClosed(session.Request.TaskId),
+            DefaultBidWindow);
+
+        _logger.LogDebug("Bid window opened for task {TaskId} ({Count} agents)",
+            session.Request.TaskId, session.CapableAgents.Count);
     }
 
     private void HandleRiskApproved(string taskId)
@@ -312,6 +373,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
     }
 
     private sealed record BidWindowClosed(string TaskId);
+    private sealed record RetryBidSession(TaskRequest Request, IReadOnlyList<string> CapableAgents, IActorRef OriginalSender);
     private sealed record ApprovalTimedOut(string TaskId);
     private sealed record PendingApproval(string TaskId, string AgentId, string? Description, TaskBudget? Budget, IActorRef OriginalSender, string? GraphId = null);
     private sealed record WorkspaceAllocationDone(string TaskId, string AgentId, string? Description, TaskBudget? Budget, IActorRef OriginalSender, string? GraphId, string? WorkspacePath);
@@ -321,3 +383,4 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 /// Message to route a payload to a specific agent via the AgentSupervisor.
 /// </summary>
 public record ForwardToAgent(string AgentId, object Payload);
+public record AgentCapacityAvailable(string AgentId);
