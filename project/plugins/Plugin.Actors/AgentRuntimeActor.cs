@@ -361,7 +361,7 @@ public sealed class AgentRuntimeActor : UntypedActor
             return;
         }
 
-        if (parsed.NoOp && !execute.AllowNoOpCompletion)
+        if (parsed.NoOp && !execute.AllowNoOpCompletion && attempt.Artifacts.Count == 0)
         {
             parent.Tell(new TaskFailed(
                 execute.TaskId,
