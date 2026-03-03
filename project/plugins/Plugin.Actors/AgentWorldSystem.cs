@@ -70,9 +70,14 @@ public sealed class AgentWorldSystem : IDisposable
                 loggerFactory.CreateLogger<BlackboardActor>())),
             "blackboard");
 
+        Artifacts = _system.ActorOf(
+            Props.Create(() => new ArtifactRegistryActor(
+                loggerFactory.CreateLogger<ArtifactRegistryActor>())),
+            "artifacts");
+
         AgentSupervisor = _system.ActorOf(
             Props.Create(() => new AgentSupervisorActor(
-                Registry, MemorySupervisor, KnowledgeSupervisor, config,
+                Registry, Artifacts, MemorySupervisor, KnowledgeSupervisor, config,
                 loggerFactory)),
             "agents");
 
@@ -99,14 +104,10 @@ public sealed class AgentWorldSystem : IDisposable
                 loggerFactory.CreateLogger<ViewportActor>())),
             "viewport");
 
-        Artifacts = _system.ActorOf(
-            Props.Create(() => new ArtifactRegistryActor(
-                loggerFactory.CreateLogger<ArtifactRegistryActor>())),
-            "artifacts");
-
         Validator = _system.ActorOf(
             Props.Create(() => new ValidatorActor(
                 Artifacts,
+                config,
                 loggerFactory.CreateLogger<ValidatorActor>())),
             "validator");
 

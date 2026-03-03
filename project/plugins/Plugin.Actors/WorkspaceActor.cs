@@ -90,10 +90,23 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
     {
         var sender = Sender;
 
-        if (_workspaces.ContainsKey(msg.TaskId))
+        if (_workspaces.TryGetValue(msg.TaskId, out var existing))
         {
-            sender.Tell(new AllocationFailed(msg.TaskId, $"Workspace already exists for task {msg.TaskId}"));
-            return;
+            if (Directory.Exists(existing.Workspace.WorktreePath))
+            {
+                _workspaces[msg.TaskId] = existing with { AllocatedAt = DateTimeOffset.UtcNow };
+                _logger.LogDebug("Reusing existing workspace for task {TaskId} at {Path}",
+                    msg.TaskId, existing.Workspace.WorktreePath);
+                sender.Tell(new WorkspaceAllocated(
+                    msg.TaskId,
+                    existing.Workspace.WorktreePath,
+                    existing.Workspace.BranchName));
+                return;
+            }
+
+            _logger.LogWarning("Workspace entry for task {TaskId} pointed to missing path {Path}; recreating",
+                msg.TaskId, existing.Workspace.WorktreePath);
+            _workspaces.Remove(msg.TaskId);
         }
 
         if (string.IsNullOrWhiteSpace(msg.TaskId) || !SafeTaskIdRegex.IsMatch(msg.TaskId))
@@ -212,6 +225,14 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
     {
         try
         {
+            var commit = await EnsureCommittedAsync(taskId, ws);
+            if (!commit.Success)
+            {
+                return new MergeResult(taskId, Success: false, Sha: null,
+                    ConflictFiles: new[] { commit.Error ?? "Failed to commit workspace changes" },
+                    Requester: requester);
+            }
+
             // Rebase inside the worktree directory (branch is checked out there, not in anchor)
             var rebase = await RunGitInAsync(ws.WorktreePath, "rebase", _integrationBranch);
             if (rebase.ExitCode != 0)
@@ -255,6 +276,30 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
             return new MergeResult(taskId, Success: false, Sha: null,
                 ConflictFiles: new[] { ex.Message }, Requester: requester);
         }
+    }
+
+    private async Task<(bool Success, string? Error)> EnsureCommittedAsync(string taskId, Workspace ws)
+    {
+        var status = await RunGitInAsync(ws.WorktreePath, "status", "--porcelain");
+        if (status.ExitCode != 0)
+            return (false, $"Failed to inspect workspace changes: {status.Stderr}");
+
+        if (string.IsNullOrWhiteSpace(status.Stdout))
+            return (true, null);
+
+        var add = await RunGitInAsync(ws.WorktreePath, "add", "-A");
+        if (add.ExitCode != 0)
+            return (false, $"Failed to stage workspace changes: {add.Stderr}");
+
+        var commit = await RunGitInAsync(
+            ws.WorktreePath,
+            "-c", "user.name=Giant Isopod",
+            "-c", "user.email=giant-isopod@local",
+            "commit", "-m", $"task({taskId}): agent changes");
+        if (commit.ExitCode != 0)
+            return (false, $"Failed to commit workspace changes: {commit.Stderr}");
+
+        return (true, null);
     }
 
     private void HandleMergeResult(MergeResult result)

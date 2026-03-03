@@ -11,6 +11,7 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class AgentSupervisorActor : UntypedActor
 {
     private readonly IActorRef _registry;
+    private readonly IActorRef _artifactRegistry;
     private readonly IActorRef _memorySupervisor;
     private readonly IActorRef _knowledgeSupervisor;
     private readonly AgentWorldConfig _config;
@@ -20,12 +21,14 @@ public sealed class AgentSupervisorActor : UntypedActor
 
     public AgentSupervisorActor(
         IActorRef registry,
+        IActorRef artifactRegistry,
         IActorRef memorySupervisor,
         IActorRef knowledgeSupervisor,
         AgentWorldConfig config,
         ILoggerFactory loggerFactory)
     {
         _registry = registry;
+        _artifactRegistry = artifactRegistry;
         _memorySupervisor = memorySupervisor;
         _knowledgeSupervisor = knowledgeSupervisor;
         _config = config;
@@ -62,6 +65,7 @@ public sealed class AgentSupervisorActor : UntypedActor
                         spawn.SkillBundleName,
                         spawn.MemoryFilePath,
                         _registry,
+                        _artifactRegistry,
                         _memorySupervisor,
                         _knowledgeSupervisor,
                         _config,

@@ -18,6 +18,7 @@ public sealed class AgentActor : UntypedActor
     private readonly string? _runtimeId;
     private readonly ModelSpec? _model;
     private readonly IActorRef _registry;
+    private readonly IActorRef _artifactRegistry;
     private readonly IActorRef _memorySupervisor;
     private readonly IActorRef _knowledgeSupervisor;
     private readonly AgentWorldConfig _config;
@@ -32,10 +33,12 @@ public sealed class AgentActor : UntypedActor
 
     private HashSet<string> _capabilities = new();
     private readonly Dictionary<string, string> _workingMemory = new();
+    private readonly Dictionary<string, ActiveTaskContext> _activeTasks = new();
     private int _activeTaskCount;
-    private const int MaxConcurrentTasks = 3;
+    private const int MaxConcurrentTasks = 1;
     private const double MinBidThreshold = 0.5;
     private static readonly TimeSpan RetrievalTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ArtifactRegistrationTimeout = TimeSpan.FromSeconds(5);
 
     private static readonly AgentActivityState[] DemoStates =
     [
@@ -53,6 +56,7 @@ public sealed class AgentActor : UntypedActor
         string skillBundleName,
         string? memoryFilePath,
         IActorRef registry,
+        IActorRef artifactRegistry,
         IActorRef memorySupervisor,
         IActorRef knowledgeSupervisor,
         AgentWorldConfig config,
@@ -67,6 +71,7 @@ public sealed class AgentActor : UntypedActor
         _runtimeId = runtimeId;
         _model = model;
         _registry = registry;
+        _artifactRegistry = artifactRegistry;
         _memorySupervisor = memorySupervisor;
         _knowledgeSupervisor = knowledgeSupervisor;
         _config = config;
@@ -86,26 +91,21 @@ public sealed class AgentActor : UntypedActor
                 _loggerFactory.CreateLogger<AgentTaskActor>())),
             "tasks");
 
-        // Load AIEOS profile for visual info and capabilities
         var visualInfo = LoadVisualInfo();
         var capabilities = LoadCapabilities();
 
         _capabilities = capabilities;
         _registry.Tell(new RegisterSkills(_agentId, capabilities));
 
-        // Notify viewport with rich visual info
         Context.System.ActorSelection("/user/viewport")
             .Tell(new AgentSpawnedWithVisuals(_agentId, visualInfo));
 
         if (_memoryFilePath != null)
-        {
             _memorySupervisor.Tell(new StoreMemory(_agentId, "session", $"Agent {_agentId} started", "session_start"));
-        }
 
         _rpcActor.Tell(new StartRuntime(_agentId));
         _logger.LogInformation("Agent {AgentId} started (bundle: {Bundle})", _agentId, _skillBundleName);
 
-        // Start demo activity cycle (replaced by real runtime events when connected)
         StartDemoTimer();
     }
 
@@ -133,17 +133,16 @@ public sealed class AgentActor : UntypedActor
                 break;
 
             case RuntimeEvent evt:
-                // Forward raw text to terminal renderer
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new RuntimeOutput(_agentId, evt.RawJson));
-                // Simple heuristic for activity state from text output
+
                 var activityState = MapTextToState(evt.RawJson);
                 if (activityState != AgentActivityState.Idle)
                 {
                     Context.System.ActorSelection("/user/viewport")
                         .Tell(new AgentStateChanged(_agentId, activityState));
                 }
-                // Emit AG-UI events
+
                 var agUiEvents = _agUiAdapter.MapRpcEventToAgUiEvents(evt.RawJson);
                 foreach (var agUiEvt in agUiEvents)
                 {
@@ -168,9 +167,11 @@ public sealed class AgentActor : UntypedActor
 
             case TaskAssigned task:
                 _activeTaskCount++;
+                _activeTasks[task.TaskId] = new ActiveTaskContext(task.TaskId, task.GraphId, task.WorkspacePath);
+
                 if (task.Budget?.MaxTokens is { } maxTokens)
                     _rpcActor?.Tell(new SetTokenBudget(task.TaskId, maxTokens));
-                // Pre-task knowledge retrieval: query relevant context before forwarding to tasks
+
                 if (task.Description != null)
                 {
                     Context.System.ActorSelection("/user/viewport")
@@ -181,30 +182,33 @@ public sealed class AgentActor : UntypedActor
                         .ContinueWith(t =>
                         {
                             if (t.IsFaulted || t.IsCanceled)
-                                return (object)new RetrievalFailed(task, t.Exception?.GetBaseException().Message ?? "timeout");
+                                return (object)new RetrievalFailed(task, t.Exception?.GetBaseException()?.Message ?? "timeout");
                             return new RetrievalComplete(task, t.Result.Entries);
                         })
                         .PipeTo(Self);
                 }
                 else
                 {
-                    // No description — skip retrieval, forward immediately
                     Context.Child("tasks").Tell(task);
+                    StartTaskExecution(task, BuildFallbackPrompt(task));
                 }
                 break;
 
             case RetrievalComplete retrieval:
+                var taskPrompt = retrieval.Entries.Count > 0
+                    ? PromptBuilder.BuildTaskPrompt(retrieval.Task.TaskId, retrieval.Task.Description!, retrieval.Entries)
+                    : BuildFallbackPrompt(retrieval.Task);
+
                 if (retrieval.Entries.Count > 0)
                 {
-                    var enrichedPrompt = PromptBuilder.BuildEnrichedPrompt(
-                        retrieval.Task.Description!, retrieval.Entries);
-                    _rpcActor?.Tell(new SendPrompt(_agentId, enrichedPrompt));
                     _logger.LogInformation("Agent {AgentId} retrieved {Count} knowledge entries for task {TaskId}",
                         _agentId, retrieval.Entries.Count, retrieval.Task.TaskId);
                 }
+
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new AgentMemoryActivity(_agentId, false));
                 Context.Child("tasks").Tell(retrieval.Task);
+                StartTaskExecution(retrieval.Task, taskPrompt);
                 break;
 
             case RetrievalFailed failed:
@@ -212,34 +216,46 @@ public sealed class AgentActor : UntypedActor
                     _agentId, failed.Task.TaskId, failed.Reason);
                 Context.System.ActorSelection("/user/viewport")
                     .Tell(new AgentMemoryActivity(_agentId, false));
-                // Graceful degradation — proceed without context
                 Context.Child("tasks").Tell(failed.Task);
+                StartTaskExecution(failed.Task, BuildFallbackPrompt(failed.Task));
                 break;
 
             case TaskCompleted completed:
-                _activeTaskCount = Math.Max(0, _activeTaskCount - 1);
-                Context.Child("tasks").Tell(completed);
-                if (completed.GraphId != null)
-                    Context.System.ActorSelection("/user/taskgraph").Tell(completed);
-                // Post-task write-back: store outcome in long-term knowledge and episodic memory
-                if (completed.Summary != null)
+                if (!Sender.Equals(Context.Child("tasks")))
                 {
-                    _knowledgeSupervisor.Tell(new StoreKnowledge(
-                        _agentId, completed.Summary, "outcome",
-                        new Dictionary<string, string> { ["taskId"] = completed.TaskId }));
-                    _memorySupervisor.Tell(new StoreMemory(
-                        _agentId, completed.TaskId, completed.Summary,
-                        $"Task {completed.TaskId} completed"));
-                    _logger.LogDebug("Agent {AgentId} stored outcome for task {TaskId}", _agentId, completed.TaskId);
+                    Context.Child("tasks").Tell(completed);
+                    break;
                 }
+
+                _activeTaskCount = Math.Max(0, _activeTaskCount - 1);
+                _activeTasks.Remove(completed.TaskId);
+                if (completed.Artifacts is { Count: > 0 })
+                    RegisterArtifacts(completed);
+                else
+                    FinalizeCompletedTask(completed);
+                break;
+
+            case RegisteredTaskCompleted registered:
+                FinalizeCompletedTask(registered.Completed);
+                break;
+
+            case ArtifactRegistrationFailed failedRegistration:
+                _logger.LogWarning("Artifact registration failed for task {TaskId}: {Reason}",
+                    failedRegistration.Completed.TaskId, failedRegistration.Reason);
+                FinalizeCompletedTask(failedRegistration.Completed);
                 break;
 
             case TaskFailed failed:
+                if (!Sender.Equals(Context.Child("tasks")))
+                {
+                    Context.Child("tasks").Tell(failed);
+                    break;
+                }
+
                 _activeTaskCount = Math.Max(0, _activeTaskCount - 1);
-                Context.Child("tasks").Tell(failed);
+                _activeTasks.Remove(failed.TaskId);
                 if (failed.GraphId != null)
                     Context.System.ActorSelection("/user/taskgraph").Tell(failed);
-                // Store failure as pitfall knowledge
                 if (failed.Reason != null)
                 {
                     _knowledgeSupervisor.Tell(new StoreKnowledge(
@@ -249,11 +265,19 @@ public sealed class AgentActor : UntypedActor
                 break;
 
             case SubtasksCompleted subtasksCompleted:
-                var synthesisPrompt = PromptBuilder.BuildSynthesisPrompt(
-                    subtasksCompleted.ParentTaskId, subtasksCompleted.Results);
-                _rpcActor?.Tell(new SendPrompt(_agentId, synthesisPrompt));
-                _logger.LogInformation("Agent {AgentId} received {Count} subtask results for synthesis of {TaskId}",
-                    _agentId, subtasksCompleted.Results.Count, subtasksCompleted.ParentTaskId);
+                if (_activeTasks.TryGetValue(subtasksCompleted.ParentTaskId, out var synthesisTask))
+                {
+                    var synthesisPrompt = PromptBuilder.BuildSynthesisPrompt(
+                        subtasksCompleted.ParentTaskId, subtasksCompleted.Results);
+                    _rpcActor?.Tell(new ExecuteTaskPrompt(
+                        _agentId,
+                        subtasksCompleted.ParentTaskId,
+                        synthesisPrompt,
+                        synthesisTask.GraphId,
+                        synthesisTask.WorkspacePath));
+                    _logger.LogInformation("Agent {AgentId} received {Count} subtask results for synthesis of {TaskId}",
+                        _agentId, subtasksCompleted.Results.Count, subtasksCompleted.ParentTaskId);
+                }
                 break;
 
             case TaskDecompositionAccepted accepted:
@@ -264,12 +288,18 @@ public sealed class AgentActor : UntypedActor
             case TaskDecompositionRejected rejected:
                 _logger.LogWarning("Agent {AgentId} decomposition rejected for {TaskId}: {Reason}",
                     _agentId, rejected.ParentTaskId, rejected.Reason);
-                _rpcActor?.Tell(new SendPrompt(_agentId,
-                    $"Your proposed subtask decomposition for task {rejected.ParentTaskId} was rejected: {rejected.Reason}. Please complete the task directly."));
+                if (_activeTasks.TryGetValue(rejected.ParentTaskId, out var rejectedTask))
+                {
+                    _rpcActor?.Tell(new ExecuteTaskPrompt(
+                        _agentId,
+                        rejected.ParentTaskId,
+                        $"Your proposed subtask decomposition for task {rejected.ParentTaskId} was rejected: {rejected.Reason}. Please complete the task directly.",
+                        rejectedTask.GraphId,
+                        rejectedTask.WorkspacePath));
+                }
                 break;
 
             case TaskBidRejected:
-                // No action needed — bid lost
                 break;
 
             case SetWorkingMemory set:
@@ -288,7 +318,6 @@ public sealed class AgentActor : UntypedActor
             case DemoTick tick:
                 if (!_runtimeConnected)
                 {
-                    // Visual state cycling only — no fake console output
                     var state = DemoStates[tick.Index % DemoStates.Length];
                     Context.System.ActorSelection("/user/viewport")
                         .Tell(new AgentStateChanged(_agentId, state));
@@ -310,6 +339,59 @@ public sealed class AgentActor : UntypedActor
         var delay = TimeSpan.FromSeconds(0.8 + rng.NextDouble() * 1.5);
         _demoTimer = Context.System.Scheduler.ScheduleTellOnceCancelable(
             delay, Self, new DemoTick(nextIndex), Self);
+    }
+
+    private void StartTaskExecution(TaskAssigned task, string prompt)
+    {
+        _rpcActor?.Tell(new ExecuteTaskPrompt(
+            _agentId,
+            task.TaskId,
+            prompt,
+            task.GraphId,
+            task.WorkspacePath));
+    }
+
+    private void RegisterArtifacts(TaskCompleted completed)
+    {
+        var artifacts = completed.Artifacts ?? Array.Empty<ArtifactRef>();
+        Task.Run(async () =>
+        {
+            foreach (var artifact in artifacts)
+            {
+                await _artifactRegistry.Ask<ArtifactRegistered>(
+                    new RegisterArtifact(artifact),
+                    ArtifactRegistrationTimeout);
+            }
+
+            return (object)new RegisteredTaskCompleted(completed);
+        }).ContinueWith(t =>
+        {
+            if (t.IsFaulted || t.IsCanceled)
+            {
+                return (object)new ArtifactRegistrationFailed(
+                    completed,
+                    t.Exception?.GetBaseException()?.Message ?? "Artifact registration cancelled");
+            }
+
+            return t.Result;
+        }).PipeTo(Self);
+    }
+
+    private void FinalizeCompletedTask(TaskCompleted completed)
+    {
+        if (completed.GraphId != null)
+            Context.System.ActorSelection("/user/taskgraph").Tell(completed);
+
+        if (completed.Summary == null)
+            return;
+
+        _knowledgeSupervisor.Tell(new StoreKnowledge(
+            _agentId, completed.Summary, "outcome",
+            new Dictionary<string, string> { ["taskId"] = completed.TaskId }));
+        _memorySupervisor.Tell(new StoreMemory(
+            _agentId, completed.TaskId, completed.Summary,
+            $"Task {completed.TaskId} completed"));
+        _logger.LogDebug("Agent {AgentId} stored outcome for task {TaskId}", _agentId, completed.TaskId);
     }
 
     private AgentVisualInfo LoadVisualInfo()
@@ -356,15 +438,11 @@ public sealed class AgentActor : UntypedActor
 
     private void EvaluateAndBid(TaskAvailable available)
     {
-        // Don't bid if at capacity
         if (_activeTaskCount >= MaxConcurrentTasks) return;
-
-        // Compute fitness: fraction of required capabilities we have
         if (available.RequiredCapabilities.Count == 0) return;
+
         var matchCount = available.RequiredCapabilities.Count(c => _capabilities.Contains(c));
         var fitness = (double)matchCount / available.RequiredCapabilities.Count;
-
-        // Don't bid if fitness is below threshold
         if (fitness < MinBidThreshold) return;
 
         var bid = new TaskBid(
@@ -372,15 +450,18 @@ public sealed class AgentActor : UntypedActor
             _agentId,
             fitness,
             _activeTaskCount,
-            TimeSpan.FromMinutes(5)); // default estimate
+            TimeSpan.FromMinutes(5));
 
-        // Send bid directly to dispatch actor
         Context.System.ActorSelection("/user/dispatch").Tell(bid);
+    }
+
+    private static string BuildFallbackPrompt(TaskAssigned task)
+    {
+        return PromptBuilder.BuildTaskPrompt(task.TaskId, task.Description ?? $"Complete task {task.TaskId}.");
     }
 
     private static AgentActivityState MapTextToState(string text)
     {
-        // Heuristic: detect activity from pi's text-mode output patterns
         if (text.Contains("tool_use") || text.Contains("Writing") || text.Contains("Creating"))
             return AgentActivityState.Typing;
         if (text.Contains("Reading") || text.Contains("read_file") || text.Contains("list_dir"))
@@ -390,8 +471,10 @@ public sealed class AgentActor : UntypedActor
         return AgentActivityState.Idle;
     }
 
-    // Internal messages for pre-task retrieval PipeTo bridging
     private sealed record RetrievalComplete(TaskAssigned Task, IReadOnlyList<KnowledgeEntry> Entries);
     private sealed record RetrievalFailed(TaskAssigned Task, string Reason);
     private sealed record DemoTick(int Index);
+    private sealed record ActiveTaskContext(string TaskId, string? GraphId, string? WorkspacePath);
+    private sealed record RegisteredTaskCompleted(TaskCompleted Completed);
+    private sealed record ArtifactRegistrationFailed(TaskCompleted Completed, string Reason);
 }

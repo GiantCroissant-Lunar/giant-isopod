@@ -126,6 +126,9 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 completed, completed.Artifacts.Count, new List<ValidatorResult>());
             state.Status[completed.TaskId] = TaskNodeStatus.Validating;
             _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, completed.TaskId, TaskNodeStatus.Validating, completed.AgentId));
+            _viewport.Tell(new RuntimeOutput(
+                completed.AgentId,
+                $"[validator] Task {completed.TaskId} entered validation with {completed.Artifacts.Count} artifact(s)."));
             _logger.LogDebug("Graph {GraphId}: task {TaskId} has {Count} artifacts, sending to validation",
                 graphId, completed.TaskId, completed.Artifacts.Count);
 
@@ -450,6 +453,12 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         if (failures.Count == 0)
         {
             _logger.LogDebug("Graph {GraphId}: task {TaskId} passed all validation", graphId, taskId);
+            if (state.AssignedAgent.TryGetValue(taskId, out var assignedAgentId))
+            {
+                _viewport.Tell(new RuntimeOutput(
+                    assignedAgentId,
+                    $"[validator] Task {taskId} passed validation."));
+            }
 
             // Proceed to merge (if code artifacts) or complete
             var hasCodeArtifacts = pending.Completed.Artifacts?.Any(a => a.Type == ArtifactType.Code) == true;
@@ -473,17 +482,23 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
             var node = state.Nodes.GetValueOrDefault(taskId);
             var maxAttempts = node?.MaxValidationAttempts ?? 2;
+            var failureSummary = string.Join("; ", failures.Select(f => $"{f.ValidatorName}: {f.Details}"));
 
             if (attempts < maxAttempts)
             {
                 _logger.LogWarning("Graph {GraphId}: task {TaskId} failed validation (attempt {Attempt}/{Max}), re-dispatching",
                     graphId, taskId, attempts, maxAttempts);
+                if (state.AssignedAgent.TryGetValue(taskId, out var assignedAgentId))
+                {
+                    _viewport.Tell(new RuntimeOutput(
+                        assignedAgentId,
+                        $"[validator] Task {taskId} failed validation (attempt {attempts}/{maxAttempts}): {failureSummary}"));
+                }
 
                 // Re-dispatch with failure feedback
                 state.Status[taskId] = TaskNodeStatus.Dispatched;
                 _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, taskId, TaskNodeStatus.Dispatched));
 
-                var failureSummary = string.Join("; ", failures.Select(f => $"{f.ValidatorName}: {f.Details}"));
                 var revisedDesc = $"{node?.Description ?? "task"} [REVISION {attempts}: validation failed — {failureSummary}]";
 
                 TaskRequest request = node?.Budget != null
@@ -495,10 +510,17 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             {
                 _logger.LogWarning("Graph {GraphId}: task {TaskId} failed validation after {Max} attempts, marking failed",
                     graphId, taskId, maxAttempts);
+                if (state.AssignedAgent.TryGetValue(taskId, out var assignedAgentId))
+                {
+                    _viewport.Tell(new RuntimeOutput(
+                        assignedAgentId,
+                        $"[validator] Task {taskId} failed validation permanently after {maxAttempts} attempt(s): {failureSummary}"));
+                }
 
                 state.Status[taskId] = TaskNodeStatus.Failed;
                 _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, taskId, TaskNodeStatus.Failed));
                 CancelDependents(state, taskId);
+                _workspace.Tell(new ReleaseWorkspace(taskId));
                 CheckGraphCompletion(graphId, state);
             }
         }
@@ -532,6 +554,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             graphId, failed.TaskId, failed.Reason);
 
         CancelDependents(state, failed.TaskId);
+        _workspace.Tell(new ReleaseWorkspace(failed.TaskId));
         CheckSubtasksCompleted(graphId, state, failed.TaskId);
         CheckGraphCompletion(graphId, state);
     }

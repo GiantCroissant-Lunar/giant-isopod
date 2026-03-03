@@ -52,15 +52,16 @@ public class WorkspaceActorTests : TestKit, IDisposable
     }
 
     [Fact]
-    public void Allocate_DuplicateTaskId_Fails()
+    public void Allocate_DuplicateTaskId_ReusesExistingWorkspace()
     {
         _workspace.Tell(new AllocateWorkspace("T-DUP", "HEAD"), TestActor);
-        ExpectMsg<WorkspaceAllocated>(TimeSpan.FromSeconds(10));
+        var first = ExpectMsg<WorkspaceAllocated>(TimeSpan.FromSeconds(10));
 
         _workspace.Tell(new AllocateWorkspace("T-DUP", "HEAD"), TestActor);
-        var failed = ExpectMsg<AllocationFailed>(TimeSpan.FromSeconds(5));
-        Assert.Equal("T-DUP", failed.TaskId);
-        Assert.Contains("already exists", failed.Reason);
+        var second = ExpectMsg<WorkspaceAllocated>(TimeSpan.FromSeconds(5));
+        Assert.Equal("T-DUP", second.TaskId);
+        Assert.Equal(first.WorktreePath, second.WorktreePath);
+        Assert.Equal(first.BranchName, second.BranchName);
     }
 
     [Fact]
@@ -154,6 +155,26 @@ public class WorkspaceActorTests : TestKit, IDisposable
         _workspace.Tell(new RequestMerge("T-C2"), TestActor);
         var conflict = ExpectMsg<MergeConflict>(TimeSpan.FromSeconds(15));
         Assert.Equal("T-C2", conflict.TaskId);
+    }
+
+    [Fact]
+    public void MergeQueue_AutoCommitsDirtyWorktreeBeforeMerge()
+    {
+        _workspace.Tell(new AllocateWorkspace("T-AUTO", "HEAD"), TestActor);
+        var ws = ExpectMsg<WorkspaceAllocated>(TimeSpan.FromSeconds(10));
+
+        File.WriteAllText(Path.Combine(ws.WorktreePath, "auto.txt"), "auto-commit me\n");
+
+        _workspace.Tell(new RequestMerge("T-AUTO"), TestActor);
+        var merged = ExpectMsg<MergeSucceeded>(TimeSpan.FromSeconds(15));
+
+        Assert.Equal("T-AUTO", merged.TaskId);
+
+        RunGit(_tempRepoPath, "checkout", "main");
+        Assert.True(File.Exists(Path.Combine(_tempRepoPath, "auto.txt")));
+
+        var log = RunGit(_tempRepoPath, "log", "--format=%s", "-n", "1");
+        Assert.Contains("task(T-AUTO): agent changes", log);
     }
 
     private static string RunGit(string workDir, params string[] args)
