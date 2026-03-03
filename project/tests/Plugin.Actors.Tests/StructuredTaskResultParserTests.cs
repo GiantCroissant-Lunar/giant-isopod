@@ -397,4 +397,30 @@ Working on the actual task...
         Assert.Null(parsed.Subplan);
         Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
     }
+
+    [Fact]
+    public void Parse_IgnoresEarlierEnvelopeForDifferentTaskIdAndReturnsLastEnvelopeForRequestedTaskId()
+    {
+        var output = """
+<giant-isopod-result>
+{"task_id":"task-unrelated","outcome":"completed","summary":"Earlier envelope for different task id.","artifacts_expected":["Doc"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+
+Working on the correct task...
+
+<giant-isopod-result>
+{"task_id":"task-desired","outcome":"completed","summary":"Last envelope for the requested task id.","artifacts_expected":["Code"],"failure_reason":null,"subplan":null}
+</giant-isopod-result>
+""";
+
+        var parsed = StructuredTaskResultParser.Parse(output, "task-desired");
+
+        Assert.True(parsed.HasEnvelope);
+        Assert.Equal("task-desired", parsed.EnvelopeTaskId);
+        Assert.Equal(StructuredTaskResultParser.ParsedTaskOutcome.Completed, parsed.Outcome);
+        Assert.Equal("Last envelope for the requested task id.", parsed.Summary);
+        Assert.Null(parsed.FailureReason);
+        Assert.Null(parsed.Subplan);
+        Assert.Equal(ArtifactType.Code, Assert.Single(parsed.ExpectedArtifactTypes));
+    }
 }
