@@ -33,10 +33,10 @@ Use these when adding a new CLI runtime to `runtimes.json`.
   - Current status: direct file-edit probe passed; `basic` smoke passed.
   - Command shape: positional prompt with `-p --output-format text`.
 - `copilot`
-  - Current status: direct file-edit probe passed after switching model to `gpt-5.2-codex`.
+  - Current status: direct file-edit probe passed after switching model to `gpt-5.3-codex`.
   - Current blocker: `basic` smoke still times out under the giant-isopod task contract.
 - `gemini`
-  - Current status: direct file-edit probe passed with `gemini-2.5-flash`.
+  - Current status: direct file-edit probe passed with `gemini-3-flash-preview`.
   - Current blocker: `basic` smoke still fails under the giant-isopod task contract.
 
 Bring-up commands:

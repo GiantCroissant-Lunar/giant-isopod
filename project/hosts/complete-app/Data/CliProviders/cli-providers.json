@@ -39,7 +39,7 @@
         "FORCE_COLOR": "1"
       },
       "defaults": {
-        "model": "gpt-5.2-codex"
+        "model": "gpt-5.3-codex"
       }
     },
     {
@@ -49,7 +49,7 @@
       "args": ["-m", "{model}", "-p", "{prompt}", "-y", "-o", "text"],
       "env": {},
       "defaults": {
-        "model": "gemini-2.5-flash"
+        "model": "gemini-3-flash-preview"
       }
     },
     {

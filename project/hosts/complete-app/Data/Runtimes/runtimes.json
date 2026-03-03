@@ -58,10 +58,10 @@
         "FORCE_COLOR": "1"
       },
       "defaults": {
-        "model": "gpt-5.2-codex"
+        "model": "gpt-5.3-codex"
       },
       "defaultModel": {
-        "modelId": "gpt-5.2-codex"
+        "modelId": "gpt-5.3-codex"
       }
     },
     {
@@ -80,10 +80,10 @@
       ],
       "env": {},
       "defaults": {
-        "model": "gemini-2.5-flash"
+        "model": "gemini-3-flash-preview"
       },
       "defaultModel": {
-        "modelId": "gemini-2.5-flash"
+        "modelId": "gemini-3-flash-preview"
       }
     },
     {
