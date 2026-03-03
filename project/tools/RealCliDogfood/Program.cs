@@ -236,7 +236,8 @@ static GraphManifest? TryLoadGraphManifest(string? taskSpecArg)
     var json = File.ReadAllText(filePath);
     return JsonSerializer.Deserialize<GraphManifest>(json, new JsonSerializerOptions
     {
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
     });
 }
 
