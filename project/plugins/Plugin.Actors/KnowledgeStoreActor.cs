@@ -35,7 +35,7 @@ public sealed class KnowledgeStoreActor : UntypedActor
                 break;
 
             case StoreCompleted completed:
-                _logger.LogDebug("Stored knowledge for {AgentId}: category={Category}", _agentId, completed.Category);
+                _logger.LogInformation("Stored knowledge for {AgentId}: category={Category}", _agentId, completed.Category);
                 break;
 
             case StoreFailed failed:
@@ -43,6 +43,10 @@ public sealed class KnowledgeStoreActor : UntypedActor
                 break;
 
             case QueryCompleted completed:
+                _logger.LogInformation(
+                    "Knowledge query completed for {AgentId}: {Count} entries",
+                    completed.AgentId,
+                    completed.Entries.Count);
                 completed.ReplyTo.Tell(new KnowledgeResult(completed.AgentId, completed.Entries), Self);
                 break;
 
@@ -55,6 +59,12 @@ public sealed class KnowledgeStoreActor : UntypedActor
 
     private void HandleStore(StoreKnowledge store)
     {
+        _logger.LogInformation(
+            "Knowledge store requested for {AgentId}: category={Category}, contentLength={Length}",
+            store.AgentId,
+            store.Category,
+            store.Content.Length);
+
         _client.StoreKnowledgeAsync(store.AgentId, store.Content, store.Category, store.Tags)
             .ContinueWith(t =>
             {

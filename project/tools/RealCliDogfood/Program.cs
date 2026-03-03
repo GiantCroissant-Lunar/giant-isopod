@@ -135,6 +135,9 @@ Fail if unrelated files were modified, the assertion target is wrong, or the tes
         TimeSpan.FromSeconds(10));
     PrintArtifactSummary(artifacts);
 
+    var knowledgeSummary = await QueryKnowledgeSummaryAsync(world, agentId, memoryQueries);
+    PrintKnowledgeSummary(knowledgeSummary);
+
     var memorySummary = await WaitForMemorySummaryAsync(world, tempMemory, agentId, memoryQueries);
     PrintMemorySummary(memorySummary);
     if (memorySummary.FileExists && memorySummary.SearchResult.Hits.Count == 0)
@@ -185,6 +188,14 @@ static void PrintArtifactSummary(ArtifactListResult artifacts)
             : "none";
         Console.WriteLine($"  artifact {artifact.ArtifactId}: type={artifact.Type} path={relativePath} validators={validators}");
     }
+}
+
+static void PrintKnowledgeSummary(KnowledgeSummary summary)
+{
+    Console.WriteLine($"Knowledge query: {summary.Query}");
+    Console.WriteLine($"Knowledge hits: {summary.Result.Entries.Count}");
+    foreach (var entry in summary.Result.Entries.Take(3))
+        Console.WriteLine($"  knowledge relevance={entry.Relevance:F3} category={entry.Category} text={entry.Content}");
 }
 
 static void PrintMemorySummary(MemorySummary summary)
@@ -264,6 +275,29 @@ static IReadOnlyList<string> BuildMemoryQueries(string taskDescription, string? 
                 queries.Add(token);
         }
     }
+}
+
+static async Task<KnowledgeSummary> QueryKnowledgeSummaryAsync(
+    AgentWorldSystem world,
+    string agentId,
+    IReadOnlyList<string> queries)
+{
+    var queryList = queries.Count > 0 ? queries : ["real-task"];
+    KnowledgeResult? lastResult = null;
+    var lastQuery = queryList[0];
+
+    foreach (var query in queryList)
+    {
+        lastQuery = query;
+        lastResult = await world.KnowledgeSupervisor.Ask<KnowledgeResult>(
+            new QueryKnowledge(agentId, query, TopK: 5),
+            TimeSpan.FromSeconds(30));
+
+        if (lastResult.Entries.Count > 0)
+            return new KnowledgeSummary(query, lastResult);
+    }
+
+    return new KnowledgeSummary(lastQuery, lastResult ?? new KnowledgeResult(agentId, Array.Empty<KnowledgeEntry>()));
 }
 
 static async Task PrintMemoryDiagnosticsAsync(string filePath, IReadOnlyList<string> queries)
@@ -371,6 +405,7 @@ sealed record MemorySummary(
     MemorySearchResult SearchResult);
 
 sealed record CommandOutput(int ExitCode, string StandardOutput, string StandardError);
+sealed record KnowledgeSummary(string Query, KnowledgeResult Result);
 
 sealed class DogfoodViewportBridge : IViewportBridge
 {
