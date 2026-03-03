@@ -39,3 +39,120 @@ Classify failures into one bucket before changing code:
 1. Make `kimi` pass all three smoke scenarios.
 2. Re-run `pi` after any shared runtime or parser changes.
 3. Only after both are green, use them for real dogfood tasks.
+
+## Parallel Feature Batch
+
+Use these when the runtime smoke gates are green and the goal is to verify real multi-agent development work, not just isolated smoke tasks.
+
+### Feature 1: Runtime-Aware Dispatch
+
+Goal: let task routing intentionally prefer `pi` or `kimi` instead of relying only on capability and load.
+
+Target files:
+
+- `project/contracts/Contracts.Core/Messages.cs`
+- `project/plugins/Plugin.Actors/DispatchActor.cs`
+- `project/plugins/Plugin.Actors/TaskGraphActor.cs`
+- `project/tests/Plugin.Actors.Tests/DispatchActorTests.cs`
+- `project/tools/RealCliParallelSmoke/Program.cs`
+
+Recommended task graph:
+
+1. `dispatch-contract`
+   Add task-level runtime preference fields to the contracts and graph request path.
+   Preferred runtime: `pi`
+2. `dispatch-selection`
+   Update dispatch scoring so runtime preference affects bidder selection without breaking fallback behavior.
+   Preferred runtime: `pi`
+3. `dispatch-tests`
+   Add tests for preferred runtime wins, fallback when preferred runtime is unavailable, and mixed-runtime backlog behavior.
+   Preferred runtime: `kimi`
+4. `dispatch-parallel-smoke`
+   Extend the parallel smoke tool to submit mixed-runtime tasks and assert that the preferred runtime handled each task when capacity allowed.
+   Preferred runtime: `kimi`
+5. `dispatch-review`
+   Run a final integration pass across the contract, actor, tests, and smoke harness.
+   Preferred runtime: `pi`
+
+Dependencies:
+
+1. `dispatch-contract -> dispatch-selection`
+2. `dispatch-contract -> dispatch-tests`
+3. `dispatch-selection -> dispatch-parallel-smoke`
+4. `dispatch-tests -> dispatch-review`
+5. `dispatch-parallel-smoke -> dispatch-review`
+
+Parallelism notes:
+
+- `dispatch-selection` and `dispatch-tests` can run in parallel after `dispatch-contract`.
+- `dispatch-review` should be a separate final task, not done by the same agent that owned `dispatch-selection`.
+
+Acceptance bar:
+
+1. Unit tests prove preferred runtime routing and fallback behavior.
+2. Mixed-runtime parallel smoke passes with both `pi` and `kimi`.
+3. At least one run shows preference honored when both runtimes are idle.
+4. Another run shows fallback still succeeds when the preferred runtime is unavailable or saturated.
+
+### Feature 2: Runtime Process Observability
+
+Goal: report the real child CLI process identity instead of the host process ID.
+
+Target files:
+
+- `project/plugins/Plugin.Process/CliAgentRuntime.cs`
+- `project/plugins/Plugin.Actors/AgentRuntimeActor.cs`
+- `project/contracts/Contracts.Core/Messages.cs`
+- `project/tests/Plugin.Process.Tests/*`
+- `project/tools/RealCliParallelSmoke/Program.cs`
+
+Recommended split:
+
+1. runtime child-process capture
+2. runtime event contract update
+3. smoke output verification
+4. final review
+
+### Feature 3: Multi-Feature Dogfood Runner
+
+Goal: submit a real DAG with independent code, test, and doc nodes instead of only flat task sets.
+
+Target files:
+
+- `project/tools/RealCliDogfood/Program.cs`
+- `project/plugins/Plugin.Actors/TaskGraphActor.cs`
+- `DOGFOOD.md`
+
+Recommended split:
+
+1. runner graph-input format
+2. runner summary output
+3. graph template for code/test/doc tasks
+4. final review
+
+### Feature 4: Artifact Follow-Up Workflow
+
+Goal: turn registered artifacts into follow-up tasks such as tests, docs, or review-focused tasks.
+
+Target files:
+
+- `project/plugins/Plugin.Actors/ArtifactRegistryActor.cs`
+- `project/plugins/Plugin.Actors/TaskGraphActor.cs`
+- `project/plugins/Plugin.Actors/ValidatorActor.cs`
+- `project/tests/Plugin.Actors.Tests/*`
+
+Recommended split:
+
+1. artifact classification
+2. follow-up task generation
+3. validator integration
+4. end-to-end dogfood verification
+
+## Execution Order
+
+1. Runtime-aware dispatch
+2. Runtime process observability
+3. Multi-feature dogfood runner
+4. Artifact follow-up workflow
+
+This order is intentional: first teach the system who should do work, then make runtime execution observable, then increase graph complexity, then add artifact-driven follow-up behavior.
