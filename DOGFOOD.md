@@ -128,6 +128,16 @@ Concrete task submissions:
    Review the Feature 1 changes for consistency across contracts, dispatch selection, tests, and the mixed-runtime smoke tool.
    Tighten any small inconsistencies needed for the batch to build and verify cleanly.
 
+Submission file:
+
+- `project/tools/RealCliDogfood/Batches/feature1-runtime-aware-dispatch.json`
+
+Runner command:
+
+- `dotnet run --project project\tools\RealCliDogfood\RealCliDogfood.csproj -- pi,kimi 20 @project\tools\RealCliDogfood\Batches\feature1-runtime-aware-dispatch.json`
+
+Use that command on a clean branch or worktree. Do not run it against a checkout that already contains the Feature 1 changes.
+
 ### Feature 2: Runtime Process Observability
 
 Goal: report the real child CLI process identity instead of the host process ID.

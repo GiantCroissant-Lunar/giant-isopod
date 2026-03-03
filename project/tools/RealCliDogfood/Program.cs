@@ -1,14 +1,17 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
 using GiantIsopod.Plugin.Actors;
 using GiantIsopod.Plugin.Process;
 using Microsoft.Extensions.Logging;
 
-var runtimeId = args.Length > 0 ? args[0] : "pi";
+var runtimeCsv = args.Length > 0 ? args[0] : "pi";
 var timeoutMinutes = args.Length > 1 && int.TryParse(args[1], out var parsedMinutes) ? parsedMinutes : 10;
+var taskSpecArg = args.Length > 2 ? args[2] : null;
 var taskDescription = args.Length > 2
     ? ResolveTaskDescription(args.Skip(2))
     : """
@@ -16,6 +19,10 @@ Add one new unit test method to project/tests/Plugin.Actors.Tests/StructuredTask
 The test must verify StructuredTaskResultParser.Parse uses the last <giant-isopod-result> envelope when multiple envelopes appear in one transcript.
 Edit only that test file. Do not modify production code or any other file.
 """;
+var runtimesToUse = runtimeCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToArray();
+var graphManifest = TryLoadGraphManifest(taskSpecArg);
 
 var timeout = TimeSpan.FromMinutes(timeoutMinutes);
 var repoRoot = Directory.GetCurrentDirectory();
@@ -49,7 +56,7 @@ try
         MemoryBasePath = tempMemory,
         AgentDataPath = Path.Combine(repoRoot, "project", "hosts", "complete-app", "Data", "Agents"),
         Runtimes = runtimes,
-        DefaultRuntimeId = runtimeId,
+        DefaultRuntimeId = runtimesToUse[0],
         RuntimeWorkingDirectory = repoRoot,
         AnchorRepoPath = repoRoot,
         RuntimeEnvironment = BuildRuntimeEnvironment(),
@@ -61,7 +68,6 @@ try
     using var world = new AgentWorldSystem(config, loggerFactory);
     world.SetViewportBridge(bridge);
 
-    var agentId = $"{runtimeId}-dogfood";
     var profileJson = """
 {
   "standard": { "protocol": "AIEOS", "version": "1.2.0" },
@@ -75,43 +81,91 @@ try
 }
 """;
 
-    await world.AgentSupervisor.Ask<AgentSpawned>(
-        new SpawnAgent(agentId, profileJson, "builder", RuntimeId: runtimeId),
-        TimeSpan.FromSeconds(10));
+    foreach (var runtimeId in runtimesToUse)
+    {
+        var agentCount = graphManifest?.AgentsPerRuntime ?? 1;
+        for (var i = 1; i <= agentCount; i++)
+        {
+            var agentId = graphManifest == null || runtimesToUse.Length == 1 && agentCount == 1
+                ? $"{runtimeId}-dogfood"
+                : $"{runtimeId}-dogfood-{i}";
+            await world.AgentSupervisor.Ask<AgentSpawned>(
+                new SpawnAgent(agentId, profileJson, "builder", RuntimeId: runtimeId),
+                TimeSpan.FromSeconds(10));
+        }
+    }
     await Task.Delay(TimeSpan.FromSeconds(2));
 
-    var validatorSpec = new ValidatorSpec(
-        Name: "agent-review",
-        Kind: ValidatorKind.AgentReview,
-        AppliesTo: ArtifactType.Code,
-        Command: runtimeId,
-        Rubric: BuildReviewRubric(taskDescription),
-        Config: new Dictionary<string, string> { ["runtimeId"] = runtimeId });
+    if (graphManifest != null)
+    {
+        foreach (var validator in graphManifest.Validators)
+        {
+            var spec = new ValidatorSpec(
+                validator.Name,
+                ValidatorKind.AgentReview,
+                validator.AppliesTo,
+                validator.RuntimeId,
+                validator.Rubric,
+                new Dictionary<string, string> { ["runtimeId"] = validator.RuntimeId });
+            var registered = await world.Validator.Ask<ValidatorRegistered>(
+                new RegisterValidator(spec),
+                TimeSpan.FromSeconds(10));
+            Console.WriteLine($"Validator registered: {registered.Name}");
+        }
+    }
+    else
+    {
+        var validatorSpec = new ValidatorSpec(
+            Name: "agent-review",
+            Kind: ValidatorKind.AgentReview,
+            AppliesTo: ArtifactType.Code,
+            Command: runtimesToUse[0],
+            Rubric: BuildReviewRubric(taskDescription),
+            Config: new Dictionary<string, string> { ["runtimeId"] = runtimesToUse[0] });
 
-    var registered = await world.Validator.Ask<ValidatorRegistered>(
-        new RegisterValidator(validatorSpec),
-        TimeSpan.FromSeconds(10));
-    Console.WriteLine($"Validator registered: {registered.Name}");
+        var registered = await world.Validator.Ask<ValidatorRegistered>(
+            new RegisterValidator(validatorSpec),
+            TimeSpan.FromSeconds(10));
+        Console.WriteLine($"Validator registered: {registered.Name}");
+    }
 
-    var graphId = $"dogfood-{runtimeId}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
-    var node = new TaskNode(
-        "real-task",
-        taskDescription,
-        new HashSet<string> { "code_edit" },
-        RequiredValidators: new[] { "agent-review" });
+    var graphId = graphManifest != null
+        ? $"{graphManifest.GraphIdPrefix}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}"
+        : $"dogfood-{runtimesToUse[0]}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
+
+    var nodes = graphManifest?.Nodes.Select(ToTaskNode).ToArray()
+        ??
+        [
+            new TaskNode(
+                "real-task",
+                taskDescription,
+                new HashSet<string> { "code_edit" },
+                RequiredValidators: new[] { "agent-review" })
+        ];
+
+    var edges = graphManifest?.Edges.Select(edge => new TaskEdge(edge.FromTaskId, edge.ToTaskId)).ToArray()
+        ?? Array.Empty<TaskEdge>();
 
     var accepted = await world.TaskGraph.Ask<TaskGraphAccepted>(
-        new SubmitTaskGraph(graphId, new[] { node }, Array.Empty<TaskEdge>()),
+        new SubmitTaskGraph(graphId, nodes, edges),
         TimeSpan.FromSeconds(10));
 
     Console.WriteLine($"Graph accepted: {accepted.GraphId}");
     var completed = await bridge.WaitForCompletionAsync(graphId, timeout);
-    var transcript = bridge.GetRuntimeTranscript(agentId);
-    var statusHistory = bridge.GetTaskStatusHistory(graphId, "real-task");
 
     Console.WriteLine($"Graph completed: {completed.GraphId}");
     foreach (var (taskId, success) in completed.Results)
         Console.WriteLine($"  {taskId}: {(success ? "PASS" : "FAIL")}");
+
+    if (graphManifest != null)
+    {
+        PrintBatchSummary(bridge, graphId, nodes);
+        return completed.Results.Values.All(result => result) ? 0 : 4;
+    }
+
+    var primaryAgentId = $"{runtimesToUse[0]}-dogfood";
+    var transcript = bridge.GetRuntimeTranscript(primaryAgentId);
+    var statusHistory = bridge.GetTaskStatusHistory(graphId, "real-task");
 
     if (!completed.Results.TryGetValue("real-task", out var taskPassed))
     {
@@ -133,10 +187,10 @@ try
         TimeSpan.FromSeconds(10));
     PrintArtifactSummary(artifacts);
 
-    var knowledgeSummary = await QueryKnowledgeSummaryAsync(world, agentId, memoryQueries);
+    var knowledgeSummary = await QueryKnowledgeSummaryAsync(world, primaryAgentId, memoryQueries);
     PrintKnowledgeSummary(knowledgeSummary);
 
-    var memorySummary = await WaitForMemorySummaryAsync(world, tempMemory, agentId, memoryQueries);
+    var memorySummary = await WaitForMemorySummaryAsync(world, tempMemory, primaryAgentId, memoryQueries);
     PrintMemorySummary(memorySummary);
     if (memorySummary.FileExists && memorySummary.SearchResult.Hits.Count == 0)
         await PrintMemoryDiagnosticsAsync(config.MemorySidecarExecutable, memorySummary.FilePath, memoryQueries);
@@ -168,6 +222,22 @@ static string ResolveTaskDescription(IEnumerable<string> args)
     }
 
     return string.Join(" ", parts);
+}
+
+static GraphManifest? TryLoadGraphManifest(string? taskSpecArg)
+{
+    if (string.IsNullOrWhiteSpace(taskSpecArg) || !taskSpecArg.StartsWith("@", StringComparison.Ordinal))
+        return null;
+
+    var filePath = taskSpecArg[1..];
+    if (!filePath.EndsWith(".json", StringComparison.OrdinalIgnoreCase) || !File.Exists(filePath))
+        return null;
+
+    var json = File.ReadAllText(filePath);
+    return JsonSerializer.Deserialize<GraphManifest>(json, new JsonSerializerOptions
+    {
+        PropertyNameCaseInsensitive = true
+    });
 }
 
 static string BuildReviewRubric(string taskDescription)
@@ -212,6 +282,19 @@ static void PrintArtifactSummary(ArtifactListResult artifacts)
             ? string.Join(", ", artifact.Validators.Select(v => $"{v.ValidatorName}={(v.Passed ? "PASS" : "FAIL")}"))
             : "none";
         Console.WriteLine($"  artifact {artifact.ArtifactId}: type={artifact.Type} path={relativePath} validators={validators}");
+    }
+}
+
+static void PrintBatchSummary(DogfoodViewportBridge bridge, string graphId, IReadOnlyList<TaskNode> nodes)
+{
+    Console.WriteLine("Completed assignments:");
+    foreach (var (taskId, agentId) in bridge.GetCompletedAssignments(graphId).OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        Console.WriteLine($"  {taskId} -> {agentId}");
+
+    foreach (var node in nodes.OrderBy(node => node.TaskId, StringComparer.Ordinal))
+    {
+        var history = bridge.GetTaskStatusHistory(graphId, node.TaskId);
+        Console.WriteLine($"  {node.TaskId} preferred={node.PreferredRuntimeId ?? "<none>"} statuses={string.Join(" -> ", history)}");
     }
 }
 
@@ -383,6 +466,17 @@ static async Task<CommandOutput> RunSidecarCommandAsync(string executable, IRead
     return new CommandOutput(process.ExitCode, await stdoutTask, await stderrTask);
 }
 
+static TaskNode ToTaskNode(GraphManifestNode node)
+{
+    return new TaskNode(
+        node.TaskId,
+        node.Description,
+        new HashSet<string>(node.RequiredCapabilities, StringComparer.Ordinal),
+        RequiredValidators: node.RequiredValidators,
+        MaxValidationAttempts: node.MaxValidationAttempts ?? 2,
+        PreferredRuntimeId: node.PreferredRuntimeId);
+}
+
 sealed record MemorySummary(
     string FilePath,
     bool FileExists,
@@ -392,6 +486,30 @@ sealed record MemorySummary(
 
 sealed record CommandOutput(int ExitCode, string StandardOutput, string StandardError);
 sealed record KnowledgeSummary(string Query, KnowledgeResult Result);
+sealed record GraphManifest(
+    [property: JsonPropertyName("graph_id_prefix")] string GraphIdPrefix,
+    [property: JsonPropertyName("agents_per_runtime")] int AgentsPerRuntime,
+    [property: JsonPropertyName("nodes")] IReadOnlyList<GraphManifestNode> Nodes,
+    [property: JsonPropertyName("edges")] IReadOnlyList<GraphManifestEdge> Edges,
+    [property: JsonPropertyName("validators")] IReadOnlyList<GraphManifestValidator> Validators);
+
+sealed record GraphManifestNode(
+    [property: JsonPropertyName("task_id")] string TaskId,
+    [property: JsonPropertyName("description")] string Description,
+    [property: JsonPropertyName("required_capabilities")] IReadOnlyList<string> RequiredCapabilities,
+    [property: JsonPropertyName("preferred_runtime_id")] string? PreferredRuntimeId,
+    [property: JsonPropertyName("required_validators")] IReadOnlyList<string>? RequiredValidators,
+    [property: JsonPropertyName("max_validation_attempts")] int? MaxValidationAttempts);
+
+sealed record GraphManifestEdge(
+    [property: JsonPropertyName("from_task_id")] string FromTaskId,
+    [property: JsonPropertyName("to_task_id")] string ToTaskId);
+
+sealed record GraphManifestValidator(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("runtime_id")] string RuntimeId,
+    [property: JsonPropertyName("rubric")] string Rubric,
+    [property: JsonPropertyName("applies_to")] ArtifactType AppliesTo);
 
 sealed class DogfoodViewportBridge : IViewportBridge
 {
@@ -400,6 +518,7 @@ sealed class DogfoodViewportBridge : IViewportBridge
     private readonly ConcurrentDictionary<string, List<TaskNodeStatus>> _taskStatusHistory = new();
     private readonly ConcurrentDictionary<string, List<string>> _runtimeOutput = new();
     private readonly ConcurrentDictionary<string, byte> _spawnedAgents = new();
+    private readonly ConcurrentDictionary<string, string> _completedAssignments = new();
 
     public Task<TaskGraphCompletedEvent> WaitForCompletionAsync(string graphId, TimeSpan timeout)
     {
@@ -424,6 +543,16 @@ sealed class DogfoodViewportBridge : IViewportBridge
         {
             return history.ToArray();
         }
+    }
+
+    public IReadOnlyDictionary<string, string> GetCompletedAssignments(string graphId)
+    {
+        return _completedAssignments
+            .Where(kv => kv.Key.StartsWith($"{graphId}:", StringComparison.Ordinal))
+            .ToDictionary(
+                kv => kv.Key[(graphId.Length + 1)..],
+                kv => kv.Value,
+                StringComparer.Ordinal);
     }
 
     public void PublishAgentStateChanged(string agentId, AgentActivityState state)
@@ -487,6 +616,8 @@ sealed class DogfoodViewportBridge : IViewportBridge
             return;
 
         _taskStatuses[key] = status;
+        if (status == TaskNodeStatus.Completed && !string.IsNullOrWhiteSpace(agentId))
+            _completedAssignments[key] = agentId;
         Console.WriteLine($"[task-status] {graphId}/{taskId}: {status} agent={agentId ?? "-"}");
     }
 
