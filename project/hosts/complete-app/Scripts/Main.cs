@@ -23,6 +23,7 @@ public partial class Main : Node2D
     private ILogger<Main>? _logger;
     private Node2D? _agentsNode;
     private AgentEcsWorld? _ecsWorld;
+    private const string DefaultCodeReviewValidator = "agent-review";
 
     // ECS entity → Godot sprite mapping
     private readonly Dictionary<string, AgentSprite> _sprites = new();
@@ -64,10 +65,7 @@ public partial class Main : Node2D
             Runtimes = runtimes,
             DefaultRuntimeId = "pi",
             RuntimeWorkingDirectory = @"C:\lunar-horse\yokan-projects\giant-isopod",
-            RuntimeEnvironment = new Dictionary<string, string>
-            {
-                ["ZAI_API_KEY"] = "08bbb0b6b8d649fbbafa5c11091e5ac3.4dzlUajBX9I8oE0F"
-            },
+            RuntimeEnvironment = BuildRuntimeEnvironment(),
             MemvidExecutable = "memvid"
         };
 
@@ -84,6 +82,7 @@ public partial class Main : Node2D
         _ecsWorld = new AgentEcsWorld();
 
         _agentWorld.SetViewportBridge(_viewportBridge);
+        RegisterDefaultValidators();
 
         _hud = GetNode<HudController>("HUD/HUDRoot");
         _agentsNode = GetNode<Node2D>("World/Agents");
@@ -195,6 +194,15 @@ public partial class Main : Node2D
                 _ecsWorld.SetAgentActivity(stateChanged.AgentId, activity);
                 break;
         }
+    }
+
+    private static Dictionary<string, string> BuildRuntimeEnvironment()
+    {
+        var env = new Dictionary<string, string>();
+        var zaiApiKey = System.Environment.GetEnvironmentVariable("ZAI_API_KEY");
+        if (!string.IsNullOrWhiteSpace(zaiApiKey))
+            env["ZAI_API_KEY"] = zaiApiKey;
+        return env;
     }
 
     private void ApplyEventToTaskGraphView(ViewportEvent evt)
@@ -371,7 +379,8 @@ public partial class Main : Node2D
             new("plan", "Create implementation plan from analysis and research",
                 new HashSet<string> { "planning" }),
             new("implement", "Write the code changes",
-                new HashSet<string> { "coding" }),
+                new HashSet<string> { "coding" },
+                RequiredValidators: new[] { DefaultCodeReviewValidator }),
             new("test", "Run tests and verify correctness",
                 new HashSet<string> { "testing" }),
             new("review", "Review final output and summarize",
@@ -393,6 +402,29 @@ public partial class Main : Node2D
         _agentWorld.TaskGraph.Tell(
             new SubmitTaskGraph(graphId, nodes, edges),
             Akka.Actor.ActorRefs.NoSender);
+    }
+
+    private void RegisterDefaultValidators()
+    {
+        if (_agentWorld == null) return;
+
+        var spec = new ValidatorSpec(
+            Name: DefaultCodeReviewValidator,
+            Kind: ValidatorKind.AgentReview,
+            AppliesTo: ArtifactType.Code,
+            Command: "pi",
+            Rubric: """
+Review the produced code artifact for task fidelity, correctness, and scope control.
+Fail if the code does not satisfy the task, changes unrelated files, introduces obvious correctness issues, or lacks a clear implementation consistent with the requested work.
+Pass only when the artifact appears correct, appropriately scoped, and ready to merge.
+""",
+            Config: new Dictionary<string, string>
+            {
+                ["runtimeId"] = "pi"
+            });
+
+        _agentWorld.Validator.Tell(new RegisterValidator(spec), Akka.Actor.ActorRefs.NoSender);
+        _logger?.LogInformation("Registered default validator: {ValidatorName}", DefaultCodeReviewValidator);
     }
 
     private void HandleGenUIAction(string agentId, string surfaceId, string actionId, string componentId)

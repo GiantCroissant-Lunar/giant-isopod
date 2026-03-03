@@ -2,7 +2,9 @@ using Akka.Actor;
 using CliWrap;
 using CliWrap.Buffered;
 using GiantIsopod.Contracts.Core;
+using GiantIsopod.Plugin.Process;
 using Microsoft.Extensions.Logging;
+using System.Text;
 
 namespace GiantIsopod.Plugin.Actors;
 
@@ -13,16 +15,25 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class ValidatorActor : UntypedActor
 {
     private readonly IActorRef _artifactRegistry;
+    private readonly AgentWorldConfig? _config;
     private readonly ILogger<ValidatorActor> _logger;
 
     private readonly Dictionary<ArtifactType, List<ValidatorSpec>> _validators = new();
     private readonly Dictionary<string, PendingValidation> _pending = new();
 
     internal static readonly TimeSpan ScriptTimeout = TimeSpan.FromMinutes(5);
+    internal static readonly TimeSpan AgentReviewTimeout = TimeSpan.FromMinutes(5);
+    private const int MaxEmbeddedArtifactChars = 12000;
 
     public ValidatorActor(IActorRef artifactRegistry, ILogger<ValidatorActor> logger)
+        : this(artifactRegistry, config: null, logger)
+    {
+    }
+
+    public ValidatorActor(IActorRef artifactRegistry, AgentWorldConfig? config, ILogger<ValidatorActor> logger)
     {
         _artifactRegistry = artifactRegistry;
+        _config = config;
         _logger = logger;
     }
 
@@ -40,6 +51,10 @@ public sealed class ValidatorActor : UntypedActor
 
             case ScriptResult result:
                 HandleScriptResult(result);
+                break;
+
+            case AgentReviewResult result:
+                HandleScriptResult(new ScriptResult(result.ArtifactId, result.ValidatorName, result.Passed, result.Details));
                 break;
         }
     }
@@ -102,10 +117,7 @@ public sealed class ValidatorActor : UntypedActor
                     break;
 
                 case ValidatorKind.AgentReview:
-                    _logger.LogWarning("AgentReview validator '{Name}' not yet implemented, treating as pass",
-                        spec.Name);
-                    Self.Tell(new ScriptResult(msg.ArtifactId, spec.Name, Passed: true,
-                        Details: "AgentReview placeholder — auto-pass"));
+                    RunAgentReviewValidator(msg.ArtifactId, msg.Artifact, msg.TaskId, spec);
                     break;
             }
         }
@@ -134,6 +146,32 @@ public sealed class ValidatorActor : UntypedActor
                 return new ScriptResult(artifactId, spec.Name,
                     Passed: exitCode == 0,
                     Details: exitCode == 0 ? null : $"Exit code {exitCode}: {stderr}");
+            })
+            .PipeTo(self);
+    }
+
+    private void RunAgentReviewValidator(string artifactId, ArtifactRef artifact, string? taskId, ValidatorSpec spec)
+    {
+        var self = Self;
+
+        RunAgentReviewAsync(artifactId, artifact, taskId, spec)
+            .ContinueWith(t =>
+            {
+                if (t.IsCanceled)
+                {
+                    return (object)new AgentReviewResult(
+                        artifactId, spec.Name, Passed: false,
+                        Details: "Agent review timed out or was cancelled");
+                }
+
+                if (t.IsFaulted)
+                {
+                    return (object)new AgentReviewResult(
+                        artifactId, spec.Name, Passed: false,
+                        Details: $"Agent review exception: {t.Exception?.GetBaseException().Message}");
+                }
+
+                return t.Result;
             })
             .PipeTo(self);
     }
@@ -197,9 +235,234 @@ public sealed class ValidatorActor : UntypedActor
         return (result.ExitCode, result.StandardError);
     }
 
+    private async Task<AgentReviewResult> RunAgentReviewAsync(
+        string artifactId,
+        ArtifactRef artifact,
+        string? taskId,
+        ValidatorSpec spec)
+    {
+        if (_config is null)
+        {
+            return new AgentReviewResult(
+                artifactId, spec.Name, Passed: false,
+                Details: "Agent review runtime is not configured.");
+        }
+
+        using var cts = new CancellationTokenSource(AgentReviewTimeout);
+
+        var runtimeId = ResolveReviewRuntimeId(spec);
+        var runtimeConfig = _config.Runtimes.ResolveOrDefault(runtimeId);
+        var model = ResolveReviewModel(spec);
+        var workingDirectory = ResolveReviewWorkingDirectory(artifact);
+        var prompt = BuildAgentReviewPrompt(artifactId, artifact, taskId, spec);
+
+        var output = new StringBuilder();
+        await using var runtime = RuntimeFactory.Create(
+            agentId: $"validator-{spec.Name}",
+            config: runtimeConfig,
+            model: model,
+            workingDirectory: workingDirectory,
+            extraEnv: _config.RuntimeEnvironment);
+
+        await runtime.StartAsync(cts.Token);
+        await runtime.SendAsync(prompt, cts.Token);
+
+        await foreach (var line in runtime.ReadEventsAsync(cts.Token))
+        {
+            if (!string.IsNullOrWhiteSpace(line))
+                output.AppendLine(line);
+        }
+
+        var parsed = StructuredReviewResultParser.Parse(output.ToString(), spec.Name, artifactId);
+        if (!parsed.HasEnvelope)
+        {
+            return new AgentReviewResult(
+                artifactId, spec.Name, Passed: false,
+                Details: "Agent review did not return the required structured review envelope.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(parsed.ValidatorName) &&
+            !string.Equals(parsed.ValidatorName, spec.Name, StringComparison.Ordinal))
+        {
+            return new AgentReviewResult(
+                artifactId, spec.Name, Passed: false,
+                Details: $"Agent review returned unexpected validator '{parsed.ValidatorName}'.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(parsed.ArtifactId) &&
+            !string.Equals(parsed.ArtifactId, artifactId, StringComparison.Ordinal))
+        {
+            return new AgentReviewResult(
+                artifactId, spec.Name, Passed: false,
+                Details: $"Agent review returned unexpected artifact '{parsed.ArtifactId}'.");
+        }
+
+        return new AgentReviewResult(
+            artifactId,
+            spec.Name,
+            parsed.Passed,
+            BuildReviewDetails(parsed));
+    }
+
+    private string ResolveReviewRuntimeId(ValidatorSpec spec)
+    {
+        if (spec.Config is not null &&
+            spec.Config.TryGetValue("runtimeId", out var configuredRuntimeId) &&
+            !string.IsNullOrWhiteSpace(configuredRuntimeId))
+        {
+            return configuredRuntimeId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(spec.Command))
+            return spec.Command;
+
+        return _config?.DefaultRuntimeId
+            ?? throw new InvalidOperationException("No runtime configured for agent review validator.");
+    }
+
+    private static ModelSpec? ResolveReviewModel(ValidatorSpec spec)
+    {
+        if (spec.Config is null)
+            return null;
+
+        spec.Config.TryGetValue("provider", out var provider);
+        spec.Config.TryGetValue("model", out var modelId);
+        if (string.IsNullOrWhiteSpace(provider) && string.IsNullOrWhiteSpace(modelId))
+            return null;
+
+        return new ModelSpec(
+            Provider: string.IsNullOrWhiteSpace(provider) ? null : provider,
+            ModelId: string.IsNullOrWhiteSpace(modelId) ? null : modelId);
+    }
+
+    private string ResolveReviewWorkingDirectory(ArtifactRef artifact)
+    {
+        if (Uri.TryCreate(artifact.Uri, UriKind.Absolute, out var uri) && uri.IsFile)
+        {
+            var path = uri.LocalPath;
+            var dir = File.Exists(path) ? Path.GetDirectoryName(path) : null;
+            if (!string.IsNullOrWhiteSpace(dir))
+                return dir;
+        }
+
+        if (File.Exists(artifact.Uri))
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(artifact.Uri));
+            if (!string.IsNullOrWhiteSpace(dir))
+                return dir;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_config?.RuntimeWorkingDirectory))
+            return _config.RuntimeWorkingDirectory;
+
+        return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    }
+
+    private string BuildAgentReviewPrompt(string artifactId, ArtifactRef artifact, string? taskId, ValidatorSpec spec)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("You are validating a generated artifact.");
+        sb.Append("Validator: ").AppendLine(spec.Name);
+        sb.Append("Artifact ID: ").AppendLine(artifactId);
+        if (!string.IsNullOrWhiteSpace(taskId))
+            sb.Append("Task ID: ").AppendLine(taskId);
+        sb.Append("Artifact type: ").AppendLine(artifact.Type.ToString());
+        sb.Append("Artifact format: ").AppendLine(artifact.Format);
+        sb.Append("Artifact URI: ").AppendLine(artifact.Uri);
+        if (!string.IsNullOrWhiteSpace(spec.Rubric))
+        {
+            sb.AppendLine();
+            sb.AppendLine("Rubric:");
+            sb.AppendLine(spec.Rubric);
+        }
+
+        if (artifact.Metadata is { Count: > 0 })
+        {
+            sb.AppendLine();
+            sb.AppendLine("Artifact metadata:");
+            foreach (var (key, value) in artifact.Metadata)
+                sb.Append("- ").Append(key).Append(": ").AppendLine(value);
+        }
+
+        var embeddedContent = TryReadArtifactContent(artifact);
+        if (!string.IsNullOrWhiteSpace(embeddedContent))
+        {
+            sb.AppendLine();
+            sb.AppendLine("Artifact content excerpt:");
+            sb.AppendLine(embeddedContent);
+        }
+        else
+        {
+            sb.AppendLine();
+            sb.AppendLine("Use your file-reading tools if you need to inspect the artifact contents directly.");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("Return a final machine-readable review envelope as the last thing in your response.");
+        sb.AppendLine("Do not wrap it in markdown fences.");
+        sb.AppendLine("The envelope must exactly match the validator and artifact id below.");
+        sb.AppendLine("If the artifact passes review, set passed=true and issues=[].");
+        sb.AppendLine("If it fails, set passed=false and include actionable issues.");
+        sb.AppendLine("Schema:");
+        sb.AppendLine("{\"validator\":\"string\",\"artifact_id\":\"string\",\"passed\":true,\"summary\":\"string\",\"issues\":[]}");
+        sb.AppendLine("{\"validator\":\"string\",\"artifact_id\":\"string\",\"passed\":false,\"summary\":\"string\",\"issues\":[\"string\"]}");
+        sb.AppendLine("Example:");
+        sb.AppendLine("<giant-isopod-review>");
+        sb.AppendLine("{\"validator\":\"validator-name\",\"artifact_id\":\"artifact-id\",\"passed\":true,\"summary\":\"Looks good.\",\"issues\":[]}");
+        sb.AppendLine("</giant-isopod-review>");
+        return sb.ToString();
+    }
+
+    private static string? TryReadArtifactContent(ArtifactRef artifact)
+    {
+        var path = ResolveArtifactPath(artifact.Uri);
+        if (path is null || !File.Exists(path) || !LooksLikeTextArtifact(artifact, path))
+            return null;
+
+        var content = File.ReadAllText(path);
+        if (content.Length <= MaxEmbeddedArtifactChars)
+            return content;
+
+        return $"{content[..MaxEmbeddedArtifactChars]}\n...[truncated]";
+    }
+
+    private static string? ResolveArtifactPath(string uriOrPath)
+    {
+        if (Uri.TryCreate(uriOrPath, UriKind.Absolute, out var uri) && uri.IsFile)
+            return uri.LocalPath;
+
+        return Path.IsPathRooted(uriOrPath) ? uriOrPath : null;
+    }
+
+    private static bool LooksLikeTextArtifact(ArtifactRef artifact, string path)
+    {
+        if (artifact.Format.StartsWith("text/", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return Path.GetExtension(path).ToLowerInvariant() is
+            ".cs" or ".txt" or ".md" or ".json" or ".xml" or ".yml" or ".yaml" or ".toml" or
+            ".js" or ".ts" or ".tsx" or ".jsx" or ".html" or ".css" or ".csproj" or ".sln" or
+            ".config" or ".ini" or ".props" or ".targets";
+    }
+
+    private static string BuildReviewDetails(StructuredReviewResultParser.ParsedReviewResult parsed)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(parsed.Summary))
+            parts.Add(parsed.Summary);
+
+        if (parsed.Issues.Count > 0)
+            parts.Add($"Issues: {string.Join("; ", parsed.Issues)}");
+
+        return parts.Count == 0
+            ? (parsed.Passed ? "Agent review passed." : "Agent review failed.")
+            : string.Join(" ", parts);
+    }
+
     // ── Internal types ──
 
     internal sealed record ScriptResult(string ArtifactId, string ValidatorName, bool Passed, string? Details);
+    internal sealed record AgentReviewResult(string ArtifactId, string ValidatorName, bool Passed, string? Details);
 
     private sealed record PendingValidation(
         IActorRef Requester, int Expected, List<ValidatorResult> Results, string? TaskId);
