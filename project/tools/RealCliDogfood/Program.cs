@@ -119,12 +119,8 @@ Fail if unrelated files were modified, the assertion target is wrong, or the tes
         TimeSpan.FromSeconds(10));
     PrintArtifactSummary(artifacts);
 
-    world.MemorySupervisor.Tell(new CommitMemory(agentId), ActorRefs.NoSender);
-    await Task.Delay(TimeSpan.FromSeconds(1));
-    var memorySearch = await world.MemorySupervisor.Ask<MemorySearchResult>(
-        new SearchMemory(agentId, "task", "real-task", TopK: 5),
-        TimeSpan.FromSeconds(15));
-    PrintMemorySummary(tempMemory, agentId, memorySearch);
+    var memorySummary = await WaitForMemorySummaryAsync(world, tempMemory, agentId);
+    PrintMemorySummary(memorySummary);
 
     Console.WriteLine($"Status history: {string.Join(" -> ", statusHistory)}");
     return taskPassed ? 0 : 4;
@@ -173,14 +169,36 @@ static void PrintArtifactSummary(ArtifactListResult artifacts)
     }
 }
 
-static void PrintMemorySummary(string memoryBasePath, string agentId, MemorySearchResult memorySearch)
+static void PrintMemorySummary(MemorySummary summary)
 {
-    var mv2Path = Path.Combine(memoryBasePath, $"{agentId}.mv2");
-    Console.WriteLine($"Memory file: {(File.Exists(mv2Path) ? $"present ({mv2Path})" : "missing")}");
-    Console.WriteLine($"Memory hits: {memorySearch.Hits.Count}");
-    foreach (var hit in memorySearch.Hits.Take(3))
+    Console.WriteLine($"Memory file: {(summary.FileExists ? $"present ({summary.FilePath})" : "missing")}");
+    Console.WriteLine($"Memory hits: {summary.SearchResult.Hits.Count}");
+    foreach (var hit in summary.SearchResult.Hits.Take(3))
         Console.WriteLine($"  memory score={hit.Score:F3} title={hit.Title ?? "<none>"} text={hit.Text}");
 }
+
+static async Task<MemorySummary> WaitForMemorySummaryAsync(AgentWorldSystem world, string memoryBasePath, string agentId)
+{
+    var mv2Path = Path.Combine(memoryBasePath, $"{agentId}.mv2");
+    var lastResult = new MemorySearchResult(agentId, "real-task", Array.Empty<MemoryHit>());
+
+    for (var attempt = 1; attempt <= 8; attempt++)
+    {
+        world.MemorySupervisor.Tell(new CommitMemory(agentId), ActorRefs.NoSender);
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        lastResult = await world.MemorySupervisor.Ask<MemorySearchResult>(
+            new SearchMemory(agentId, "task", "real-task", TopK: 5),
+            TimeSpan.FromSeconds(15));
+
+        if (File.Exists(mv2Path) || lastResult.Hits.Count > 0)
+            return new MemorySummary(mv2Path, File.Exists(mv2Path), lastResult);
+    }
+
+    return new MemorySummary(mv2Path, File.Exists(mv2Path), lastResult);
+}
+
+sealed record MemorySummary(string FilePath, bool FileExists, MemorySearchResult SearchResult);
 
 sealed class DogfoodViewportBridge : IViewportBridge
 {
