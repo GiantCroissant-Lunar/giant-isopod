@@ -44,7 +44,7 @@ public class RuntimeExecutionMiddlewareTests
 
         Assert.True(result.Parsed.HasEnvelope);
         Assert.Equal(StructuredTaskResultParser.ParsedTaskOutcome.Failed, result.Parsed.Outcome);
-        Assert.True(result.Retryable);
+        Assert.False(result.Retryable);
         Assert.Contains("follow-up input", result.Parsed.FailureReason, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -86,14 +86,14 @@ public class RuntimeExecutionMiddlewareTests
             context,
             async (_, ct) =>
             {
-                await Task.Delay(TimeSpan.FromSeconds(60), ct);
+                await Task.Delay(TimeSpan.FromSeconds(130), ct);
                 return CreateUnknownResult();
             },
             CancellationToken.None);
 
         Assert.True(result.Parsed.HasEnvelope);
         Assert.Equal(StructuredTaskResultParser.ParsedTaskOutcome.Failed, result.Parsed.Outcome);
-        Assert.True(result.Retryable);
+        Assert.False(result.Retryable);
         Assert.Contains("timed out", result.Parsed.FailureReason, StringComparison.OrdinalIgnoreCase);
     }
 

@@ -133,6 +133,8 @@ Return the final giant-isopod result envelope in the same response after you fin
 
         lines.Add("Execute the following exact task now. This is the only task.");
         lines.Add(taskBody.Trim());
+        lines.Add("If the task already names exact target files and exact content, perform that edit directly before doing any repository exploration.");
+        lines.Add("Do not inspect README, git history, or other unrelated files unless the task explicitly requires discovery.");
 
         if (ownedPaths.Count > 0)
         {
@@ -230,7 +232,7 @@ public sealed class StructuredResultNormalizationMiddleware : IRuntimeExecutionM
                 Parsed = BuildFailure(
                     context.Request.TaskId,
                     "Runtime requested follow-up input instead of executing the assigned task."),
-                Retryable = true,
+                Retryable = CanRetry(context),
                 RetryReason = "Runtime asked for more instructions instead of executing the current task."
             };
         }
@@ -305,6 +307,18 @@ public sealed class StructuredResultNormalizationMiddleware : IRuntimeExecutionM
             Subplan: null,
             ExpectedArtifactTypes: Array.Empty<ArtifactType>());
     }
+
+    private static bool CanRetry(RuntimeExecutionContext context)
+    {
+        var maxAttempts = context.RuntimeId switch
+        {
+            "gemini" => 1,
+            "copilot" => 2,
+            _ => context.MaxAttempts
+        };
+
+        return context.AttemptNumber < maxAttempts;
+    }
 }
 
 public sealed class RetryTimeoutRuntimeMiddleware : IRuntimeExecutionMiddleware
@@ -321,10 +335,10 @@ public sealed class RetryTimeoutRuntimeMiddleware : IRuntimeExecutionMiddleware
         try
         {
             var result = await next(context, timeoutCts.Token);
-            if (result.Retryable && context.AttemptNumber < context.MaxAttempts)
+            if (result.Retryable && CanRetry(context))
                 return result;
 
-            if (!result.Parsed.HasEnvelope && context.AttemptNumber < context.MaxAttempts)
+            if (!result.Parsed.HasEnvelope && CanRetry(context))
             {
                 return result with
                 {
@@ -350,7 +364,7 @@ public sealed class RetryTimeoutRuntimeMiddleware : IRuntimeExecutionMiddleware
                     ExpectedArtifactTypes: Array.Empty<ArtifactType>()),
                 Artifacts: Array.Empty<ArtifactRef>(),
                 Transcript: string.Empty,
-                Retryable: context.AttemptNumber < context.MaxAttempts,
+                Retryable: CanRetry(context),
                 RetryReason: timeoutMessage);
         }
     }
@@ -359,9 +373,21 @@ public sealed class RetryTimeoutRuntimeMiddleware : IRuntimeExecutionMiddleware
     {
         return runtimeId switch
         {
-            "copilot" => TimeSpan.FromSeconds(45),
-            "gemini" => TimeSpan.FromSeconds(45),
+            "copilot" => TimeSpan.FromSeconds(60),
+            "gemini" => TimeSpan.FromSeconds(120),
             _ => TimeSpan.FromMinutes(2)
         };
+    }
+
+    private static bool CanRetry(RuntimeExecutionContext context)
+    {
+        var maxAttempts = context.RuntimeId switch
+        {
+            "gemini" => 1,
+            "copilot" => 2,
+            _ => context.MaxAttempts
+        };
+
+        return context.AttemptNumber < maxAttempts;
     }
 }
