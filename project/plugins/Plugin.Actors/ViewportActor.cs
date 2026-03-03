@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
 using Microsoft.Extensions.Logging;
@@ -78,6 +79,20 @@ public sealed class ViewportActor : UntypedActor
             case TaskGraphCompleted graphCompleted:
                 _bridge?.PublishTaskGraphCompleted(graphCompleted.GraphId, graphCompleted.Results);
                 break;
+
+            case ArtifactFollowupSuggested suggested:
+                {
+                    var suggestionJson = JsonSerializer.Serialize(suggested.Suggestions);
+                    _bridge?.PublishArtifactFollowUpSuggested(string.Empty, suggested.ArtifactId, suggestionJson);
+                    break;
+                }
+
+            case ArtifactFollowupSubmitted submitted:
+                {
+                    var submissionJson = JsonSerializer.Serialize(new { GraphId = submitted.GraphId, TaskIds = submitted.TaskIds });
+                    _bridge?.PublishArtifactFollowUpSubmitted(string.Empty, submitted.ArtifactId, submissionJson);
+                    break;
+                }
         }
     }
 }
