@@ -167,8 +167,30 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
         if (eligibleBids.Count > 0)
         {
-            // Select winner: highest fitness, then lowest load, then shortest duration
-            var winner = eligibleBids
+            // Select winner: prefer preferred runtime, then highest fitness, then lowest load, then shortest duration
+            var preferredRuntimeId = session.Request.PreferredRuntimeId;
+
+            IEnumerable<TaskBid> candidateBids = eligibleBids;
+
+            // If a preferred runtime is specified, try to find bids from agents with that runtime
+            if (preferredRuntimeId != null)
+            {
+                var preferredRuntimeBids = eligibleBids.Where(b => b.RuntimeId == preferredRuntimeId).ToList();
+
+                if (preferredRuntimeBids.Count > 0)
+                {
+                    _logger.LogDebug("Found {Count} bids matching preferred runtime {RuntimeId} for task {TaskId}",
+                        preferredRuntimeBids.Count, preferredRuntimeId, taskId);
+                    candidateBids = preferredRuntimeBids;
+                }
+                else
+                {
+                    _logger.LogDebug("No bids matching preferred runtime {RuntimeId} for task {TaskId}, using all eligible bids",
+                        preferredRuntimeId, taskId);
+                }
+            }
+
+            var winner = candidateBids
                 .OrderByDescending(b => b.Fitness)
                 .ThenBy(b => EffectiveLoad(b))
                 .ThenBy(b => b.EstimatedDuration)
