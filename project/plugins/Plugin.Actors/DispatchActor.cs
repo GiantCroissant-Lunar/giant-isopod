@@ -167,8 +167,16 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
         if (eligibleBids.Count > 0)
         {
-            // Select winner: highest fitness, then lowest load, then shortest duration
-            var winner = eligibleBids
+            var preferredRuntimeId = session.Request.PreferredRuntimeId;
+            var preferredBids = string.IsNullOrWhiteSpace(preferredRuntimeId)
+                ? eligibleBids
+                : eligibleBids.Where(b => IsPreferredRuntimeMatch(b, preferredRuntimeId)).ToList();
+            var candidateBids = preferredBids.Count > 0
+                ? preferredBids
+                : eligibleBids;
+
+            // Select winner: preferred runtime first when available, then highest fitness, lowest load, shortest duration.
+            var winner = candidateBids
                 .OrderByDescending(b => b.Fitness)
                 .ThenBy(b => EffectiveLoad(b))
                 .ThenBy(b => b.EstimatedDuration)
@@ -177,8 +185,9 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             selectedAgentId = winner.AgentId;
             budget = (session.Request as TaskRequestWithBudget)?.Budget;
 
-            _logger.LogInformation("Task {TaskId} awarded to {AgentId} via bid (fitness={Fitness:F2}, {BidCount} bids)",
-                taskId, selectedAgentId, winner.Fitness, session.Bids.Count);
+            _logger.LogInformation(
+                "Task {TaskId} awarded to {AgentId} via bid (fitness={Fitness:F2}, runtime={RuntimeId}, preferredRuntime={PreferredRuntimeId}, {BidCount} bids)",
+                taskId, selectedAgentId, winner.Fitness, winner.RuntimeId ?? "<unknown>", preferredRuntimeId ?? "<none>", session.Bids.Count);
 
             // Reject losers immediately
             foreach (var loser in session.Bids.Where(b => b.AgentId != selectedAgentId))
@@ -305,7 +314,8 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             session.Request.TaskId,
             session.Request.Description,
             session.Request.RequiredCapabilities,
-            DefaultBidWindow);
+            DefaultBidWindow,
+            session.Request.PreferredRuntimeId);
 
         foreach (var agentId in session.CapableAgents)
         {
@@ -319,6 +329,12 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
 
         _logger.LogDebug("Bid window opened for task {TaskId} ({Count} agents)",
             session.Request.TaskId, session.CapableAgents.Count);
+    }
+
+    private static bool IsPreferredRuntimeMatch(TaskBid bid, string preferredRuntimeId)
+    {
+        return !string.IsNullOrWhiteSpace(bid.RuntimeId)
+               && string.Equals(bid.RuntimeId, preferredRuntimeId, StringComparison.OrdinalIgnoreCase);
     }
 
     private void HandleRiskApproved(string taskId)

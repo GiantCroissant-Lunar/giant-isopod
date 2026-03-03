@@ -460,7 +460,8 @@ public sealed class AgentActor : UntypedActor
             _agentId,
             fitness,
             _activeTaskCount,
-            TimeSpan.FromMinutes(5));
+            TimeSpan.FromMinutes(5),
+            RuntimeId: _runtimeId ?? _config.DefaultRuntimeId);
 
         Context.System.ActorSelection("/user/dispatch").Tell(bid);
     }

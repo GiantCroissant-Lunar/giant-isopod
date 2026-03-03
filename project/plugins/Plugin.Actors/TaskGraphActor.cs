@@ -508,8 +508,8 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 var revisedDesc = $"{node?.Description ?? "task"} [REVISION {attempts}: validation failed — {failureSummary}]";
 
                 TaskRequest request = node?.Budget != null
-                    ? new TaskRequestWithBudget(taskId, revisedDesc, node.RequiredCapabilities, node.Budget, graphId)
-                    : new TaskRequest(taskId, revisedDesc, node?.RequiredCapabilities ?? new HashSet<string>(), graphId);
+                    ? new TaskRequestWithBudget(taskId, revisedDesc, node.RequiredCapabilities, node.Budget, graphId, node.PreferredRuntimeId)
+                    : new TaskRequest(taskId, revisedDesc, node?.RequiredCapabilities ?? new HashSet<string>(), graphId, node?.PreferredRuntimeId);
                 _dispatch.Tell(request);
             }
             else
@@ -633,8 +633,8 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             _logger.LogDebug("Graph {GraphId}: dispatching task {TaskId}", state.GraphId, taskId);
 
             var request = node.Budget is not null
-                ? new TaskRequestWithBudget(taskId, node.Description, node.RequiredCapabilities, node.Budget, state.GraphId)
-                : new TaskRequest(taskId, node.Description, node.RequiredCapabilities, state.GraphId);
+                ? new TaskRequestWithBudget(taskId, node.Description, node.RequiredCapabilities, node.Budget, state.GraphId, node.PreferredRuntimeId)
+                : new TaskRequest(taskId, node.Description, node.RequiredCapabilities, state.GraphId, node.PreferredRuntimeId);
 
             _dispatch.Tell(request);
         }

@@ -98,7 +98,7 @@ try
 
     var graphId = $"parallel-{string.Join("-", runtimesToUse)}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
     var nodes = Enumerable.Range(1, taskCount)
-        .Select(index => BuildNode(index))
+        .Select(index => BuildNode(index, runtimesToUse[(index - 1) % runtimesToUse.Length]))
         .ToArray();
 
     var accepted = await world.TaskGraph.Ask<TaskGraphAccepted>(
@@ -133,6 +133,26 @@ try
     foreach (var (taskId, agentId) in assignments.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         Console.WriteLine($"  {taskId} -> {agentId}");
 
+    foreach (var node in nodes)
+    {
+        if (string.IsNullOrWhiteSpace(node.PreferredRuntimeId))
+            continue;
+
+        if (!assignments.TryGetValue(node.TaskId, out var assignedAgentId))
+        {
+            Console.Error.WriteLine($"Missing assignment record for {node.TaskId}.");
+            return 5;
+        }
+
+        var assignedRuntimeId = GetRuntimePrefix(assignedAgentId);
+        if (!string.Equals(assignedRuntimeId, node.PreferredRuntimeId, StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine(
+                $"Task {node.TaskId} preferred runtime {node.PreferredRuntimeId} but was handled by {assignedRuntimeId}.");
+            return 6;
+        }
+    }
+
     var uniqueAgents = assignments.Values.Distinct(StringComparer.Ordinal).ToArray();
     var runtimeCounts = uniqueAgents
         .GroupBy(GetRuntimePrefix, StringComparer.OrdinalIgnoreCase)
@@ -159,13 +179,14 @@ finally
     TryDeleteDirectory(tempRoot);
 }
 
-static TaskNode BuildNode(int index)
+static TaskNode BuildNode(int index, string preferredRuntimeId)
 {
     var taskId = $"task-{index:00}";
     return new TaskNode(
         taskId,
         $"In the current git worktree, create a new file named ParallelSmoke{taskId}.cs containing a public static class ParallelSmoke{taskId.Replace("-", "", StringComparison.Ordinal)} with a public const string Message = \"{taskId}\"; do not modify any other files; then exit.",
-        new HashSet<string> { "code_edit" });
+        new HashSet<string> { "code_edit" },
+        PreferredRuntimeId: preferredRuntimeId);
 }
 
 static string GetRuntimePrefix(string agentId)

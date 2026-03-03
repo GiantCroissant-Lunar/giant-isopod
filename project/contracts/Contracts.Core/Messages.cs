@@ -23,10 +23,16 @@ public record AgentMemoryActivity(string AgentId, bool IsStoring, string? Title 
 
 // ── Task dispatch ──
 
-public record TaskRequest(string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities, string? GraphId = null);
+public record TaskRequest(
+    string TaskId,
+    string Description,
+    IReadOnlySet<string> RequiredCapabilities,
+    string? GraphId = null,
+    string? PreferredRuntimeId = null);
 public record TaskRequestWithBudget(
     string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities,
-    TaskBudget Budget, string? GraphId = null) : TaskRequest(TaskId, Description, RequiredCapabilities, GraphId);
+    TaskBudget Budget, string? GraphId = null, string? PreferredRuntimeId = null)
+    : TaskRequest(TaskId, Description, RequiredCapabilities, GraphId, PreferredRuntimeId);
 public record TaskAssigned(string TaskId, string AgentId, string? Description = null, TaskBudget? Budget = null, string? GraphId = null, string? WorkspacePath = null);
 public record TaskCompleted(string TaskId, string AgentId, bool Success, string? Summary = null, string? GraphId = null, IReadOnlyList<ArtifactRef>? Artifacts = null, ProposedSubplan? Subplan = null);
 public record TaskFailed(string TaskId, string? Reason = null, IReadOnlySet<string>? UnmetCapabilities = null, string? GraphId = null);
@@ -52,12 +58,19 @@ public record RiskDenied(string TaskId, string Reason);
 
 // ── Task graph (DAG) ──
 
-public record TaskNode(string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities, TaskBudget? Budget = null, IReadOnlyList<string>? RequiredValidators = null, int MaxValidationAttempts = 2);
+public record TaskNode(
+    string TaskId,
+    string Description,
+    IReadOnlySet<string> RequiredCapabilities,
+    TaskBudget? Budget = null,
+    IReadOnlyList<string>? RequiredValidators = null,
+    int MaxValidationAttempts = 2,
+    string? PreferredRuntimeId = null);
 public record TaskEdge(string FromTaskId, string ToTaskId);
 public record SubmitTaskGraph(string GraphId, IReadOnlyList<TaskNode> Nodes, IReadOnlyList<TaskEdge> Edges, TaskBudget? GraphBudget = null);
 public record TaskGraphAccepted(string GraphId, int NodeCount, int EdgeCount);
 public record TaskGraphRejected(string GraphId, string Reason);
-public record TaskReadyForDispatch(string GraphId, string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities, TaskBudget? Budget = null);
+public record TaskReadyForDispatch(string GraphId, string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities, TaskBudget? Budget = null, string? PreferredRuntimeId = null);
 public record TaskNodeCompleted(string GraphId, string TaskId, bool Success, string? Summary = null);
 public record TaskGraphCompleted(string GraphId, IReadOnlyDictionary<string, bool> Results);
 
@@ -70,8 +83,20 @@ public record NotifyTaskNodeStatusChanged(string GraphId, string TaskId, TaskNod
 
 // ── Market coordination ──
 
-public record TaskAvailable(string TaskId, string Description, IReadOnlySet<string> RequiredCapabilities, TimeSpan BidWindow);
-public record TaskBid(string TaskId, string AgentId, double Fitness, int ActiveTaskCount, TimeSpan EstimatedDuration, int EstimatedTokens = 0);
+public record TaskAvailable(
+    string TaskId,
+    string Description,
+    IReadOnlySet<string> RequiredCapabilities,
+    TimeSpan BidWindow,
+    string? PreferredRuntimeId = null);
+public record TaskBid(
+    string TaskId,
+    string AgentId,
+    double Fitness,
+    int ActiveTaskCount,
+    TimeSpan EstimatedDuration,
+    int EstimatedTokens = 0,
+    string? RuntimeId = null);
 public record TaskAwardedTo(string TaskId, string AgentId);
 public record TaskBidRejected(string TaskId, string AgentId);
 

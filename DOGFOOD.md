@@ -94,6 +94,40 @@ Acceptance bar:
 3. At least one run shows preference honored when both runtimes are idle.
 4. Another run shows fallback still succeeds when the preferred runtime is unavailable or saturated.
 
+Concrete task submissions:
+
+1. `dispatch-contract`
+   Preferred runtime: `pi`
+   Description:
+   Add runtime preference support to the task contracts.
+   Update `project/contracts/Contracts.Core/Messages.cs` so task nodes and dispatch requests can carry a preferred runtime id.
+   Preserve existing behavior when no preferred runtime is specified.
+   Edit only the contract file unless a compile fix is strictly required.
+2. `dispatch-selection`
+   Preferred runtime: `pi`
+   Description:
+   Update `project/plugins/Plugin.Actors/DispatchActor.cs` so bidder selection prefers agents whose runtime matches the task's preferred runtime id when such bids are available.
+   Keep fallback behavior intact when no preferred-runtime bid is available.
+   Do not encode runtime preference as a fake capability.
+3. `dispatch-tests`
+   Preferred runtime: `kimi`
+   Description:
+   Add or update tests in `project/tests/Plugin.Actors.Tests/DispatchActorTests.cs` to prove:
+   preferred runtime wins when available;
+   non-preferred runtime still wins when no preferred-runtime bid exists;
+   existing duplicate/non-capable bid protections still hold.
+   Edit only the dispatch test file unless a compile fix is strictly required.
+4. `dispatch-parallel-smoke`
+   Preferred runtime: `kimi`
+   Description:
+   Update `project/tools/RealCliParallelSmoke/Program.cs` so the mixed-runtime smoke submits alternating `pi` and `kimi` preferred tasks and verifies each completed task was handled by the preferred runtime when capacity allowed.
+   Keep the existing parallel capacity verification.
+5. `dispatch-review`
+   Preferred runtime: `pi`
+   Description:
+   Review the Feature 1 changes for consistency across contracts, dispatch selection, tests, and the mixed-runtime smoke tool.
+   Tighten any small inconsistencies needed for the batch to build and verify cleanly.
+
 ### Feature 2: Runtime Process Observability
 
 Goal: report the real child CLI process identity instead of the host process ID.
