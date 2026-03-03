@@ -43,13 +43,9 @@ public static class CliExecutableResolver
         }
     }
 
-    private static string? ResolveFromPath(string executable)
+    public static string? ResolveFromPathEntries(string executable, IEnumerable<string> pathEntries)
     {
-        var path = Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrWhiteSpace(path))
-            return null;
-
-        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var directory in pathEntries)
         {
             foreach (var candidate in EnumerateExecutableCandidates(executable))
             {
@@ -60,6 +56,15 @@ public static class CliExecutableResolver
         }
 
         return null;
+    }
+
+    private static string? ResolveFromPath(string executable)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        return ResolveFromPathEntries(executable, path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
 
     private static string? ResolveRepoLocal(IEnumerable<string> relativeCandidates)
