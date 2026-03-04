@@ -329,6 +329,55 @@ public class TaskGraphActorTests : TestKit
     }
 
     [Fact]
+    public void PlannerEnabledTask_FallsBackToExactFileQueriesWhenSemanticQueryReturnsNoHits()
+    {
+        var knowledgeProbe = CreateTestProbe();
+        var taskGraph = CreateTaskGraph(NullTaskGraphCheckpointStore.Instance, knowledgeProbe.Ref);
+        var now = DateTimeOffset.UtcNow;
+
+        taskGraph.Tell(MakeGraph("g-plan-fallback", new[]
+        {
+            new TaskNode(
+                "t1",
+                "Refine Kimi wire result coalescing.",
+                new HashSet<string> { "code_edit" },
+                PlannerRequiredCapabilities: new HashSet<string> { "task_decompose" },
+                PreferredPlannerRuntimeId: "claude-code",
+                OwnedPaths: new[] { "project/plugins/Plugin.Process" },
+                ExpectedFiles: new[] { "project/plugins/Plugin.Process/KimiWireAgentRuntime.cs" })
+        }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+
+        var semanticQuery = knowledgeProbe.ExpectMsg<QueryKnowledge>(TimeSpan.FromSeconds(5));
+        Assert.Contains("KimiWireAgentRuntime.cs", semanticQuery.Query);
+        knowledgeProbe.Reply(new KnowledgeResult("task-planner", Array.Empty<KnowledgeEntry>()));
+
+        var exactFileQuery = knowledgeProbe.ExpectMsg<QueryKnowledge>(TimeSpan.FromSeconds(5));
+        Assert.Equal("project/plugins/Plugin.Process/KimiWireAgentRuntime.cs", exactFileQuery.Query);
+        knowledgeProbe.Reply(new KnowledgeResult(
+            "task-planner",
+            new[]
+            {
+                new KnowledgeEntry(
+                    "Do not split Kimi wire transport and result coalescing into separate subtasks.",
+                    "planning-pitfall",
+                    0.10,
+                    new Dictionary<string, string>
+                    {
+                        ["kind"] = "merge_conflict",
+                        ["expected_file_0"] = "project/plugins/Plugin.Process/KimiWireAgentRuntime.cs",
+                        ["file_name_0"] = "KimiWireAgentRuntime.cs"
+                    },
+                    now)
+            }));
+
+        var plannerDispatch = _dispatchProbe.ExpectMsg<TaskRequest>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1.__plan", plannerDispatch.TaskId);
+        Assert.Contains("Planning feedback context:", plannerDispatch.Description);
+        Assert.Contains("Do not split Kimi wire transport and result coalescing", plannerDispatch.Description);
+    }
+
+    [Fact]
     public void PlannerSubtask_UpdateExistingFile_DefaultsToAllowNoOpCompletion()
     {
         _taskGraph.Tell(MakeGraph("g-plan-noop", new[]
@@ -559,6 +608,10 @@ public class TaskGraphActorTests : TestKit
         Assert.Equal("planning-pitfall", stored.Category);
         Assert.Contains("t1", stored.Content, StringComparison.Ordinal);
         Assert.Contains("DispatchActor.cs", stored.Content, StringComparison.Ordinal);
+        Assert.NotNull(stored.Tags);
+        Assert.Equal("project/plugins/Plugin.Actors/DispatchActor.cs", stored.Tags!["expected_file_0"]);
+        Assert.Equal("project/plugins/Plugin.Actors/DispatchActor.cs", stored.Tags["owned_path_0"]);
+        Assert.Equal("DispatchActor.cs", stored.Tags["file_name_0"]);
     }
 
     // ── Synthesis trigger ──

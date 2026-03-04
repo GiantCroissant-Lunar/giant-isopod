@@ -386,12 +386,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         StorePlanningFeedback(
             "planning-pitfall",
             $"Planning pitfall for graph {graphId}, task {completed.TaskId}: decomposition rejected. Reason={reason}. Re-plan with explicit owned_paths and expected_files per subtask.",
-            new Dictionary<string, string>
-            {
-                ["kind"] = "decomposition_rejected",
-                ["graphId"] = graphId,
-                ["taskId"] = completed.TaskId
-            });
+            BuildPlanningFeedbackTags(graphId, completed.TaskId, state.Nodes.GetValueOrDefault(completed.TaskId), "decomposition_rejected"));
 
         // Leave parent as Dispatched so it can complete normally
         _agentSupervisor.Tell(new ForwardToAgent(
@@ -478,12 +473,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         StorePlanningFeedback(
             "planning-pitfall",
             $"Planning pitfall for graph {graphId}, parent task {parentId}: synthesis was impossible because required subtasks failed or were cancelled [{string.Join(", ", failedChildren)}]. Re-plan so file-owned subtasks can complete independently, or use a different stop condition.",
-            new Dictionary<string, string>
-            {
-                ["kind"] = "subtask_failure",
-                ["graphId"] = graphId,
-                ["taskId"] = parentId
-            });
+            BuildPlanningFeedbackTags(graphId, parentId, state.Nodes.GetValueOrDefault(parentId), "subtask_failure"));
 
         CancelDependents(state, parentId);
         RequestWorkspaceRelease(state, parentId);
@@ -556,12 +546,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         StorePlanningFeedback(
             "planning-pitfall",
             BuildMergeConflictFeedback(graphId, state, conflict),
-            new Dictionary<string, string>
-            {
-                ["kind"] = "merge_conflict",
-                ["graphId"] = graphId,
-                ["taskId"] = conflict.TaskId
-            });
+            BuildPlanningFeedbackTags(graphId, conflict.TaskId, state.Nodes.GetValueOrDefault(conflict.TaskId), "merge_conflict"));
 
         // Fail the task — conflict resolution subtask is future work
         state.Status[conflict.TaskId] = TaskNodeStatus.Failed;
@@ -713,12 +698,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 StorePlanningFeedback(
                     "planning-pitfall",
                     BuildValidationFailureFeedback(graphId, taskId, node, failures),
-                    new Dictionary<string, string>
-                    {
-                        ["kind"] = "validation_failure",
-                        ["graphId"] = graphId,
-                        ["taskId"] = taskId
-                    });
+                    BuildPlanningFeedbackTags(graphId, taskId, node, "validation_failure"));
                 if (state.AssignedAgent.TryGetValue(taskId, out var assignedAgentId))
                 {
                     _viewport.Tell(new RuntimeOutput(
@@ -768,12 +748,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         StorePlanningFeedback(
             "planning-pitfall",
             BuildTaskFailureFeedback(graphId, state, failed),
-            new Dictionary<string, string>
-            {
-                ["kind"] = "task_failure",
-                ["graphId"] = graphId,
-                ["taskId"] = failed.TaskId
-            });
+            BuildPlanningFeedbackTags(graphId, failed.TaskId, state.Nodes.GetValueOrDefault(failed.TaskId), "task_failure"));
 
         CancelDependents(state, failed.TaskId);
         RequestWorkspaceRelease(state, failed.TaskId);
@@ -895,14 +870,11 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             return;
         }
 
-        var query = BuildPlannerKnowledgeQuery(node);
-        _knowledgeSupervisor.Ask<KnowledgeResult>(
-                new QueryKnowledge(PlannerKnowledgeAgentId, query, "planning-pitfall", TopK: 5),
-                PlanningKnowledgeTimeout)
+        LoadPlannerKnowledgeAsync(node)
             .ContinueWith(task =>
             {
                 if (task.IsCompletedSuccessfully)
-                    return (object)new PlannerKnowledgeLoaded(state.GraphId, taskId, task.Result.Entries);
+                    return (object)new PlannerKnowledgeLoaded(state.GraphId, taskId, task.Result);
 
                 return new PlannerKnowledgeUnavailable(
                     state.GraphId,
@@ -1114,6 +1086,38 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         _knowledgeSupervisor.Tell(new StoreKnowledge(PlannerKnowledgeAgentId, content, category, tags));
     }
 
+    private Task<IReadOnlyList<KnowledgeEntry>> LoadPlannerKnowledgeAsync(TaskNode node)
+    {
+        return LoadPlannerKnowledgeCoreAsync(node);
+    }
+
+    private async Task<IReadOnlyList<KnowledgeEntry>> LoadPlannerKnowledgeCoreAsync(TaskNode node)
+    {
+        var primaryQuery = BuildPlannerKnowledgeQuery(node);
+        var primaryEntries = await QueryPlannerKnowledgeAsync(primaryQuery);
+        if (primaryEntries.Count > 0)
+            return RankPlanningEntries(node, primaryEntries);
+
+        var allEntries = new List<KnowledgeEntry>();
+        foreach (var fallbackQuery in BuildPlannerKnowledgeFallbackQueries(node))
+        {
+            var fallbackEntries = await QueryPlannerKnowledgeAsync(fallbackQuery);
+            allEntries.AddRange(fallbackEntries);
+            if (fallbackEntries.Count > 0)
+                break;
+        }
+
+        return RankPlanningEntries(node, allEntries);
+    }
+
+    private async Task<IReadOnlyList<KnowledgeEntry>> QueryPlannerKnowledgeAsync(string query)
+    {
+        var result = await _knowledgeSupervisor.Ask<KnowledgeResult>(
+            new QueryKnowledge(PlannerKnowledgeAgentId, query, "planning-pitfall", TopK: 5),
+            PlanningKnowledgeTimeout);
+        return result.Entries;
+    }
+
     private static string BuildPlannerKnowledgeQuery(TaskNode node)
     {
         var parts = new List<string> { node.Description };
@@ -1125,6 +1129,164 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         return string.Join(" | ", parts
             .Where(part => !string.IsNullOrWhiteSpace(part))
             .Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static IReadOnlyList<string> BuildPlannerKnowledgeFallbackQueries(TaskNode node)
+    {
+        var queries = new List<string>();
+
+        if (node.ExpectedFiles is { Count: > 0 })
+        {
+            foreach (var expectedFile in node.ExpectedFiles)
+            {
+                if (!string.IsNullOrWhiteSpace(expectedFile))
+                    queries.Add(expectedFile);
+
+                var fileName = System.IO.Path.GetFileName(expectedFile.Replace('\\', '/'));
+                if (!string.IsNullOrWhiteSpace(fileName))
+                    queries.Add(fileName);
+            }
+        }
+
+        if (node.OwnedPaths is { Count: > 0 })
+        {
+            foreach (var ownedPath in node.OwnedPaths)
+            {
+                if (!string.IsNullOrWhiteSpace(ownedPath))
+                    queries.Add(ownedPath);
+            }
+        }
+
+        return queries
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(6)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<KnowledgeEntry> RankPlanningEntries(TaskNode node, IEnumerable<KnowledgeEntry> entries)
+    {
+        var expectedFiles = NormalizeTaggedPaths(node.ExpectedFiles);
+        var ownedPaths = NormalizeTaggedPaths(node.OwnedPaths);
+        var fileNames = expectedFiles
+            .Select(path => System.IO.Path.GetFileName(path))
+            .Where(fileName => !string.IsNullOrWhiteSpace(fileName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return entries
+            .GroupBy(entry => $"{entry.Category}|{entry.Content}|{entry.StoredAt.UtcDateTime.Ticks}", StringComparer.Ordinal)
+            .Select(group => group
+                .OrderByDescending(entry => CalculatePlanningEntryScore(entry, expectedFiles, ownedPaths, fileNames))
+                .ThenByDescending(entry => entry.StoredAt)
+                .First())
+            .OrderByDescending(entry => CalculatePlanningEntryScore(entry, expectedFiles, ownedPaths, fileNames))
+            .ThenByDescending(entry => entry.StoredAt)
+            .Take(5)
+            .ToArray();
+    }
+
+    private static double CalculatePlanningEntryScore(
+        KnowledgeEntry entry,
+        IReadOnlyCollection<string> expectedFiles,
+        IReadOnlyCollection<string> ownedPaths,
+        IReadOnlyCollection<string> fileNames)
+    {
+        var score = entry.Relevance;
+        if (entry.Tags is not { Count: > 0 })
+            return score;
+
+        foreach (var (key, value) in entry.Tags)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                continue;
+
+            var normalized = NormalizeTaggedPath(value);
+            if (key.StartsWith("expected_file_", StringComparison.OrdinalIgnoreCase) &&
+                expectedFiles.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            {
+                score += 5;
+            }
+            else if (key.StartsWith("owned_path_", StringComparison.OrdinalIgnoreCase) &&
+                     ownedPaths.Any(path => TaggedPathsOverlap(path, normalized)))
+            {
+                score += 4;
+            }
+            else if (key.StartsWith("file_name_", StringComparison.OrdinalIgnoreCase) &&
+                     fileNames.Contains(value, StringComparer.OrdinalIgnoreCase))
+            {
+                score += 3;
+            }
+        }
+
+        return score;
+    }
+
+    private static Dictionary<string, string> BuildPlanningFeedbackTags(
+        string graphId,
+        string taskId,
+        TaskNode? node,
+        string kind)
+    {
+        var tags = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["kind"] = kind,
+            ["graphId"] = graphId,
+            ["taskId"] = taskId
+        };
+
+        AppendPathTags(tags, "owned_path_", node?.OwnedPaths);
+        AppendPathTags(tags, "expected_file_", node?.ExpectedFiles);
+
+        var fileNames = NormalizeTaggedPaths(node?.ExpectedFiles)
+            .Select(path => System.IO.Path.GetFileName(path))
+            .Where(fileName => !string.IsNullOrWhiteSpace(fileName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4)
+            .ToArray();
+
+        for (var i = 0; i < fileNames.Length; i++)
+            tags[$"file_name_{i}"] = fileNames[i];
+
+        return tags;
+    }
+
+    private static void AppendPathTags(IDictionary<string, string> tags, string prefix, IReadOnlyList<string>? paths)
+    {
+        var normalizedPaths = NormalizeTaggedPaths(paths).Take(4).ToArray();
+        for (var i = 0; i < normalizedPaths.Length; i++)
+            tags[$"{prefix}{i}"] = normalizedPaths[i];
+    }
+
+    private static string[] NormalizeTaggedPaths(IReadOnlyList<string>? paths)
+    {
+        if (paths is not { Count: > 0 })
+            return Array.Empty<string>();
+
+        return paths
+            .Select(NormalizeTaggedPath)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string NormalizeTaggedPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return string.Empty;
+
+        var normalized = path.Trim().Replace('\\', '/');
+        while (normalized.StartsWith("./", StringComparison.Ordinal))
+            normalized = normalized[2..];
+        return normalized.Trim('/');
+    }
+
+    private static bool TaggedPathsOverlap(string left, string right)
+    {
+        if (string.Equals(left, right, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return right.StartsWith(left + "/", StringComparison.OrdinalIgnoreCase)
+            || left.StartsWith(right + "/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildValidationFailureFeedback(
@@ -1221,12 +1383,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         StorePlanningFeedback(
             "planning-pitfall",
             $"Planning pitfall for graph {graphId}, task {parentTaskId}: planner task failed. reason={failed.Reason}. Falling back to direct execution.",
-            new Dictionary<string, string>
-            {
-                ["kind"] = "planner_failure",
-                ["graphId"] = graphId,
-                ["taskId"] = parentTaskId
-            });
+            BuildPlanningFeedbackTags(graphId, parentTaskId, state.Nodes.GetValueOrDefault(parentTaskId), "planner_failure"));
 
         DispatchReadyNodes(state);
         PersistGraphState(state);
