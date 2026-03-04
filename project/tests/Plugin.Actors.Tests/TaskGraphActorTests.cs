@@ -466,6 +466,42 @@ public class TaskGraphActorTests : TestKit
     }
 
     [Fact]
+    public void AllSubtasksComplete_WithFailedChild_FailsParentAndCompletesGraph()
+    {
+        Sys.EventStream.Subscribe(TestActor, typeof(TaskGraphCompleted));
+
+        _taskGraph.Tell(MakeGraph("g-subfail", new[] { Node("t1") }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+
+        _taskGraph.Tell(new TaskCompleted("t1", "a1", true, "d", "g-subfail",
+            Subplan: MakeSubplan("t1", new[]
+            {
+                Proposal("s1"),
+                Proposal("s2"),
+            })));
+
+        _taskGraph.Tell(new TaskCompleted("t1/sub-0", "a2", true, "s1 done", "g-subfail"));
+        var releaseSub0 = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1/sub-0", releaseSub0.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1/sub-0"));
+
+        _taskGraph.Tell(new TaskFailed("t1/sub-1", "validator failed", GraphId: "g-subfail"));
+        var releaseSub1 = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1/sub-1", releaseSub1.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1/sub-1"));
+
+        var releaseParent = _workspaceProbe.ExpectMsg<ReleaseWorkspace>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1", releaseParent.TaskId);
+        _taskGraph.Tell(new WorkspaceReleased("t1"));
+
+        var completed = ExpectMsg<TaskGraphCompleted>(TimeSpan.FromSeconds(5));
+        Assert.Equal("g-subfail", completed.GraphId);
+        Assert.False(completed.Results["t1"]);
+        Assert.True(completed.Results["t1/sub-0"]);
+        Assert.False(completed.Results["t1/sub-1"]);
+    }
+
+    [Fact]
     public void FirstSuccess_StopCondition_CancelsSiblings()
     {
         _taskGraph.Tell(MakeGraph("g-first", new[] { Node("t1") }), TestActor);

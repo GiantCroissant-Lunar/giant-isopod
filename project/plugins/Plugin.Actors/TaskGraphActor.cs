@@ -404,8 +404,46 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
         if (allTerminal)
         {
+            if (stopKind == StopKind.AllSubtasksComplete)
+            {
+                var failedChildren = childIds
+                    .Where(id => state.Status.GetValueOrDefault(id) is TaskNodeStatus.Failed or TaskNodeStatus.Cancelled)
+                    .ToArray();
+
+                if (failedChildren.Length > 0)
+                {
+                    FailParentDueToSubtaskFailure(graphId, state, parentId, failedChildren);
+                    return;
+                }
+            }
+
             TriggerSynthesis(graphId, state, parentId);
         }
+    }
+
+    private void FailParentDueToSubtaskFailure(string graphId, GraphState state, string parentId, IReadOnlyList<string> failedChildren)
+    {
+        state.Status[parentId] = TaskNodeStatus.Failed;
+        _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, parentId, TaskNodeStatus.Failed));
+
+        _logger.LogWarning(
+            "Graph {GraphId}: parent task {TaskId} failed because subtasks did not all succeed [{Children}]",
+            graphId,
+            parentId,
+            string.Join(", ", failedChildren));
+
+        StorePlanningFeedback(
+            "planning-pitfall",
+            $"Planning pitfall for graph {graphId}, parent task {parentId}: synthesis was impossible because required subtasks failed or were cancelled [{string.Join(", ", failedChildren)}]. Re-plan so file-owned subtasks can complete independently, or use a different stop condition.",
+            new Dictionary<string, string>
+            {
+                ["kind"] = "subtask_failure",
+                ["graphId"] = graphId,
+                ["taskId"] = parentId
+            });
+
+        CancelDependents(state, parentId);
+        RequestWorkspaceRelease(state, parentId);
     }
 
     private void TriggerSynthesis(string graphId, GraphState state, string parentId)
