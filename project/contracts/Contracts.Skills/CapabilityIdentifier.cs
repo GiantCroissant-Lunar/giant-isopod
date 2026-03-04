@@ -6,6 +6,10 @@ namespace GiantIsopod.Contracts.Skills;
 public static class CapabilityIdentifier
 {
     public const string CodeEdit = "code_edit";
+    public const string Implementation = "implementation";
+    public const string Testing = "testing";
+    public const string Review = "review";
+    public const string Documentation = "documentation";
     public const string RepoSearch = "repo_search";
     public const string ShellRun = "shell_run";
     public const string TestRun = "test_run";
@@ -20,6 +24,7 @@ public static class CapabilityIdentifier
     private static readonly HashSet<string> WellKnown = new(StringComparer.OrdinalIgnoreCase)
     {
         CodeEdit, RepoSearch, ShellRun, TestRun, PatchEmit,
+        Implementation, Testing, Review, Documentation,
         PolicyStrict, VerifyBuild, ContextRetrieve, ConsensusVote,
         PlanGenerate, TaskDecompose
     };

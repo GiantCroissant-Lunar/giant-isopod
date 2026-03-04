@@ -316,12 +316,10 @@ Fail if the code changes unrelated files, does not implement the submitted task,
 
 static string BuildAgentProfileJson(string runtimeId)
 {
-    var plannerSkill = string.Equals(runtimeId, "claude-code", StringComparison.OrdinalIgnoreCase)
-        ? """
-      ,
-      { "name": "task_decompose", "description": "Decompose complex tasks into owned path subtasks", "priority": 1 }
-"""
-        : string.Empty;
+    var skills = BuildRuntimeSkillEntries(runtimeId);
+    var skillsJson = string.Join(
+        "," + Environment.NewLine,
+        skills.Select(skill => $"      {{ \"name\": \"{skill.Name}\", \"description\": \"{skill.Description}\", \"priority\": {skill.Priority} }}"));
 
     return $$"""
 {
@@ -330,11 +328,36 @@ static string BuildAgentProfileJson(string runtimeId)
   "identity": { "names": { "first": "Batch", "nickname": "runner" } },
   "capabilities": {
     "skills": [
-      { "name": "code_edit", "description": "Edit source files", "priority": 1 }{{plannerSkill}}
+{{skillsJson}}
     ]
   }
 }
 """;
+}
+
+static IReadOnlyList<(string Name, string Description, int Priority)> BuildRuntimeSkillEntries(string runtimeId)
+{
+    var skills = new List<(string Name, string Description, int Priority)>
+    {
+        ("code_edit", "Edit source files", 1)
+    };
+
+    if (string.Equals(runtimeId, "kimi", StringComparison.OrdinalIgnoreCase))
+    {
+        skills.Add(("implementation", "Implement production code changes", 1));
+    }
+    else if (string.Equals(runtimeId, "pi", StringComparison.OrdinalIgnoreCase))
+    {
+        skills.Add(("testing", "Write and adjust tests", 1));
+        skills.Add(("review", "Review and verify task output", 2));
+    }
+    else if (string.Equals(runtimeId, "claude-code", StringComparison.OrdinalIgnoreCase))
+    {
+        skills.Add(("task_decompose", "Decompose complex tasks into owned path subtasks", 1));
+        skills.Add(("review", "Review and verify task output", 2));
+    }
+
+    return skills;
 }
 
 static void TryDeleteDirectory(string path)
