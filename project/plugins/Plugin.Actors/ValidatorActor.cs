@@ -129,6 +129,7 @@ public sealed class ValidatorActor : UntypedActor
                         msg.ArtifactId,
                         msg.Artifact,
                         msg.TaskId,
+                        msg.TaskDescription,
                         spec,
                         msg.OwnedPaths,
                         msg.ExpectedFiles);
@@ -168,13 +169,14 @@ public sealed class ValidatorActor : UntypedActor
         string artifactId,
         ArtifactRef artifact,
         string? taskId,
+        string? taskDescription,
         ValidatorSpec spec,
         IReadOnlyList<string>? ownedPaths,
         IReadOnlyList<string>? expectedFiles)
     {
         var self = Self;
 
-        RunAgentReviewAsync(artifactId, artifact, taskId, spec, ownedPaths, expectedFiles)
+        RunAgentReviewAsync(artifactId, artifact, taskId, taskDescription, spec, ownedPaths, expectedFiles)
             .ContinueWith(t =>
             {
                 if (t.IsCanceled)
@@ -259,6 +261,7 @@ public sealed class ValidatorActor : UntypedActor
         string artifactId,
         ArtifactRef artifact,
         string? taskId,
+        string? taskDescription,
         ValidatorSpec spec,
         IReadOnlyList<string>? ownedPaths,
         IReadOnlyList<string>? expectedFiles)
@@ -276,7 +279,7 @@ public sealed class ValidatorActor : UntypedActor
         var runtimeConfig = _config.Runtimes.ResolveOrDefault(runtimeId);
         var model = ResolveReviewModel(spec);
         var workingDirectory = ResolveReviewWorkingDirectory(artifact);
-        var prompt = BuildAgentReviewPrompt(artifactId, artifact, taskId, spec, ownedPaths, expectedFiles);
+        var prompt = BuildAgentReviewPrompt(artifactId, artifact, taskId, taskDescription, spec, ownedPaths, expectedFiles);
 
         var output = new StringBuilder();
         await using var runtime = RuntimeFactory.Create(
@@ -384,6 +387,7 @@ public sealed class ValidatorActor : UntypedActor
         string artifactId,
         ArtifactRef artifact,
         string? taskId,
+        string? taskDescription,
         ValidatorSpec spec,
         IReadOnlyList<string>? ownedPaths,
         IReadOnlyList<string>? expectedFiles)
@@ -394,6 +398,11 @@ public sealed class ValidatorActor : UntypedActor
         sb.Append("Artifact ID: ").AppendLine(artifactId);
         if (!string.IsNullOrWhiteSpace(taskId))
             sb.Append("Task ID: ").AppendLine(taskId);
+        if (!string.IsNullOrWhiteSpace(taskDescription))
+        {
+            sb.AppendLine("Current task description:");
+            sb.AppendLine(taskDescription);
+        }
         sb.Append("Artifact type: ").AppendLine(artifact.Type.ToString());
         sb.Append("Artifact format: ").AppendLine(artifact.Format);
         sb.Append("Artifact URI: ").AppendLine(artifact.Uri);
@@ -414,6 +423,12 @@ public sealed class ValidatorActor : UntypedActor
             sb.AppendLine();
             sb.AppendLine("Rubric:");
             sb.AppendLine(spec.Rubric);
+        }
+
+        if (!string.IsNullOrWhiteSpace(taskDescription))
+        {
+            sb.AppendLine();
+            sb.AppendLine("Judge the artifact against the current task description above, even if the validator rubric contains broader parent-task context.");
         }
 
         if (artifact.Metadata is { Count: > 0 })

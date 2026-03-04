@@ -199,6 +199,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 _validator.Tell(new ValidateArtifact(
                     artifact.ArtifactId, artifact,
                     completed.TaskId,
+                    node?.Description,
                     requiredValidators,
                     node?.OwnedPaths,
                     node?.ExpectedFiles));

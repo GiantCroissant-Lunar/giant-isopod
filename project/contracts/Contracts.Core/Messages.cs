@@ -286,6 +286,7 @@ public record ValidatorRegistered(string Name);
 public record ValidateArtifact(
     string ArtifactId, ArtifactRef Artifact,
     string? TaskId = null,
+    string? TaskDescription = null,
     IReadOnlyList<string>? RequiredValidators = null,
     IReadOnlyList<string>? OwnedPaths = null,
     IReadOnlyList<string>? ExpectedFiles = null);
