@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using Akka.Actor;
 using CliWrap;
@@ -21,9 +23,9 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
     private readonly Queue<(string TaskId, IActorRef Requester)> _mergeQueue = new();
     private bool _merging;
 
-    private static readonly Regex SafeTaskIdRegex = new(@"^[A-Za-z0-9._-]+$", RegexOptions.Compiled);
     // BaseRef must not start with '-' to prevent git option injection
     private static readonly Regex SafeBaseRefRegex = new(@"^[A-Za-z0-9._/][A-Za-z0-9._/\-]*$", RegexOptions.Compiled);
+    private static readonly Regex WorkspaceSlugUnsafeChars = new(@"[^A-Za-z0-9._-]+", RegexOptions.Compiled);
     private static readonly TimeSpan GitCommandTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan StaleThreshold = TimeSpan.FromHours(1);
@@ -109,14 +111,15 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
             _workspaces.Remove(msg.TaskId);
         }
 
-        if (string.IsNullOrWhiteSpace(msg.TaskId) || !SafeTaskIdRegex.IsMatch(msg.TaskId))
+        if (string.IsNullOrWhiteSpace(msg.TaskId))
         {
             sender.Tell(new AllocationFailed(msg.TaskId, "Invalid task id"));
             return;
         }
 
+        var workspaceSlug = BuildWorkspaceSlug(msg.TaskId);
         var worktreesRoot = Path.GetFullPath(Path.Combine(_anchorRepoPath, ".worktrees"));
-        var worktreePath = Path.GetFullPath(Path.Combine(worktreesRoot, msg.TaskId));
+        var worktreePath = Path.GetFullPath(Path.Combine(worktreesRoot, workspaceSlug));
         if (!worktreePath.StartsWith(worktreesRoot + Path.DirectorySeparatorChar))
         {
             sender.Tell(new AllocationFailed(msg.TaskId, "Invalid task id path"));
@@ -129,7 +132,7 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
             return;
         }
 
-        var branchName = $"swarm/{msg.TaskId}";
+        var branchName = $"swarm/{workspaceSlug}";
 
         RunGitAsync("worktree", "add", worktreePath, "-b", branchName, msg.BaseRef)
             .ContinueWith(t =>
@@ -517,6 +520,20 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
         return stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Where(l => l.Contains("CONFLICT") || l.Contains("Merge conflict"))
             .ToList();
+    }
+
+    private static string BuildWorkspaceSlug(string taskId)
+    {
+        var normalized = taskId.Trim();
+        var replaced = WorkspaceSlugUnsafeChars.Replace(normalized, "-").Trim('-', '.');
+        if (string.IsNullOrWhiteSpace(replaced))
+            replaced = "task";
+
+        if (replaced.Length > 48)
+            replaced = replaced[..48].TrimEnd('-', '.');
+
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))[..10].ToLowerInvariant();
+        return $"{replaced}-{hash}";
     }
 
     // ── Internal types ──

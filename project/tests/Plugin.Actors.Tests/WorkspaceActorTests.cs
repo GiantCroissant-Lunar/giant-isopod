@@ -43,12 +43,12 @@ public class WorkspaceActorTests : TestKit, IDisposable
 
         var result = ExpectMsg<WorkspaceAllocated>(TimeSpan.FromSeconds(10));
         Assert.Equal("T-001", result.TaskId);
-        Assert.Equal("swarm/T-001", result.BranchName);
+        Assert.StartsWith("swarm/T-001-", result.BranchName, StringComparison.Ordinal);
         Assert.True(Directory.Exists(result.WorktreePath), $"Worktree directory should exist at {result.WorktreePath}");
 
         // Verify the branch exists
-        var branches = RunGit(_tempRepoPath, "branch", "--list", "swarm/T-001");
-        Assert.Contains("swarm/T-001", branches);
+        var branches = RunGit(_tempRepoPath, "branch", "--list", result.BranchName);
+        Assert.Contains(result.BranchName, branches);
     }
 
     [Fact]
@@ -65,6 +65,21 @@ public class WorkspaceActorTests : TestKit, IDisposable
     }
 
     [Fact]
+    public void Allocate_HierarchicalTaskId_CreatesSafeWorktreeAndBranch()
+    {
+        _workspace.Tell(new AllocateWorkspace("planner-docs-root/sub-0", "HEAD"), TestActor);
+
+        var result = ExpectMsg<WorkspaceAllocated>(TimeSpan.FromSeconds(10));
+        Assert.Equal("planner-docs-root/sub-0", result.TaskId);
+        Assert.True(Directory.Exists(result.WorktreePath), $"Worktree directory should exist at {result.WorktreePath}");
+        Assert.DoesNotContain("/sub-0", result.WorktreePath, StringComparison.Ordinal);
+        Assert.StartsWith("swarm/planner-docs-root-sub-0-", result.BranchName, StringComparison.Ordinal);
+
+        var branches = RunGit(_tempRepoPath, "branch", "--list", result.BranchName);
+        Assert.Contains(result.BranchName, branches);
+    }
+
+    [Fact]
     public void Release_RemovesWorktreeAndBranch()
     {
         _workspace.Tell(new AllocateWorkspace("T-REL", "HEAD"), TestActor);
@@ -76,8 +91,8 @@ public class WorkspaceActorTests : TestKit, IDisposable
 
         Assert.False(Directory.Exists(worktreePath), "Worktree directory should be removed");
 
-        var branches = RunGit(_tempRepoPath, "branch", "--list", "swarm/T-REL");
-        Assert.DoesNotContain("swarm/T-REL", branches);
+        var branches = RunGit(_tempRepoPath, "branch", "--list", allocated.BranchName);
+        Assert.DoesNotContain(allocated.BranchName, branches);
     }
 
     [Fact]
