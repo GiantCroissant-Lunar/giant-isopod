@@ -128,6 +128,18 @@
         "PYTHONUTF8": "1"
       },
       "defaults": {}
+    },
+    {
+      "type": "cli",
+      "id": "kimi-debug",
+      "displayName": "Kimi Debug",
+      "executable": "kimi",
+      "args": ["--print", "--yolo", "--agent", "default", "--output-format", "text", "-p", "{prompt}"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "defaults": {}
     }
   ]
 }

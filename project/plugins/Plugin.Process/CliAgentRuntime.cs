@@ -62,9 +62,13 @@ public sealed class CliAgentRuntime : IAgentRuntime
     {
         var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _cts?.Token ?? CancellationToken.None);
         var commandContext = ResolveCommandContext();
+        var traceFilePath = CreateTraceFilePath();
+        using var traceWriter = new StreamWriter(traceFilePath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         try
         {
+            await WriteTraceAsync(traceWriter, "meta", $"agent={AgentId} runtime={_config.Id} cwd={_workingDirectory}");
+            yield return $"[runtime-trace] file={traceFilePath}";
             yield return BuildLaunchDiagnostic(commandContext);
 
             var cmd = Cli.Wrap(_config.Executable)
@@ -85,17 +89,26 @@ public sealed class CliAgentRuntime : IAgentRuntime
                 {
                     case StandardOutputCommandEvent stdOut:
                         if (!string.IsNullOrEmpty(stdOut.Text))
+                        {
+                            await WriteTraceAsync(traceWriter, "stdout", stdOut.Text);
                             yield return stdOut.Text;
+                        }
                         break;
                     case StandardErrorCommandEvent stdErr:
                         if (!string.IsNullOrEmpty(stdErr.Text))
+                        {
+                            await WriteTraceAsync(traceWriter, "stderr", stdErr.Text);
                             yield return stdErr.Text;
+                        }
                         break;
                 }
             }
         }
         finally
         {
+            if (linkedCts.IsCancellationRequested)
+                await WriteTraceAsync(traceWriter, "meta", "runtime stream cancelled");
+            await traceWriter.FlushAsync();
             IsRunning = false;
             linkedCts.Dispose();
             commandContext.Dispose();
@@ -189,6 +202,23 @@ public sealed class CliAgentRuntime : IAgentRuntime
             .ToArray();
 
         return $"[runtime-launch] exe={_config.Executable} cwd={_workingDirectory} args=[{string.Join(", ", sanitizedArgs)}] promptLen={_prompt.Length} promptSha256={promptHash} promptFile={(context.PromptFilePath is null ? "<none>" : promptFilePlaceholder)}";
+    }
+
+    private string CreateTraceFilePath()
+    {
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var safeAgentId = string.Concat(AgentId.Select(c => Array.IndexOf(invalidChars, c) >= 0 ? '_' : c));
+        var safeRuntimeId = string.Concat(_config.Id.Select(c => Array.IndexOf(invalidChars, c) >= 0 ? '_' : c));
+        var traceRoot = Path.Combine(Path.GetTempPath(), "giant-isopod-runtime-traces");
+        Directory.CreateDirectory(traceRoot);
+        return Path.Combine(
+            traceRoot,
+            $"{safeAgentId}-{safeRuntimeId}-{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.log");
+    }
+
+    private static Task WriteTraceAsync(StreamWriter writer, string channel, string text)
+    {
+        return writer.WriteLineAsync($"[{DateTime.UtcNow:O}] {channel}: {text}");
     }
 
     public async ValueTask DisposeAsync()
