@@ -34,6 +34,7 @@ public sealed class AgentActor : UntypedActor
     private HashSet<string> _capabilities = new();
     private readonly Dictionary<string, string> _workingMemory = new();
     private readonly Dictionary<string, ActiveTaskContext> _activeTasks = new();
+    private readonly Dictionary<string, ActiveTaskContext> _plannerParentTasks = new();
     private int _activeTaskCount;
     private const int MaxConcurrentTasks = 1;
     private const double MinBidThreshold = 0.5;
@@ -168,6 +169,11 @@ public sealed class AgentActor : UntypedActor
             case TaskAssigned task:
                 _activeTaskCount++;
                 _activeTasks[task.TaskId] = new ActiveTaskContext(task.TaskId, task.GraphId, task.WorkspacePath, task.AllowNoOpCompletion);
+                if (TryGetPlannerParentTaskId(task.TaskId, out var plannerParentTaskId))
+                {
+                    _plannerParentTasks[plannerParentTaskId] =
+                        new ActiveTaskContext(plannerParentTaskId, task.GraphId, WorkspacePath: null, task.AllowNoOpCompletion);
+                }
 
                 if (task.Budget?.MaxTokens is { } maxTokens)
                     _rpcActor?.Tell(new SetTokenBudget(task.TaskId, maxTokens));
@@ -235,6 +241,8 @@ public sealed class AgentActor : UntypedActor
 
                 _activeTaskCount = Math.Max(0, _activeTaskCount - 1);
                 _activeTasks.Remove(completed.TaskId);
+                if (!TryGetPlannerParentTaskId(completed.TaskId, out _))
+                    _plannerParentTasks.Remove(completed.TaskId);
                 Context.System.ActorSelection("/user/dispatch")
                     .Tell(new AgentCapacityAvailable(_agentId));
                 if (completed.Artifacts is { Count: > 0 })
@@ -262,6 +270,8 @@ public sealed class AgentActor : UntypedActor
 
                 _activeTaskCount = Math.Max(0, _activeTaskCount - 1);
                 _activeTasks.Remove(failed.TaskId);
+                if (!TryGetPlannerParentTaskId(failed.TaskId, out _))
+                    _plannerParentTasks.Remove(failed.TaskId);
                 Context.System.ActorSelection("/user/dispatch")
                     .Tell(new AgentCapacityAvailable(_agentId));
                 if (failed.GraphId != null)
@@ -275,7 +285,7 @@ public sealed class AgentActor : UntypedActor
                 break;
 
             case SubtasksCompleted subtasksCompleted:
-                if (_activeTasks.TryGetValue(subtasksCompleted.ParentTaskId, out var synthesisTask))
+                if (TryGetSynthesisContext(subtasksCompleted.ParentTaskId, out var synthesisTask))
                 {
                     var synthesisPrompt = PromptBuilder.BuildSynthesisPrompt(
                         subtasksCompleted.ParentTaskId, subtasksCompleted.Results);
@@ -292,6 +302,8 @@ public sealed class AgentActor : UntypedActor
                 break;
 
             case TaskDecompositionAccepted accepted:
+                if (_plannerParentTasks.TryGetValue(accepted.ParentTaskId, out var plannerParentTask))
+                    _activeTasks[accepted.ParentTaskId] = plannerParentTask;
                 _logger.LogInformation("Agent {AgentId} decomposition accepted for {TaskId}: {Count} subtasks",
                     _agentId, accepted.ParentTaskId, accepted.SubtaskIds.Count);
                 break;
@@ -299,6 +311,9 @@ public sealed class AgentActor : UntypedActor
             case TaskDecompositionRejected rejected:
                 _logger.LogWarning("Agent {AgentId} decomposition rejected for {TaskId}: {Reason}",
                     _agentId, rejected.ParentTaskId, rejected.Reason);
+                if (_plannerParentTasks.TryGetValue(rejected.ParentTaskId, out var plannerRejectedTask))
+                    _activeTasks[rejected.ParentTaskId] = plannerRejectedTask;
+
                 if (_activeTasks.TryGetValue(rejected.ParentTaskId, out var rejectedTask))
                 {
                     _rpcActor?.Tell(new ExecuteTaskPrompt(
@@ -392,6 +407,8 @@ public sealed class AgentActor : UntypedActor
 
     private void FinalizeCompletedTask(TaskCompleted completed)
     {
+        _plannerParentTasks.Remove(completed.TaskId);
+
         if (completed.GraphId != null)
             Context.System.ActorSelection("/user/taskgraph").Tell(completed);
 
@@ -494,6 +511,30 @@ public sealed class AgentActor : UntypedActor
         if (text.Contains("Thinking") || text.Contains("thinking"))
             return AgentActivityState.Thinking;
         return AgentActivityState.Idle;
+    }
+
+    private bool TryGetSynthesisContext(string parentTaskId, out ActiveTaskContext context)
+    {
+        if (_activeTasks.TryGetValue(parentTaskId, out context!))
+            return true;
+
+        if (_plannerParentTasks.TryGetValue(parentTaskId, out context!))
+            return true;
+
+        return false;
+    }
+
+    private static bool TryGetPlannerParentTaskId(string taskId, out string parentTaskId)
+    {
+        const string plannerSuffix = ".__plan";
+        if (taskId.EndsWith(plannerSuffix, StringComparison.Ordinal))
+        {
+            parentTaskId = taskId[..^plannerSuffix.Length];
+            return true;
+        }
+
+        parentTaskId = string.Empty;
+        return false;
     }
 
     private sealed record RetrievalComplete(TaskAssigned Task, IReadOnlyList<KnowledgeEntry> Entries);
