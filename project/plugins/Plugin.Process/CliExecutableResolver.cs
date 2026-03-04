@@ -69,15 +69,15 @@ public static class CliExecutableResolver
 
     private static string? ResolveRepoLocal(IEnumerable<string> relativeCandidates)
     {
-        var roots = new[]
-        {
-            Directory.GetCurrentDirectory(),
-            AppContext.BaseDirectory
-        }.Distinct(StringComparer.OrdinalIgnoreCase);
+        var roots = EnumerateResolutionRoots()
+            .Distinct(StringComparer.OrdinalIgnoreCase);
 
         foreach (var root in roots)
         {
             string? repoRoot = FindGitRepoRoot(root);
+            string? commonCheckoutRoot = repoRoot != null
+                ? TryResolveGitCommonCheckoutRoot(repoRoot)
+                : null;
 
             foreach (var directory in EnumerateWithParents(root, repoRoot))
             {
@@ -88,9 +88,25 @@ public static class CliExecutableResolver
                         return fullPath;
                 }
             }
+
+            if (commonCheckoutRoot != null)
+            {
+                foreach (var relativePath in relativeCandidates)
+                {
+                    var fullPath = Path.Combine(commonCheckoutRoot, relativePath);
+                    if (File.Exists(fullPath))
+                        return fullPath;
+                }
+            }
         }
 
         return null;
+    }
+
+    private static IEnumerable<string> EnumerateResolutionRoots()
+    {
+        yield return Directory.GetCurrentDirectory();
+        yield return AppContext.BaseDirectory;
     }
 
     private static string? FindGitRepoRoot(string startPath)
@@ -106,6 +122,39 @@ public static class CliExecutableResolver
             current = current.Parent;
         }
         return null;
+    }
+
+    private static string? TryResolveGitCommonCheckoutRoot(string repoRoot)
+    {
+        var gitPath = Path.Combine(repoRoot, ".git");
+        if (!File.Exists(gitPath))
+            return null;
+
+        string? gitDir = null;
+        foreach (var line in File.ReadLines(gitPath))
+        {
+            const string prefix = "gitdir:";
+            if (!line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var candidate = line[prefix.Length..].Trim();
+            if (string.IsNullOrWhiteSpace(candidate))
+                return null;
+
+            gitDir = Path.GetFullPath(Path.IsPathRooted(candidate)
+                ? candidate
+                : Path.Combine(repoRoot, candidate));
+            break;
+        }
+
+        if (gitDir == null)
+            return null;
+
+        var current = new DirectoryInfo(gitDir);
+        while (current != null && !string.Equals(current.Name, ".git", StringComparison.OrdinalIgnoreCase))
+            current = current.Parent;
+
+        return current?.Parent?.FullName;
     }
 
     private static IEnumerable<string> EnumerateWithParents(string start, string? stopAt = null)
