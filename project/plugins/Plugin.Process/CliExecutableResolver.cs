@@ -77,7 +77,9 @@ public static class CliExecutableResolver
 
         foreach (var root in roots)
         {
-            foreach (var directory in EnumerateWithParents(root))
+            string? repoRoot = FindGitRepoRoot(root);
+
+            foreach (var directory in EnumerateWithParents(root, repoRoot))
             {
                 foreach (var relativePath in relativeCandidates)
                 {
@@ -91,12 +93,31 @@ public static class CliExecutableResolver
         return null;
     }
 
-    private static IEnumerable<string> EnumerateWithParents(string start)
+    private static string? FindGitRepoRoot(string startPath)
+    {
+        var current = new DirectoryInfo(Path.GetFullPath(startPath));
+        while (current != null)
+        {
+            var gitPath = Path.Combine(current.FullName, ".git");
+            if (Directory.Exists(gitPath) || File.Exists(gitPath))
+            {
+                return current.FullName;
+            }
+            current = current.Parent;
+        }
+        return null;
+    }
+
+    private static IEnumerable<string> EnumerateWithParents(string start, string? stopAt = null)
     {
         var current = new DirectoryInfo(Path.GetFullPath(start));
         while (current != null)
         {
             yield return current.FullName;
+            if (stopAt != null && string.Equals(current.FullName, stopAt, StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
             current = current.Parent;
         }
     }
