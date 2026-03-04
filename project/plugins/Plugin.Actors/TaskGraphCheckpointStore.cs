@@ -100,7 +100,8 @@ public sealed record TaskGraphCheckpoint(
     IReadOnlyDictionary<string, TaskCompleted> PendingMerge,
     IReadOnlyDictionary<string, PendingValidationCheckpoint> PendingValidation,
     IReadOnlyDictionary<string, int> ValidationAttempts,
-    IReadOnlyList<string> PendingWorkspaceRelease);
+    IReadOnlyList<string> PendingWorkspaceRelease,
+    IReadOnlyList<string> PlannerResolved);
 
 public sealed record PendingValidationCheckpoint(
     TaskCompleted Completed,

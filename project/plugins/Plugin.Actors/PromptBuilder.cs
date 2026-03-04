@@ -91,6 +91,38 @@ public static class PromptBuilder
         return sb.ToString();
     }
 
+    public static string BuildDecompositionPrompt(
+        string taskId,
+        string description,
+        IReadOnlyList<string>? ownedPaths = null,
+        IReadOnlyList<string>? expectedFiles = null)
+    {
+        var sb = new StringBuilder();
+        sb.Append("Planner task for parent task ").Append(taskId).AppendLine(".");
+        sb.AppendLine("You are responsible only for decomposition.");
+        sb.AppendLine("Do not edit files or implement the task.");
+        sb.AppendLine("Return outcome=decompose with a concrete subplan, or outcome=completed with no_op=true when the task should execute directly without decomposition.");
+        sb.AppendLine("Every subtask must declare owned_paths, expected_files, and allow_no_op_completion.");
+
+        if (ownedPaths is { Count: > 0 })
+        {
+            sb.AppendLine("Owned paths:");
+            foreach (var path in ownedPaths)
+                sb.Append("- ").AppendLine(path);
+        }
+
+        if (expectedFiles is { Count: > 0 })
+        {
+            sb.AppendLine("Expected files:");
+            foreach (var file in expectedFiles)
+                sb.Append("- ").AppendLine(file);
+        }
+
+        sb.AppendLine("Task:");
+        sb.AppendLine(description);
+        return sb.ToString();
+    }
+
     /// <summary>
     /// Builds an enriched prompt with knowledge context preceding the task description.
     /// Entries are formatted as structured XML blocks preserving category and relevance metadata.

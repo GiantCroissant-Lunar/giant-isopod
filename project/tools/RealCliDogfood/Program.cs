@@ -33,7 +33,7 @@ if (!File.Exists(runtimesPath))
     return 1;
 }
 
-var tempMemory = Path.Combine(Path.GetTempPath(), $"giant-isopod-dogfood-memory-{Guid.NewGuid():N}");
+var tempMemory = Path.Combine(Path.GetTempPath(), $"giant-isopod-batch-memory-{Guid.NewGuid():N}");
 Directory.CreateDirectory(tempMemory);
 
 try
@@ -65,22 +65,9 @@ try
         MemorySidecarExecutable = "memory-sidecar"
     };
 
-    var bridge = new DogfoodViewportBridge();
+    var bridge = new BatchViewportBridge();
     using var world = new AgentWorldSystem(config, loggerFactory);
     world.SetViewportBridge(bridge);
-
-    var profileJson = """
-{
-  "standard": { "protocol": "AIEOS", "version": "1.2.0" },
-  "metadata": { "entity_id": "", "alias": "dogfood" },
-  "identity": { "names": { "first": "Dogfood", "nickname": "dogfood" } },
-  "capabilities": {
-    "skills": [
-      { "name": "code_edit", "description": "Edit source files", "priority": 1 }
-    ]
-  }
-}
-""";
 
     foreach (var runtimeId in runtimesToUse)
     {
@@ -88,10 +75,10 @@ try
         for (var i = 1; i <= agentCount; i++)
         {
             var agentId = graphManifest == null || runtimesToUse.Length == 1 && agentCount == 1
-                ? $"{runtimeId}-dogfood"
-                : $"{runtimeId}-dogfood-{i}";
+                ? $"{runtimeId}-batch"
+                : $"{runtimeId}-batch-{i}";
             await world.AgentSupervisor.Ask<AgentSpawned>(
-                new SpawnAgent(agentId, profileJson, "builder", RuntimeId: runtimeId),
+                new SpawnAgent(agentId, BuildAgentProfileJson(runtimeId), "builder", RuntimeId: runtimeId),
                 TimeSpan.FromSeconds(10));
         }
     }
@@ -143,7 +130,7 @@ try
 
     var graphId = graphManifest != null
         ? $"{graphManifest.GraphIdPrefix}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}"
-        : $"dogfood-{runtimesToUse[0]}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
+        : $"batch-{runtimesToUse[0]}-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
 
     var edges = graphManifest?.Edges.Select(edge => new TaskEdge(edge.FromTaskId, edge.ToTaskId)).ToArray()
         ?? Array.Empty<TaskEdge>();
@@ -167,7 +154,7 @@ try
         return completed.Results.Values.All(result => result) ? 0 : 4;
     }
 
-    var primaryAgentId = $"{runtimesToUse[0]}-dogfood";
+    var primaryAgentId = $"{runtimesToUse[0]}-batch";
     var transcript = bridge.GetRuntimeTranscript(primaryAgentId);
     var statusHistory = bridge.GetTaskStatusHistory(graphId, "real-task");
 
@@ -280,13 +267,36 @@ static string BuildReviewRubric(string taskDescription)
     return
         $"""
 Review the produced code artifact for exact task fidelity, correctness, and scope control.
-Judge the artifact against the submitted task below, not against any prior dogfood task or default example.
+Judge the artifact against the submitted task below, not against any prior batch run or default example.
 
 Submitted task:
 {taskDescription}
 
 Pass only if the artifact satisfies that submitted task and stays appropriately scoped.
 Fail if the code changes unrelated files, does not implement the submitted task, or claims completion without matching the requested behavior.
+""";
+}
+
+static string BuildAgentProfileJson(string runtimeId)
+{
+    var plannerSkill = string.Equals(runtimeId, "claude-code", StringComparison.OrdinalIgnoreCase)
+        ? """
+      ,
+      { "name": "task_decompose", "description": "Decompose complex tasks into owned path subtasks", "priority": 1 }
+"""
+        : string.Empty;
+
+    return $$"""
+{
+  "standard": { "protocol": "AIEOS", "version": "1.2.0" },
+  "metadata": { "entity_id": "", "alias": "batch-runner" },
+  "identity": { "names": { "first": "Batch", "nickname": "runner" } },
+  "capabilities": {
+    "skills": [
+      { "name": "code_edit", "description": "Edit source files", "priority": 1 }{{plannerSkill}}
+    ]
+  }
+}
 """;
 }
 
@@ -320,7 +330,7 @@ static void PrintArtifactSummary(ArtifactListResult artifacts)
     }
 }
 
-static void PrintBatchSummary(DogfoodViewportBridge bridge, string graphId, IReadOnlyList<TaskNode> nodes)
+static void PrintBatchSummary(BatchViewportBridge bridge, string graphId, IReadOnlyList<TaskNode> nodes)
 {
     Console.WriteLine("Completed assignments:");
     foreach (var (taskId, agentId) in bridge.GetCompletedAssignments(graphId).OrderBy(kv => kv.Key, StringComparer.Ordinal))
@@ -493,7 +503,7 @@ static async Task PrintMemoryDiagnosticsAsync(string sidecarExecutable, string f
 
     var probePut = await RunSidecarCommandAsync(
         sidecarExecutable,
-        ["episodic-put", "diagnostic memory probe", "--file", filePath, "--title", "dogfood-diagnostic", "--tag", "source=dogfood"]);
+        ["episodic-put", "diagnostic memory probe", "--file", filePath, "--title", "batch-diagnostic", "--tag", "source=batch-runner"]);
     Console.WriteLine($"Memory diagnostic put exit={probePut.ExitCode}");
     if (!string.IsNullOrWhiteSpace(probePut.StandardOutput))
         Console.WriteLine(probePut.StandardOutput.Trim());
@@ -549,6 +559,10 @@ static TaskNode[] BuildManifestNodes(GraphManifest manifest)
             RequiredValidators: requiredValidators,
             MaxValidationAttempts: node.MaxValidationAttempts ?? 2,
             PreferredRuntimeId: node.PreferredRuntimeId,
+            PlannerRequiredCapabilities: node.PlannerRequiredCapabilities is { Count: > 0 }
+                ? new HashSet<string>(node.PlannerRequiredCapabilities, StringComparer.Ordinal)
+                : null,
+            PreferredPlannerRuntimeId: node.PreferredPlannerRuntimeId,
             OwnedPaths: node.OwnedPaths,
             ExpectedFiles: node.ExpectedFiles,
             AllowNoOpCompletion: node.AllowNoOpCompletion ?? false);
@@ -636,6 +650,8 @@ sealed record GraphManifestNode(
     [property: JsonPropertyName("description")] string Description,
     [property: JsonPropertyName("required_capabilities")] IReadOnlyList<string> RequiredCapabilities,
     [property: JsonPropertyName("preferred_runtime_id")] string? PreferredRuntimeId,
+    [property: JsonPropertyName("planner_required_capabilities")] IReadOnlyList<string>? PlannerRequiredCapabilities,
+    [property: JsonPropertyName("preferred_planner_runtime_id")] string? PreferredPlannerRuntimeId,
     [property: JsonPropertyName("required_validators")] IReadOnlyList<string>? RequiredValidators,
     [property: JsonPropertyName("max_validation_attempts")] int? MaxValidationAttempts,
     [property: JsonPropertyName("owned_paths")] IReadOnlyList<string>? OwnedPaths,
@@ -652,7 +668,7 @@ sealed record GraphManifestValidator(
     [property: JsonPropertyName("rubric")] string Rubric,
     [property: JsonPropertyName("applies_to")] ArtifactType AppliesTo);
 
-sealed class DogfoodViewportBridge : IViewportBridge
+sealed class BatchViewportBridge : IViewportBridge
 {
     private readonly ConcurrentDictionary<string, TaskCompletionSource<TaskGraphCompletedEvent>> _graphCompletions = new();
     private readonly ConcurrentDictionary<string, TaskNodeStatus> _taskStatuses = new();
@@ -737,6 +753,11 @@ sealed class DogfoodViewportBridge : IViewportBridge
         }
 
         Console.WriteLine($"[runtime] {agentId}: {line}");
+    }
+
+    public void PublishAgUiEvent(string agentId, object agUiEvent)
+    {
+        Console.WriteLine($"[ag-ui] {agentId}: {agUiEvent.GetType().Name}");
     }
 
     public void PublishTaskGraphSubmitted(string graphId, IReadOnlyList<TaskNode> nodes, IReadOnlyList<TaskEdge> edges)

@@ -1,6 +1,9 @@
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
+using GiantIsopod.Contracts.Protocol.A2A;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace GiantIsopod.Plugin.Actors;
 
@@ -11,6 +14,7 @@ namespace GiantIsopod.Plugin.Actors;
 /// </summary>
 public sealed class A2AActor : UntypedActor
 {
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
     private readonly IActorRef _dispatch;
     private readonly IActorRef _registry;
     private readonly ILogger<A2AActor> _logger;
@@ -25,11 +29,19 @@ public sealed class A2AActor : UntypedActor
         _logger = logger;
     }
 
+    private static JsonSerializerOptions CreateJsonOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
+    }
+
     protected override void PreStart()
     {
         // Subscribe to task completion events
         Context.System.EventStream.Subscribe(Self, typeof(TaskCompleted));
         Context.System.EventStream.Subscribe(Self, typeof(TaskFailed));
+        Context.System.EventStream.Subscribe(Self, typeof(TaskAssigned));
         _logger.LogInformation("A2AActor started");
     }
 
@@ -52,8 +64,9 @@ public sealed class A2AActor : UntypedActor
             case TaskCompleted completed:
                 if (_tasks.TryGetValue(completed.TaskId, out var tc))
                 {
-                    tc.Status = "completed";
-                    tc.Summary = completed.Summary;
+                    tc.Status = A2ATaskStatus.Completed;
+                    tc.CompletionSummary = completed.Summary;
+                    tc.Artifacts = MapArtifacts(completed.Artifacts);
                     _logger.LogDebug("A2A task {TaskId} completed", completed.TaskId);
                 }
                 break;
@@ -61,8 +74,8 @@ public sealed class A2AActor : UntypedActor
             case TaskFailed failed:
                 if (_tasks.TryGetValue(failed.TaskId, out var tf))
                 {
-                    tf.Status = "failed";
-                    tf.Summary = failed.Reason;
+                    tf.Status = A2ATaskStatus.Failed;
+                    tf.CompletionSummary = failed.Reason;
                     _logger.LogDebug("A2A task {TaskId} failed: {Reason}", failed.TaskId, failed.Reason);
                 }
                 break;
@@ -70,7 +83,7 @@ public sealed class A2AActor : UntypedActor
             case TaskAssigned assigned:
                 if (_tasks.TryGetValue(assigned.TaskId, out var ta))
                 {
-                    ta.Status = "working";
+                    ta.Status = A2ATaskStatus.Working;
                     ta.AssignedAgentId = assigned.AgentId;
                 }
                 break;
@@ -84,7 +97,13 @@ public sealed class A2AActor : UntypedActor
             TaskId = sendTask.TaskId,
             Description = sendTask.Description,
             TargetAgentId = sendTask.TargetAgentId,
-            Status = "submitted"
+            Status = A2ATaskStatus.Submitted,
+            History =
+            [
+                new A2AMessage(
+                    "user",
+                    BuildInitialParts(sendTask.Description, sendTask.PayloadJson))
+            ]
         };
 
         _logger.LogInformation("A2A task submitted: {TaskId} → {TargetAgentId}", sendTask.TaskId, sendTask.TargetAgentId);
@@ -126,15 +145,75 @@ public sealed class A2AActor : UntypedActor
     private string BuildStatusJson(string taskId)
     {
         if (!_tasks.TryGetValue(taskId, out var task))
-            return $"{{\"taskId\":\"{taskId}\",\"status\":\"unknown\"}}";
+        {
+            var unknown = new A2ATask(
+                taskId,
+                A2ATaskStatus.Failed,
+                History:
+                [
+                    new A2AMessage("system", [new TextPart("Unknown task id.")])
+                ]);
+            return JsonSerializer.Serialize(unknown, JsonOptions);
+        }
 
-        return $"{{\"taskId\":\"{task.TaskId}\",\"status\":\"{task.Status}\"" +
-               (task.AssignedAgentId != null ? $",\"agentId\":\"{task.AssignedAgentId}\"" : "") +
-               (task.Summary != null ? $",\"summary\":\"{EscapeJson(task.Summary)}\"" : "") +
-               "}";
+        var history = new List<A2AMessage>(task.History);
+        if (!string.IsNullOrWhiteSpace(task.AssignedAgentId) || !string.IsNullOrWhiteSpace(task.CompletionSummary))
+        {
+            var parts = new List<A2APart>();
+            if (!string.IsNullOrWhiteSpace(task.AssignedAgentId))
+                parts.Add(new DataPart("application/json", new Dictionary<string, object?> { ["assignedAgentId"] = task.AssignedAgentId }));
+            if (!string.IsNullOrWhiteSpace(task.CompletionSummary))
+                parts.Add(new TextPart(task.CompletionSummary!));
+            history.Add(new A2AMessage("assistant", parts));
+        }
+
+        var a2aTask = new A2ATask(
+            task.TaskId,
+            task.Status,
+            History: history,
+            Artifacts: task.Artifacts);
+        return JsonSerializer.Serialize(a2aTask, JsonOptions);
     }
 
-    private static string EscapeJson(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    private static IReadOnlyList<A2APart> BuildInitialParts(string description, string? payloadJson)
+    {
+        var parts = new List<A2APart> { new TextPart(description) };
+        if (!string.IsNullOrWhiteSpace(payloadJson))
+        {
+            parts.Add(new DataPart(
+                "application/json",
+                new Dictionary<string, object?> { ["payloadJson"] = payloadJson }));
+        }
+        return parts;
+    }
+
+    private static IReadOnlyList<A2AArtifact>? MapArtifacts(IReadOnlyList<ArtifactRef>? artifacts)
+    {
+        if (artifacts is not { Count: > 0 })
+            return null;
+
+        return artifacts.Select(artifact =>
+        {
+            var parts = new List<A2APart>
+            {
+                new DataPart("application/json", new Dictionary<string, object?>
+                {
+                    ["type"] = artifact.Type.ToString(),
+                    ["format"] = artifact.Format,
+                    ["uri"] = artifact.Uri,
+                    ["contentHash"] = artifact.ContentHash
+                })
+            };
+
+            return new A2AArtifact(
+                artifact.ArtifactId,
+                artifact.Metadata != null && artifact.Metadata.TryGetValue("relativePath", out var relativePath)
+                    ? relativePath
+                    : artifact.ArtifactId,
+                parts,
+                artifact.Type.ToString());
+        }).ToArray();
+    }
 
     private sealed class A2AInternalTask
     {
@@ -142,8 +221,10 @@ public sealed class A2AActor : UntypedActor
         public required string Description { get; set; }
         public string? TargetAgentId { get; set; }
         public string? AssignedAgentId { get; set; }
-        public string Status { get; set; } = "submitted";
-        public string? Summary { get; set; }
+        public A2ATaskStatus Status { get; set; } = A2ATaskStatus.Submitted;
+        public List<A2AMessage> History { get; set; } = new();
+        public string? CompletionSummary { get; set; }
+        public IReadOnlyList<A2AArtifact>? Artifacts { get; set; }
     }
 
 }

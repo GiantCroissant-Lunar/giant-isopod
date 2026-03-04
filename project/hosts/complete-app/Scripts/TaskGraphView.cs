@@ -21,6 +21,7 @@ public partial class TaskGraphView : Control
     {
         [TaskNodeStatus.Pending] = new Color(0.5f, 0.5f, 0.5f),     // gray
         [TaskNodeStatus.Ready] = new Color(0.3f, 0.5f, 0.9f),       // blue
+        [TaskNodeStatus.Planning] = new Color(0.6f, 0.4f, 0.9f),    // violet
         [TaskNodeStatus.Dispatched] = new Color(0.9f, 0.8f, 0.2f),  // yellow
         [TaskNodeStatus.Completed] = new Color(0.3f, 0.8f, 0.3f),   // green
         [TaskNodeStatus.Failed] = new Color(0.9f, 0.25f, 0.25f),    // red

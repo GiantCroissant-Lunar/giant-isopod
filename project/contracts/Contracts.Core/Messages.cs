@@ -79,6 +79,8 @@ public record TaskNode(
     IReadOnlyList<string>? RequiredValidators = null,
     int MaxValidationAttempts = 2,
     string? PreferredRuntimeId = null,
+    IReadOnlySet<string>? PlannerRequiredCapabilities = null,
+    string? PreferredPlannerRuntimeId = null,
     IReadOnlyList<string>? OwnedPaths = null,
     IReadOnlyList<string>? ExpectedFiles = null,
     bool AllowNoOpCompletion = false);
@@ -99,7 +101,7 @@ public record TaskReadyForDispatch(
 public record TaskNodeCompleted(string GraphId, string TaskId, bool Success, string? Summary = null);
 public record TaskGraphCompleted(string GraphId, IReadOnlyDictionary<string, bool> Results);
 
-public enum TaskNodeStatus { Pending, Ready, Dispatched, Completed, Failed, Cancelled, WaitingForSubtasks, Synthesizing, Validating }
+public enum TaskNodeStatus { Pending, Ready, Planning, Dispatched, Completed, Failed, Cancelled, WaitingForSubtasks, Synthesizing, Validating }
 
 // ── Task graph viewport notifications ──
 

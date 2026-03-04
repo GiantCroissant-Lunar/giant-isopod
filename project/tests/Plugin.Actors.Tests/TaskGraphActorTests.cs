@@ -178,6 +178,60 @@ public class TaskGraphActorTests : TestKit
         Assert.True(completed.Results["t1"]);
     }
 
+    [Fact]
+    public void PlannerEnabledTask_DispatchesPlannerBeforeImplementation()
+    {
+        var node = new TaskNode(
+            "t-plan",
+            "complex task",
+            new HashSet<string> { "code_edit" },
+            PlannerRequiredCapabilities: new HashSet<string> { "task_decompose" },
+            PreferredPlannerRuntimeId: "claude-code");
+
+        _taskGraph.Tell(MakeGraph("g-plan-first", new[] { node }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+
+        var plannerDispatch = _dispatchProbe.ExpectMsg<TaskRequest>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t-plan.__plan", plannerDispatch.TaskId);
+        Assert.Equal("claude-code", plannerDispatch.PreferredRuntimeId);
+        Assert.Contains("task_decompose", plannerDispatch.RequiredCapabilities);
+
+        _taskGraph.Tell(new TaskCompleted("t-plan.__plan", "planner-1", true, "execute directly", "g-plan-first"));
+
+        var implementationDispatch = _dispatchProbe.ExpectMsg<TaskRequest>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t-plan", implementationDispatch.TaskId);
+        Assert.Contains("code_edit", implementationDispatch.RequiredCapabilities);
+    }
+
+    [Fact]
+    public void PlannerEnabledTask_SubplanFromPlannerInsertsSubtasks()
+    {
+        _taskGraph.Tell(MakeGraph("g-plan-sub", new[]
+        {
+            new TaskNode(
+                "t1",
+                "decompose me",
+                new HashSet<string> { "code_edit" },
+                PlannerRequiredCapabilities: new HashSet<string> { "task_decompose" },
+                PreferredPlannerRuntimeId: "claude-code")
+        }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+
+        _dispatchProbe.ExpectMsg<TaskRequest>(msg => msg.TaskId == "t1.__plan", TimeSpan.FromSeconds(5));
+
+        var subplan = MakeSubplan("t1", new[]
+        {
+            Proposal("sub-a", caps: "cap-1"),
+            Proposal("sub-b", dependsOn: new[] { "0" }, caps: "cap-2"),
+        });
+
+        _taskGraph.Tell(new TaskCompleted("t1.__plan", "planner-1", true, "decompose", "g-plan-sub", Subplan: subplan));
+
+        var subtaskRequest = _dispatchProbe.ExpectMsg<TaskRequest>(msg => msg.TaskId == "t1/sub-0", TimeSpan.FromSeconds(5));
+        Assert.Contains("cap-1", subtaskRequest.RequiredCapabilities);
+        _dispatchProbe.ExpectNoMsg(TimeSpan.FromMilliseconds(200));
+    }
+
     // ── Decomposition acceptance ──
 
     [Fact]

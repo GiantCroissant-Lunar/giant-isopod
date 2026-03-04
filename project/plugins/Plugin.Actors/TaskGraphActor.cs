@@ -14,6 +14,7 @@ namespace GiantIsopod.Plugin.Actors;
 /// </summary>
 public sealed class TaskGraphActor : UntypedActor, IWithTimers
 {
+    private const string PlannerTaskSuffix = ".__plan";
     private readonly IActorRef _dispatch;
     private readonly IActorRef _agentSupervisor;
     private readonly IActorRef _viewport;
@@ -138,6 +139,9 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
     private void HandleTaskCompleted(TaskCompleted completed)
     {
+        if (TryHandlePlannerTaskCompleted(completed))
+            return;
+
         if (!TryFindGraph(completed.TaskId, completed.GraphId, out var graphId, out var state))
             return;
 
@@ -670,6 +674,9 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
     private void HandleTaskFailed(TaskFailed failed)
     {
+        if (TryHandlePlannerTaskFailed(failed))
+            return;
+
         if (!TryFindGraph(failed.TaskId, failed.GraphId, out var graphId, out var state))
             return;
 
@@ -757,6 +764,26 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             if (deps is not null && deps.Any(d => state.Status[d] != TaskNodeStatus.Completed))
                 continue;
 
+            if (node.PlannerRequiredCapabilities is { Count: > 0 } && !state.PlannerResolved.Contains(taskId))
+            {
+                state.Status[taskId] = TaskNodeStatus.Planning;
+                _viewport.Tell(new NotifyTaskNodeStatusChanged(state.GraphId, taskId, TaskNodeStatus.Planning));
+                _logger.LogDebug("Graph {GraphId}: dispatching planner task for {TaskId}", state.GraphId, taskId);
+
+                var plannerRequest = new TaskRequest(
+                    BuildPlannerTaskId(taskId),
+                    PromptBuilder.BuildDecompositionPrompt(taskId, node.Description, node.OwnedPaths, node.ExpectedFiles),
+                    node.PlannerRequiredCapabilities,
+                    state.GraphId,
+                    node.PreferredPlannerRuntimeId,
+                    node.OwnedPaths,
+                    node.ExpectedFiles,
+                    AllowNoOpCompletion: true);
+
+                _dispatch.Tell(plannerRequest);
+                continue;
+            }
+
             // All deps satisfied — mark ready and dispatch
             state.Status[taskId] = TaskNodeStatus.Dispatched;
             _viewport.Tell(new NotifyTaskNodeStatusChanged(state.GraphId, taskId, TaskNodeStatus.Dispatched));
@@ -800,7 +827,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
             foreach (var dep in dependents)
             {
-                if (state.Status[dep] is TaskNodeStatus.Pending or TaskNodeStatus.Ready)
+                if (state.Status[dep] is TaskNodeStatus.Pending or TaskNodeStatus.Ready or TaskNodeStatus.Planning)
                 {
                     state.Status[dep] = TaskNodeStatus.Cancelled;
                     _viewport.Tell(new NotifyTaskNodeStatusChanged(state.GraphId, dep, TaskNodeStatus.Cancelled));
@@ -823,10 +850,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         foreach (var taskId in state.Status.Keys.ToList())
         {
             var status = state.Status[taskId];
-            if (status is TaskNodeStatus.Pending or TaskNodeStatus.Ready or TaskNodeStatus.Dispatched
+            if (status is TaskNodeStatus.Pending or TaskNodeStatus.Ready or TaskNodeStatus.Planning or TaskNodeStatus.Dispatched
                 or TaskNodeStatus.WaitingForSubtasks or TaskNodeStatus.Synthesizing or TaskNodeStatus.Validating)
             {
-                state.Status[taskId] = status is TaskNodeStatus.Dispatched
+                state.Status[taskId] = status is TaskNodeStatus.Planning or TaskNodeStatus.Dispatched
                     or TaskNodeStatus.WaitingForSubtasks or TaskNodeStatus.Synthesizing or TaskNodeStatus.Validating
                     ? TaskNodeStatus.Failed
                     : TaskNodeStatus.Cancelled;
@@ -969,6 +996,80 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         return sb.ToString();
     }
 
+    private bool TryHandlePlannerTaskCompleted(TaskCompleted completed)
+    {
+        if (!TryResolvePlannerTask(completed.TaskId, completed.GraphId, out var graphId, out var state, out var parentTaskId))
+            return false;
+
+        state.PlannerResolved.Add(parentTaskId);
+        state.AssignedAgent[parentTaskId] = completed.AgentId;
+
+        if (completed.Subplan is not null)
+        {
+            var parentCompleted = completed with { TaskId = parentTaskId };
+            HandleDecomposition(graphId, state, parentCompleted);
+        }
+        else
+        {
+            state.Status[parentTaskId] = TaskNodeStatus.Pending;
+            _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, parentTaskId, TaskNodeStatus.Pending, completed.AgentId));
+            _logger.LogInformation("Graph {GraphId}: planner chose direct execution for task {TaskId}",
+                graphId, parentTaskId);
+            DispatchReadyNodes(state);
+            PersistGraphState(state);
+        }
+
+        _workspace.Tell(new ReleaseWorkspace(completed.TaskId));
+        return true;
+    }
+
+    private bool TryHandlePlannerTaskFailed(TaskFailed failed)
+    {
+        if (!TryResolvePlannerTask(failed.TaskId, failed.GraphId, out var graphId, out var state, out var parentTaskId))
+            return false;
+
+        state.PlannerResolved.Add(parentTaskId);
+        state.Status[parentTaskId] = TaskNodeStatus.Pending;
+        _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, parentTaskId, TaskNodeStatus.Pending));
+        _logger.LogWarning("Graph {GraphId}: planner failed for task {TaskId}, falling back to direct execution: {Reason}",
+            graphId, parentTaskId, failed.Reason);
+        StorePlanningFeedback(
+            "planning-pitfall",
+            $"Planning pitfall for graph {graphId}, task {parentTaskId}: planner task failed. reason={failed.Reason}. Falling back to direct execution.",
+            new Dictionary<string, string>
+            {
+                ["kind"] = "planner_failure",
+                ["graphId"] = graphId,
+                ["taskId"] = parentTaskId
+            });
+
+        DispatchReadyNodes(state);
+        PersistGraphState(state);
+        _workspace.Tell(new ReleaseWorkspace(failed.TaskId));
+        return true;
+    }
+
+    private bool TryResolvePlannerTask(string taskId, string? graphId, out string foundGraphId, out GraphState state, out string parentTaskId)
+    {
+        parentTaskId = string.Empty;
+        if (!taskId.EndsWith(PlannerTaskSuffix, StringComparison.Ordinal))
+        {
+            foundGraphId = string.Empty;
+            state = null!;
+            return false;
+        }
+
+        parentTaskId = taskId[..^PlannerTaskSuffix.Length];
+        if (TryFindGraph(parentTaskId, graphId, out foundGraphId, out state))
+            return true;
+
+        foundGraphId = string.Empty;
+        state = null!;
+        return false;
+    }
+
+    private static string BuildPlannerTaskId(string taskId) => $"{taskId}{PlannerTaskSuffix}";
+
     // ── Constants ──
 
     internal const int MaxDepth = 3;
@@ -995,6 +1096,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         public Dictionary<string, PendingValidationEntry> PendingValidation { get; } = new();
         public Dictionary<string, int> ValidationAttempts { get; } = new();
         public HashSet<string> PendingWorkspaceRelease { get; } = new();
+        public HashSet<string> PlannerResolved { get; } = new();
 
         /// <summary>
         /// Builds graph state from a SubmitTaskGraph message.
@@ -1108,7 +1210,8 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                         kv.Value.RemainingArtifacts,
                         kv.Value.AllResults.ToArray())),
                 new Dictionary<string, int>(ValidationAttempts),
-                PendingWorkspaceRelease.OrderBy(id => id).ToArray());
+                PendingWorkspaceRelease.OrderBy(id => id).ToArray(),
+                PlannerResolved.OrderBy(id => id).ToArray());
         }
 
         public static GraphState FromCheckpoint(TaskGraphCheckpoint checkpoint, ILogger logger)
@@ -1147,6 +1250,9 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             foreach (var (taskId, attempts) in checkpoint.ValidationAttempts)
                 state.ValidationAttempts[taskId] = attempts;
 
+            foreach (var taskId in checkpoint.PlannerResolved)
+                state.PlannerResolved.Add(taskId);
+
             return state;
         }
 
@@ -1155,6 +1261,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             return status switch
             {
                 TaskNodeStatus.Pending => TaskNodeStatus.Pending,
+                TaskNodeStatus.Planning => TaskNodeStatus.Pending,
                 TaskNodeStatus.Completed => TaskNodeStatus.Completed,
                 TaskNodeStatus.Failed => TaskNodeStatus.Failed,
                 TaskNodeStatus.Cancelled => TaskNodeStatus.Cancelled,
