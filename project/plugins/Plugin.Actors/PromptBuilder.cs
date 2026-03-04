@@ -94,6 +94,7 @@ public static class PromptBuilder
     public static string BuildDecompositionPrompt(
         string taskId,
         string description,
+        IReadOnlySet<string>? executableSkills = null,
         IReadOnlyList<string>? ownedPaths = null,
         IReadOnlyList<string>? expectedFiles = null)
     {
@@ -103,6 +104,13 @@ public static class PromptBuilder
         sb.AppendLine("Do not edit files or implement the task.");
         sb.AppendLine("Return outcome=decompose with a concrete subplan, or outcome=completed with no_op=true when the task should execute directly without decomposition.");
         sb.AppendLine("Every subtask must declare owned_paths, expected_files, and allow_no_op_completion.");
+        if (executableSkills is { Count: > 0 })
+        {
+            sb.AppendLine("Use only these existing executor skill ids in subtask required_capabilities:");
+            foreach (var skill in executableSkills)
+                sb.Append("- ").AppendLine(skill);
+            sb.AppendLine("Do not invent new capability names like coding, implementation, or editor.");
+        }
 
         if (ownedPaths is { Count: > 0 })
         {
@@ -152,7 +160,7 @@ public static class PromptBuilder
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"completed\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[\"Code\"],\"failure_reason\":null,\"subplan\":null}");
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"completed\",\"summary\":\"string\",\"no_op\":true,\"artifacts_expected\":[],\"failure_reason\":null,\"subplan\":null}");
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"failed\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[],\"failure_reason\":\"string\",\"subplan\":null}");
-        sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"decompose\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[],\"failure_reason\":null,\"subplan\":{\"reason\":\"TooLarge\",\"subtasks\":[{\"description\":\"string\",\"required_capabilities\":[\"coding\"],\"depends_on_subtasks\":[],\"budget_cap_seconds\":300,\"expected_output_types\":[\"Code\"],\"owned_paths\":[\"project/path/file.cs\"],\"expected_files\":[\"project/path/file.cs\"],\"allow_no_op_completion\":false}],\"stop_when\":{\"kind\":\"AllSubtasksComplete\",\"description\":\"string\"}}}");
+        sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"decompose\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[],\"failure_reason\":null,\"subplan\":{\"reason\":\"TooLarge\",\"subtasks\":[{\"description\":\"string\",\"required_capabilities\":[\"code_edit\"],\"depends_on_subtasks\":[],\"budget_cap_seconds\":300,\"expected_output_types\":[\"Code\"],\"owned_paths\":[\"project/path/file.cs\"],\"expected_files\":[\"project/path/file.cs\"],\"allow_no_op_completion\":false}],\"stop_when\":{\"kind\":\"AllSubtasksComplete\",\"description\":\"string\"}}}");
         sb.AppendLine("Example:");
         sb.AppendLine($"<{ResultEnvelopeTag}>");
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"completed\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[\"Code\"],\"failure_reason\":null,\"subplan\":null}");

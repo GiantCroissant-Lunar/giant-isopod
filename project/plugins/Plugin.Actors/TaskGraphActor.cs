@@ -772,7 +772,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
                 var plannerRequest = new TaskRequest(
                     BuildPlannerTaskId(taskId),
-                    PromptBuilder.BuildDecompositionPrompt(taskId, node.Description, node.OwnedPaths, node.ExpectedFiles),
+                    PromptBuilder.BuildDecompositionPrompt(taskId, node.Description, node.RequiredCapabilities, node.OwnedPaths, node.ExpectedFiles),
                     node.PlannerRequiredCapabilities,
                     state.GraphId,
                     node.PreferredPlannerRuntimeId,
