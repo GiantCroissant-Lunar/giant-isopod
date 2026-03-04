@@ -40,8 +40,11 @@ public sealed class AgUiAdapter
             _runStarted = true;
         }
 
+        if (TryMapKimiWireMarker(rpcEventLine, events))
+        {
+        }
         // Detect tool_use start
-        if (rpcEventLine.Contains("\"tool_use\"") || rpcEventLine.Contains("tool_use"))
+        else if (rpcEventLine.Contains("\"tool_use\"") || rpcEventLine.Contains("tool_use"))
         {
             var toolName = ExtractToolName(rpcEventLine);
             _toolCallCounter++;
@@ -104,6 +107,62 @@ public sealed class AgUiAdapter
         }
 
         return events;
+    }
+
+    private bool TryMapKimiWireMarker(string line, List<object> events)
+    {
+        if (line.StartsWith("[kimi-wire] step_begin ", StringComparison.Ordinal))
+        {
+            if (_currentRunId != null)
+            {
+                var stepName = line["[kimi-wire] step_begin ".Length..].Trim();
+                events.Add(new StepStartedEvent($"{_agentId}-thread", _currentRunId, stepName));
+            }
+
+            return true;
+        }
+
+        if (line.StartsWith("[kimi-wire] tool_call ", StringComparison.Ordinal))
+        {
+            var toolName = line["[kimi-wire] tool_call ".Length..].Trim();
+            _toolCallCounter++;
+            _currentToolCallId = $"{_agentId}-tc-{_toolCallCounter}";
+
+            if (_currentMessageId != null)
+            {
+                events.Add(new TextMessageEndEvent(_currentMessageId));
+                _currentMessageId = null;
+            }
+
+            events.Add(new ToolCallStartEvent(_currentToolCallId, toolName, _currentMessageId));
+            return true;
+        }
+
+        if (line.StartsWith("[kimi-wire] tool_result ", StringComparison.Ordinal))
+        {
+            if (_currentToolCallId != null)
+            {
+                var result = line["[kimi-wire] tool_result ".Length..].Trim();
+                events.Add(new ToolCallResultEvent(_currentToolCallId, result));
+                events.Add(new ToolCallEndEvent(_currentToolCallId));
+                _currentToolCallId = null;
+            }
+
+            return true;
+        }
+
+        if (line.StartsWith("[kimi-wire] turn_end", StringComparison.Ordinal))
+        {
+            if (_currentMessageId != null)
+            {
+                events.Add(new TextMessageEndEvent(_currentMessageId));
+                _currentMessageId = null;
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

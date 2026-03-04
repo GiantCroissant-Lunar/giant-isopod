@@ -177,6 +177,30 @@ public class AgUiAdapterTests
         var toolStart = events.OfType<ToolCallStartEvent>().Single();
         Assert.Equal("unknown_tool", toolStart.ToolName);
     }
+
+    [Fact]
+    public void KimiWireStepBegin_ProducesStepStartedEvent()
+    {
+        _adapter.MapRpcEventToAgUiEvents("some text");
+        var events = _adapter.MapRpcEventToAgUiEvents("[kimi-wire] step_begin #2");
+
+        var step = events.OfType<StepStartedEvent>().Single();
+        Assert.Equal("agent-1-run-1", step.RunId);
+        Assert.Equal("#2", step.StepName);
+    }
+
+    [Fact]
+    public void KimiWireToolMarkers_ProduceToolLifecycleEvents()
+    {
+        _adapter.MapRpcEventToAgUiEvents("some text");
+        var startEvents = _adapter.MapRpcEventToAgUiEvents("[kimi-wire] tool_call WriteFile");
+        var resultEvents = _adapter.MapRpcEventToAgUiEvents("[kimi-wire] tool_result ok");
+
+        var toolStart = startEvents.OfType<ToolCallStartEvent>().Single();
+        Assert.Equal("WriteFile", toolStart.ToolName);
+        Assert.Contains(resultEvents, e => e is ToolCallResultEvent result && result.Result == "ok");
+        Assert.Contains(resultEvents, e => e is ToolCallEndEvent);
+    }
 }
 
 public class AgUiAdapterStaticMappingTests
