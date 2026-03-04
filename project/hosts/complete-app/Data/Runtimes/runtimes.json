@@ -140,6 +140,30 @@
         "PYTHONUTF8": "1"
       },
       "defaults": {}
+    },
+    {
+      "type": "cli",
+      "id": "kimi-impl",
+      "displayName": "Kimi Implementation",
+      "executable": "kimi",
+      "args": ["--print", "--final-message-only", "--yolo", "--agent", "default", "--output-format", "text", "-p", "{prompt}"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "defaults": {}
+    },
+    {
+      "type": "cli",
+      "id": "kimi-debug-impl",
+      "displayName": "Kimi Debug Implementation",
+      "executable": "kimi",
+      "args": ["--print", "--yolo", "--agent", "default", "--output-format", "text", "-p", "{prompt}"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "defaults": {}
     }
   ]
 }

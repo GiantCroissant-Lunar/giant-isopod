@@ -342,7 +342,7 @@ static IReadOnlyList<(string Name, string Description, int Priority)> BuildRunti
         ("code_edit", "Edit source files", 1)
     };
 
-    if (string.Equals(runtimeId, "kimi", StringComparison.OrdinalIgnoreCase))
+    if (runtimeId.StartsWith("kimi", StringComparison.OrdinalIgnoreCase))
     {
         skills.Add(("implementation", "Implement production code changes", 1));
     }

@@ -78,6 +78,8 @@ public sealed class PromptTransportRuntimeMiddleware : IRuntimeExecutionMiddlewa
         {
             "gemini" => BuildGeminiPrompt(context.EffectivePrompt),
             "copilot" => BuildCopilotPrompt(context.EffectivePrompt),
+            "kimi-impl" => BuildKimiImplementationPrompt(context.EffectivePrompt),
+            "kimi-debug-impl" => BuildKimiImplementationPrompt(context.EffectivePrompt),
             _ => context.EffectivePrompt
         };
 
@@ -114,6 +116,46 @@ Return the final giant-isopod result envelope in the same response after you fin
 
 {{prompt}}
 """;
+    }
+
+    private static string BuildKimiImplementationPrompt(string prompt)
+    {
+        var taskId = ExtractValue(prompt, "Task ID:") ?? "real-task";
+        var taskBody = ExtractSection(prompt, "Task:", "Result contract:");
+        var ownedPaths = ExtractList(prompt, "Owned paths:", "Expected files:", "Allow no-op completion:");
+        var expectedFiles = ExtractList(prompt, "Expected files:", "Allow no-op completion:", "Task:");
+        var targetFiles = expectedFiles.Count > 0 ? expectedFiles : ownedPaths;
+
+        var lines = new List<string>
+        {
+            $"Task ID: {taskId}",
+            "Implementation mode: execute the exact file-scoped edit and stop as soon as the requested edits are complete.",
+            "Do not browse unrelated files, do not read tests, do not inspect tool runners, and do not search for a different task.",
+            "Use only the listed target files unless the task text explicitly requires something else.",
+            "After you finish the required edits, immediately output the final giant-isopod result envelope as the last thing in your response.",
+            "Do not continue exploring or re-reading files after the edits are done."
+        };
+
+        if (!string.IsNullOrWhiteSpace(taskBody))
+        {
+            lines.Add("Task:");
+            lines.Add(taskBody.Trim());
+        }
+
+        if (targetFiles.Count > 0)
+        {
+            lines.Add("Target files:");
+            lines.AddRange(targetFiles.Select(path => $"- {path}"));
+        }
+
+        lines.Add("Completion rules:");
+        lines.Add("- If you make the requested edits, return outcome=\"completed\" with artifacts_expected=[\"Code\"].");
+        lines.Add("- If the task is already satisfied and no-op completion is allowed, return outcome=\"completed\" with no_op=true and artifacts_expected=[].");
+        lines.Add("- If you cannot complete the task exactly, return outcome=\"failed\" with a concrete failure_reason.");
+        lines.Add("- The last line of your response must be exactly one <giant-isopod-result> envelope.");
+        lines.Add($"<giant-isopod-result>{{\"task_id\":\"{taskId}\",\"outcome\":\"completed\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[\"Code\"],\"failure_reason\":null,\"subplan\":null}}</giant-isopod-result>");
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     private static string? BuildCompactOneShotPrompt(string prompt)
@@ -375,6 +417,8 @@ public sealed class RetryTimeoutRuntimeMiddleware : IRuntimeExecutionMiddleware
         {
             "copilot" => TimeSpan.FromSeconds(60),
             "gemini" => TimeSpan.FromSeconds(120),
+            "kimi-impl" => TimeSpan.FromSeconds(90),
+            "kimi-debug-impl" => TimeSpan.FromSeconds(90),
             _ => TimeSpan.FromMinutes(2)
         };
     }
@@ -385,6 +429,8 @@ public sealed class RetryTimeoutRuntimeMiddleware : IRuntimeExecutionMiddleware
         {
             "gemini" => 1,
             "copilot" => 2,
+            "kimi-impl" => 2,
+            "kimi-debug-impl" => 1,
             _ => context.MaxAttempts
         };
 
