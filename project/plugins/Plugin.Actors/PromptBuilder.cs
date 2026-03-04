@@ -98,6 +98,7 @@ public static class PromptBuilder
         string description,
         IReadOnlyList<KnowledgeEntry>? planningEntries = null,
         IReadOnlySet<string>? executableSkills = null,
+        IReadOnlyList<string>? availableExecutorRuntimeIds = null,
         IReadOnlyList<string>? ownedPaths = null,
         IReadOnlyList<string>? expectedFiles = null)
     {
@@ -134,6 +135,15 @@ public static class PromptBuilder
             foreach (var skill in executableSkills)
                 sb.Append("- ").AppendLine(skill);
             sb.AppendLine("Do not invent new capability names like coding, implementation, or editor.");
+        }
+
+        if (availableExecutorRuntimeIds is { Count: > 0 })
+        {
+            sb.AppendLine("Available executor runtimes for planner-produced subtasks:");
+            foreach (var runtimeId in availableExecutorRuntimeIds)
+                sb.Append("- ").AppendLine(runtimeId);
+            sb.AppendLine("Set preferred_runtime_id on each subtask when one of these runtimes is a better fit.");
+            sb.AppendLine("Prefer pi or kimi-wire for executor subtasks when they fit; avoid assigning claude-code to executor work unless no other listed runtime is suitable.");
         }
 
         if (ownedPaths is { Count: > 0 })
@@ -179,13 +189,14 @@ public static class PromptBuilder
         sb.AppendLine("- Always include artifacts_expected as an array of artifact types you changed or expect to produce. Use [] when there are none.");
         sb.AppendLine("- If the task should be decomposed, populate subplan instead of guessing.");
         sb.AppendLine("- Every subtask in a subplan must declare owned_paths, expected_files, and allow_no_op_completion.");
+        sb.AppendLine("- In subplans, set preferred_runtime_id when a subtask should target a specific executor runtime.");
         sb.AppendLine("- In subplans, depends_on_subtasks must use zero-based numeric indices encoded as strings, not names.");
         sb.AppendLine("- If you cannot complete the task and decomposition is not appropriate, set failure_reason.");
         sb.AppendLine("Schema examples:");
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"completed\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[\"Code\"],\"failure_reason\":null,\"subplan\":null}");
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"completed\",\"summary\":\"string\",\"no_op\":true,\"artifacts_expected\":[],\"failure_reason\":null,\"subplan\":null}");
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"failed\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[],\"failure_reason\":\"string\",\"subplan\":null}");
-        sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"decompose\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[],\"failure_reason\":null,\"subplan\":{\"reason\":\"TooLarge\",\"subtasks\":[{\"description\":\"string\",\"required_capabilities\":[\"code_edit\"],\"depends_on_subtasks\":[],\"budget_cap_seconds\":300,\"expected_output_types\":[\"Code\"],\"owned_paths\":[\"project/path/file.cs\"],\"expected_files\":[\"project/path/file.cs\"],\"allow_no_op_completion\":false},{\"description\":\"string\",\"required_capabilities\":[\"code_edit\"],\"depends_on_subtasks\":[\"0\"],\"budget_cap_seconds\":300,\"expected_output_types\":[\"Code\"],\"owned_paths\":[\"project/path/other.cs\"],\"expected_files\":[\"project/path/other.cs\"],\"allow_no_op_completion\":true}],\"stop_when\":{\"kind\":\"AllSubtasksComplete\",\"description\":\"string\"}}}");
+        sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"decompose\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[],\"failure_reason\":null,\"subplan\":{\"reason\":\"TooLarge\",\"subtasks\":[{\"description\":\"string\",\"required_capabilities\":[\"code_edit\"],\"depends_on_subtasks\":[],\"budget_cap_seconds\":300,\"expected_output_types\":[\"Code\"],\"preferred_runtime_id\":\"pi\",\"owned_paths\":[\"project/path/file.cs\"],\"expected_files\":[\"project/path/file.cs\"],\"allow_no_op_completion\":false},{\"description\":\"string\",\"required_capabilities\":[\"code_edit\"],\"depends_on_subtasks\":[\"0\"],\"budget_cap_seconds\":300,\"expected_output_types\":[\"Code\"],\"preferred_runtime_id\":\"kimi-wire\",\"owned_paths\":[\"project/path/other.cs\"],\"expected_files\":[\"project/path/other.cs\"],\"allow_no_op_completion\":true}],\"stop_when\":{\"kind\":\"AllSubtasksComplete\",\"description\":\"string\"}}}");
         sb.AppendLine("Example:");
         sb.AppendLine($"<{ResultEnvelopeTag}>");
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"completed\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[\"Code\"],\"failure_reason\":null,\"subplan\":null}");

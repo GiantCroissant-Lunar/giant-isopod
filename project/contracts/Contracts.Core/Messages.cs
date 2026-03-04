@@ -256,6 +256,7 @@ public record SubtaskProposal(
     IReadOnlyList<string> DependsOnSubtasks,
     TimeSpan? BudgetCap = null,
     IReadOnlyList<ArtifactType>? ExpectedOutputTypes = null,
+    string? PreferredRuntimeId = null,
     IReadOnlyList<string>? OwnedPaths = null,
     IReadOnlyList<string>? ExpectedFiles = null,
     bool AllowNoOpCompletion = false);

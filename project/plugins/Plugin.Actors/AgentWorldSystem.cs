@@ -116,6 +116,7 @@ public sealed class AgentWorldSystem : IDisposable
             Props.Create(() => new TaskGraphActor(
                 Dispatch, AgentSupervisor, Viewport, Workspace, Validator, KnowledgeSupervisor,
                 CreateCheckpointStore(config),
+                config.Runtimes.All.Select(runtime => runtime.Id).ToArray(),
                 loggerFactory.CreateLogger<TaskGraphActor>())),
             "taskgraph");
 

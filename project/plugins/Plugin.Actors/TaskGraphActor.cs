@@ -24,13 +24,14 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     private readonly IActorRef _knowledgeSupervisor;
     private readonly ITaskGraphCheckpointStore _checkpointStore;
     private readonly ILogger<TaskGraphActor> _logger;
+    private readonly IReadOnlyList<string> _availableRuntimeIds;
     private readonly Dictionary<string, GraphState> _graphs = new();
     private const string PlannerKnowledgeAgentId = "task-planner";
 
     public ITimerScheduler Timers { get; set; } = null!;
 
     public TaskGraphActor(IActorRef dispatch, IActorRef agentSupervisor, IActorRef viewport, IActorRef workspace, IActorRef validator, ILogger<TaskGraphActor> logger)
-        : this(dispatch, agentSupervisor, viewport, workspace, validator, ActorRefs.Nobody, NullTaskGraphCheckpointStore.Instance, logger)
+        : this(dispatch, agentSupervisor, viewport, workspace, validator, ActorRefs.Nobody, NullTaskGraphCheckpointStore.Instance, Array.Empty<string>(), logger)
     {
     }
 
@@ -42,7 +43,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         IActorRef validator,
         IActorRef knowledgeSupervisor,
         ILogger<TaskGraphActor> logger)
-        : this(dispatch, agentSupervisor, viewport, workspace, validator, knowledgeSupervisor, NullTaskGraphCheckpointStore.Instance, logger)
+        : this(dispatch, agentSupervisor, viewport, workspace, validator, knowledgeSupervisor, NullTaskGraphCheckpointStore.Instance, Array.Empty<string>(), logger)
     {
     }
 
@@ -54,6 +55,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         IActorRef validator,
         IActorRef knowledgeSupervisor,
         ITaskGraphCheckpointStore checkpointStore,
+        IReadOnlyList<string>? availableRuntimeIds,
         ILogger<TaskGraphActor> logger)
     {
         _dispatch = dispatch;
@@ -63,6 +65,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         _validator = validator;
         _knowledgeSupervisor = knowledgeSupervisor;
         _checkpointStore = checkpointStore;
+        _availableRuntimeIds = availableRuntimeIds ?? Array.Empty<string>();
         _logger = logger;
     }
 
@@ -335,6 +338,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 proposal.Description,
                 proposal.RequiredCapabilities,
                 proposal.BudgetCap != null ? new TaskBudget(Deadline: proposal.BudgetCap) : null,
+                PreferredRuntimeId: proposal.PreferredRuntimeId,
                 OwnedPaths: proposal.OwnedPaths,
                 ExpectedFiles: proposal.ExpectedFiles,
                 AllowNoOpCompletion: allowNoOpCompletion);
@@ -946,7 +950,14 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     {
         var plannerRequest = new TaskRequest(
             BuildPlannerTaskId(taskId),
-            PromptBuilder.BuildDecompositionPrompt(taskId, node.Description, planningEntries, node.RequiredCapabilities, node.OwnedPaths, node.ExpectedFiles),
+            PromptBuilder.BuildDecompositionPrompt(
+                taskId,
+                node.Description,
+                planningEntries,
+                node.RequiredCapabilities,
+                GetAvailableExecutorRuntimeIds(node.PreferredPlannerRuntimeId),
+                node.OwnedPaths,
+                node.ExpectedFiles),
             node.PlannerRequiredCapabilities ?? new HashSet<string>(StringComparer.Ordinal),
             graphId,
             node.PreferredPlannerRuntimeId,
@@ -957,6 +968,19 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         _logger.LogDebug("Graph {GraphId}: dispatching planner task for {TaskId}", graphId, taskId);
         _dispatch.Tell(plannerRequest);
         PersistGraphStateIfActive(graphId, state);
+    }
+
+    private IReadOnlyList<string> GetAvailableExecutorRuntimeIds(string? preferredPlannerRuntimeId)
+    {
+        if (_availableRuntimeIds.Count == 0)
+            return Array.Empty<string>();
+
+        var runtimeIds = _availableRuntimeIds
+            .Where(id => !string.Equals(id, preferredPlannerRuntimeId, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return runtimeIds.Length > 0 ? runtimeIds : _availableRuntimeIds;
     }
 
     private void CancelDependents(GraphState state, string failedTaskId)

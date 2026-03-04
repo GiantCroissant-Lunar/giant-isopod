@@ -103,6 +103,7 @@ public static partial class StructuredTaskResultParser
             dto.DependsOnSubtasks ?? Array.Empty<string>(),
             budget,
             dto.ExpectedOutputTypes,
+            dto.PreferredRuntimeId,
             dto.OwnedPaths,
             dto.ExpectedFiles,
             dto.AllowNoOpCompletion ?? false);
@@ -153,6 +154,7 @@ public static partial class StructuredTaskResultParser
         [property: JsonPropertyName("depends_on_subtasks")] IReadOnlyList<string>? DependsOnSubtasks,
         [property: JsonPropertyName("budget_cap_seconds")] int? BudgetCapSeconds,
         [property: JsonPropertyName("expected_output_types")] IReadOnlyList<ArtifactType>? ExpectedOutputTypes,
+        [property: JsonPropertyName("preferred_runtime_id")] string? PreferredRuntimeId,
         [property: JsonPropertyName("owned_paths")] IReadOnlyList<string>? OwnedPaths,
         [property: JsonPropertyName("expected_files")] IReadOnlyList<string>? ExpectedFiles,
         [property: JsonPropertyName("allow_no_op_completion")] bool? AllowNoOpCompletion);

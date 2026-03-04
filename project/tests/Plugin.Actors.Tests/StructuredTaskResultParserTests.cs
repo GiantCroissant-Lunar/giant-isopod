@@ -67,6 +67,7 @@ Done.
         "depends_on_subtasks": [],
         "budget_cap_seconds": 120,
         "expected_output_types": ["Doc"],
+        "preferred_runtime_id": "pi",
         "owned_paths": ["project/docs"],
         "expected_files": ["project/docs/inspection.md"]
       },
@@ -76,6 +77,7 @@ Done.
         "depends_on_subtasks": ["0"],
         "budget_cap_seconds": 300,
         "expected_output_types": ["Code"],
+        "preferred_runtime_id": "kimi-wire",
         "owned_paths": ["project/src/Fix.cs"],
         "expected_files": ["project/src/Fix.cs"]
       }
@@ -101,7 +103,9 @@ Done.
         Assert.Equal(2, parsed.Subplan.Subtasks.Count);
         Assert.Equal(TimeSpan.FromSeconds(120), parsed.Subplan.Subtasks[0].BudgetCap);
         Assert.Equal(ArtifactType.Doc, Assert.Single(parsed.Subplan.Subtasks[0].ExpectedOutputTypes!));
+        Assert.Equal("pi", parsed.Subplan.Subtasks[0].PreferredRuntimeId);
         Assert.Equal("project/docs", Assert.Single(parsed.Subplan.Subtasks[0].OwnedPaths!));
+        Assert.Equal("kimi-wire", parsed.Subplan.Subtasks[1].PreferredRuntimeId);
         Assert.Equal("project/src/Fix.cs", Assert.Single(parsed.Subplan.Subtasks[1].OwnedPaths!));
         Assert.Equal("project/src/Fix.cs", Assert.Single(parsed.Subplan.Subtasks[1].ExpectedFiles!));
         Assert.Equal("0", Assert.Single(parsed.Subplan.Subtasks[1].DependsOnSubtasks));
@@ -159,6 +163,7 @@ Done.
         Assert.Contains("\"failure_reason\":null", prompt, StringComparison.Ordinal);
         Assert.Contains("\"owned_paths\":[\"project/path/file.cs\"]", prompt, StringComparison.Ordinal);
         Assert.Contains("\"expected_files\":[\"project/path/file.cs\"]", prompt, StringComparison.Ordinal);
+        Assert.Contains("\"preferred_runtime_id\":\"pi\"", prompt, StringComparison.Ordinal);
         Assert.Contains("Allow no-op completion: no", prompt, StringComparison.Ordinal);
         Assert.Contains("Do the thing.", prompt, StringComparison.Ordinal);
     }

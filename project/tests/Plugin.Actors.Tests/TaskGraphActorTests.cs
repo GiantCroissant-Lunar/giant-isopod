@@ -44,6 +44,7 @@ public class TaskGraphActorTests : TestKit
                 _validatorProbe.Ref,
                 knowledgeSupervisor ?? ActorRefs.Nobody,
                 checkpointStore,
+                new[] { "pi", "kimi-wire", "claude-code" },
                 NullLogger<TaskGraphActor>.Instance)));
     }
 
@@ -322,6 +323,9 @@ public class TaskGraphActorTests : TestKit
         Assert.Equal("t1.__plan", plannerDispatch.TaskId);
         Assert.Contains("Planning feedback context:", plannerDispatch.Description);
         Assert.Contains("Do not split resolver and sidecar executable discovery", plannerDispatch.Description);
+        Assert.Contains("Available executor runtimes for planner-produced subtasks:", plannerDispatch.Description);
+        Assert.Contains("pi", plannerDispatch.Description);
+        Assert.Contains("kimi-wire", plannerDispatch.Description);
     }
 
     [Fact]
@@ -346,6 +350,7 @@ public class TaskGraphActorTests : TestKit
                 "Update docs/decisions/010-agent-middleware-pipeline.md to record the A2A schema decision.",
                 new HashSet<string> { "code_edit" },
                 Array.Empty<string>(),
+                PreferredRuntimeId: "pi",
                 OwnedPaths: new[] { "docs/decisions/010-agent-middleware-pipeline.md" },
                 ExpectedFiles: new[] { "docs/decisions/010-agent-middleware-pipeline.md" },
                 AllowNoOpCompletion: false)
@@ -355,6 +360,7 @@ public class TaskGraphActorTests : TestKit
 
         var subtaskRequest = _dispatchProbe.ExpectMsg<TaskRequest>(msg => msg.TaskId == "t1/sub-0", TimeSpan.FromSeconds(5));
         Assert.True(subtaskRequest.AllowNoOpCompletion);
+        Assert.Equal("pi", subtaskRequest.PreferredRuntimeId);
     }
 
     // ── Decomposition acceptance ──
@@ -528,6 +534,8 @@ public class TaskGraphActorTests : TestKit
                 _workspaceProbe.Ref,
                 _validatorProbe.Ref,
                 knowledgeProbe.Ref,
+                NullTaskGraphCheckpointStore.Instance,
+                Array.Empty<string>(),
                 NullLogger<TaskGraphActor>.Instance)));
 
         var node = new TaskNode(
