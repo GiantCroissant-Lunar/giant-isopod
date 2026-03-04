@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Akka.Actor;
 using GiantIsopod.Contracts.Core;
+using GiantIsopod.Contracts.Protocol.AgUi;
 using GiantIsopod.Plugin.Actors;
 using GiantIsopod.Plugin.Process;
 using Microsoft.Extensions.Logging;
@@ -793,7 +794,7 @@ sealed class BatchViewportBridge : IViewportBridge
 
     public void PublishAgUiEvent(string agentId, object agUiEvent)
     {
-        Console.WriteLine($"[ag-ui] {agentId}: {agUiEvent.GetType().Name}");
+        Console.WriteLine($"[ag-ui] {agentId}: {FormatAgUiEvent(agUiEvent)}");
     }
 
     public void PublishTaskGraphSubmitted(string graphId, IReadOnlyList<TaskNode> nodes, IReadOnlyList<TaskEdge> edges)
@@ -838,6 +839,35 @@ sealed class BatchViewportBridge : IViewportBridge
 
         cts.Cancel();
         return await completionTask;
+    }
+
+    private static string FormatAgUiEvent(object agUiEvent)
+    {
+        return agUiEvent switch
+        {
+            RunStartedEvent started => $"RunStarted run={started.RunId}",
+            RunFinishedEvent finished => $"RunFinished run={finished.RunId}",
+            RunErrorEvent error => $"RunError run={error.RunId} message={error.Message}",
+            StepStartedEvent started => $"StepStarted run={started.RunId} step={started.StepName}",
+            StepFinishedEvent finished => $"StepFinished run={finished.RunId} step={finished.StepName}",
+            CustomEvent custom => $"Custom {custom.Name} {FormatCustomData(custom.Data)}",
+            TextMessageStartEvent start => $"TextMessageStart message={start.MessageId}",
+            TextMessageContentEvent content => $"TextMessageContent delta={content.Delta}",
+            TextMessageEndEvent end => $"TextMessageEnd message={end.MessageId}",
+            ToolCallStartEvent tool => $"ToolCallStart tool={tool.ToolName}",
+            ToolCallEndEvent toolEnd => $"ToolCallEnd toolCall={toolEnd.ToolCallId}",
+            _ => agUiEvent.GetType().Name
+        };
+    }
+
+    private static string FormatCustomData(IReadOnlyDictionary<string, object?>? data)
+    {
+        if (data is null || data.Count == 0)
+            return string.Empty;
+
+        return string.Join(
+            " ",
+            data.Select(kv => $"{kv.Key}={kv.Value}"));
     }
 }
 

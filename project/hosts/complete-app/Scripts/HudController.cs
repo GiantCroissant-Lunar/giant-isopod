@@ -1,5 +1,6 @@
 using Godot;
 using GiantIsopod.Contracts.Core;
+using GiantIsopod.Contracts.Protocol.AgUi;
 
 namespace GiantIsopod.Hosts.CompleteApp;
 
@@ -245,26 +246,67 @@ public partial class HudController : Control
 
     private void HandleAgUiEvent(string agentId, object evt)
     {
-        // Log tool call events to console for visibility
-        var evtType = evt.GetType().Name;
-        switch (evtType)
+        switch (evt)
         {
-            case "ToolCallStartEvent":
-                var toolName = evt.GetType().GetProperty("ToolName")?.GetValue(evt)?.ToString() ?? "?";
+            case ToolCallStartEvent toolStart:
+                var toolName = toolStart.ToolName ?? "?";
                 _terminalManager.AppendOutput(agentId, $"[AG-UI] Tool call: {toolName}", _showingTerminal, _selectedAgentId);
                 break;
-            case "TextMessageContentEvent":
-                var delta = evt.GetType().GetProperty("Delta")?.GetValue(evt)?.ToString() ?? "";
-                if (!string.IsNullOrEmpty(delta))
-                    _terminalManager.AppendOutput(agentId, delta, _showingTerminal, _selectedAgentId);
+            case TextMessageContentEvent text:
+                if (!string.IsNullOrEmpty(text.Delta))
+                    _terminalManager.AppendOutput(agentId, text.Delta, _showingTerminal, _selectedAgentId);
                 break;
-            case "RunStartedEvent":
-                _terminalManager.AppendOutput(agentId, "[AG-UI] Run started", _showingTerminal, _selectedAgentId);
+            case RunStartedEvent runStarted:
+                _terminalManager.AppendOutput(agentId, $"[AG-UI] Run started: {runStarted.RunId}", _showingTerminal, _selectedAgentId);
                 break;
-            case "RunFinishedEvent":
-                _terminalManager.AppendOutput(agentId, "[AG-UI] Run finished", _showingTerminal, _selectedAgentId);
+            case RunFinishedEvent runFinished:
+                _terminalManager.AppendOutput(agentId, $"[AG-UI] Run finished: {runFinished.RunId}", _showingTerminal, _selectedAgentId);
+                break;
+            case RunErrorEvent runError:
+                _terminalManager.AppendOutput(agentId, $"[AG-UI] Run error: {runError.Message}", _showingTerminal, _selectedAgentId);
+                break;
+            case StepStartedEvent stepStarted:
+                _terminalManager.AppendOutput(agentId, $"[AG-UI] Step started: {stepStarted.StepName}", _showingTerminal, _selectedAgentId);
+                break;
+            case StepFinishedEvent stepFinished:
+                _terminalManager.AppendOutput(agentId, $"[AG-UI] Step finished: {stepFinished.StepName}", _showingTerminal, _selectedAgentId);
+                break;
+            case CustomEvent custom:
+                HandleAgUiCustomEvent(agentId, custom);
                 break;
         }
+    }
+
+    private void HandleAgUiCustomEvent(string agentId, CustomEvent evt)
+    {
+        switch (evt.Name)
+        {
+            case "task_graph_submitted":
+                if (TryGetDataValue(evt.Data, "graphId", out var graphId))
+                    _terminalManager.AppendOutput(agentId, $"[AG-UI] Graph submitted: {graphId}", _showingTerminal, _selectedAgentId);
+                break;
+            case "task_status":
+                if (TryGetDataValue(evt.Data, "taskId", out var taskId) &&
+                    TryGetDataValue(evt.Data, "status", out var status))
+                {
+                    _terminalManager.AppendOutput(agentId, $"[AG-UI] Task {taskId}: {status}", _showingTerminal, _selectedAgentId);
+                }
+                break;
+            case "task_graph_completed":
+                if (TryGetDataValue(evt.Data, "graphId", out var completedGraphId))
+                    _terminalManager.AppendOutput(agentId, $"[AG-UI] Graph completed: {completedGraphId}", _showingTerminal, _selectedAgentId);
+                break;
+        }
+    }
+
+    private static bool TryGetDataValue(IReadOnlyDictionary<string, object?>? data, string key, out string value)
+    {
+        value = string.Empty;
+        if (data is null || !data.TryGetValue(key, out var raw) || raw is null)
+            return false;
+
+        value = raw.ToString() ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(value);
     }
 
     public void SelectAgent(string agentId)

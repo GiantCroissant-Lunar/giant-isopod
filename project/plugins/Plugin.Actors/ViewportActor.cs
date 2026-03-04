@@ -69,15 +69,29 @@ public sealed class ViewportActor : UntypedActor
 
             case NotifyTaskGraphSubmitted submitted:
                 _bridge?.PublishTaskGraphSubmitted(submitted.GraphId, submitted.Nodes, submitted.Edges);
+                PublishTaskGraphAgUiEvents(TaskGraphAgUiMapper.GraphAgentId(submitted.GraphId), TaskGraphAgUiMapper.MapGraphSubmitted(submitted));
                 break;
 
             case NotifyTaskNodeStatusChanged statusChanged:
                 _bridge?.PublishTaskNodeStatusChanged(statusChanged.GraphId, statusChanged.TaskId, statusChanged.Status, statusChanged.AgentId);
+                PublishTaskGraphAgUiEvents(
+                    statusChanged.AgentId ?? TaskGraphAgUiMapper.GraphAgentId(statusChanged.GraphId),
+                    TaskGraphAgUiMapper.MapTaskStatusChanged(statusChanged));
                 break;
 
             case TaskGraphCompleted graphCompleted:
                 _bridge?.PublishTaskGraphCompleted(graphCompleted.GraphId, graphCompleted.Results);
+                PublishTaskGraphAgUiEvents(TaskGraphAgUiMapper.GraphAgentId(graphCompleted.GraphId), TaskGraphAgUiMapper.MapGraphCompleted(graphCompleted));
                 break;
         }
+    }
+
+    private void PublishTaskGraphAgUiEvents(string agentId, IReadOnlyList<object> events)
+    {
+        if (_bridge is null)
+            return;
+
+        foreach (var evt in events)
+            _bridge.PublishAgUiEvent(agentId, evt);
     }
 }
