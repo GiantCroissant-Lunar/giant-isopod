@@ -223,6 +223,7 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
 
     private async Task<MergeResult> DoMergeAsync(string taskId, Workspace ws, IActorRef requester)
     {
+        HiddenUntrackedFiles? hiddenFiles = null;
         try
         {
             var commit = await EnsureCommittedAsync(taskId, ws);
@@ -240,6 +241,14 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
                 await RunGitInAsync(ws.WorktreePath, "rebase", "--abort");
                 var conflictFiles = ParseConflictFiles(rebase.Stderr);
                 return new MergeResult(taskId, Success: false, Sha: null, ConflictFiles: conflictFiles, Requester: requester);
+            }
+
+            hiddenFiles = await HideConflictingUntrackedFilesAsync(taskId, ws);
+            if (!hiddenFiles.Success)
+            {
+                return new MergeResult(taskId, Success: false, Sha: null,
+                    ConflictFiles: new[] { hiddenFiles.Error ?? "Failed to prepare anchor worktree for merge" },
+                    Requester: requester);
             }
 
             // Ensure anchor repo is on integration branch before merging
@@ -275,6 +284,11 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
         {
             return new MergeResult(taskId, Success: false, Sha: null,
                 ConflictFiles: new[] { ex.Message }, Requester: requester);
+        }
+        finally
+        {
+            if (hiddenFiles is not null)
+                await RestoreHiddenUntrackedFilesAsync(hiddenFiles);
         }
     }
 
@@ -360,6 +374,120 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
         return (ok, err);
     }
 
+    private async Task<HiddenUntrackedFiles> HideConflictingUntrackedFilesAsync(string taskId, Workspace ws)
+    {
+        var incomingPathsResult = await RunGitAsync("diff", "--name-only", $"{_integrationBranch}..{ws.BranchName}");
+        if (incomingPathsResult.ExitCode != 0)
+            return new HiddenUntrackedFiles(false, Error: $"Failed to inspect incoming merge paths: {incomingPathsResult.Stderr}");
+
+        var incomingPaths = incomingPathsResult.Stdout
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (incomingPaths.Length == 0)
+            return new HiddenUntrackedFiles(true, Array.Empty<HiddenUntrackedFile>());
+
+        var untrackedArgs = new List<string> { "ls-files", "--others", "--exclude-standard", "--" };
+        untrackedArgs.AddRange(incomingPaths);
+        var untrackedResult = await RunGitAsync(untrackedArgs.ToArray());
+        if (untrackedResult.ExitCode != 0)
+            return new HiddenUntrackedFiles(false, Error: $"Failed to inspect untracked paths: {untrackedResult.Stderr}");
+
+        var conflictingPaths = untrackedResult.Stdout
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (conflictingPaths.Length == 0)
+            return new HiddenUntrackedFiles(true, Array.Empty<HiddenUntrackedFile>());
+
+        var backupRoot = Path.Combine(_anchorRepoPath, ".worktrees", ".merge-backups", taskId);
+        Directory.CreateDirectory(backupRoot);
+
+        var hidden = new List<HiddenUntrackedFile>(conflictingPaths.Length);
+        try
+        {
+            foreach (var relativePath in conflictingPaths)
+            {
+                var sourcePath = Path.GetFullPath(Path.Combine(_anchorRepoPath, relativePath));
+                if (!sourcePath.StartsWith(_anchorRepoPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    return new HiddenUntrackedFiles(false, Error: $"Refused to move unsafe untracked path '{relativePath}'.");
+
+                if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath))
+                    continue;
+
+                var backupPath = Path.Combine(backupRoot, relativePath);
+                var backupDir = Path.GetDirectoryName(backupPath);
+                if (!string.IsNullOrWhiteSpace(backupDir))
+                    Directory.CreateDirectory(backupDir);
+
+                if (File.Exists(sourcePath))
+                    File.Move(sourcePath, backupPath, overwrite: true);
+                else
+                    Directory.Move(sourcePath, backupPath);
+
+                hidden.Add(new HiddenUntrackedFile(relativePath, backupPath));
+                _logger.LogInformation("Temporarily moved untracked file {Path} out of the anchor worktree for task {TaskId}",
+                    relativePath, taskId);
+            }
+        }
+        catch (Exception ex)
+        {
+            foreach (var moved in hidden)
+            {
+                var restorePath = Path.Combine(_anchorRepoPath, moved.RelativePath);
+                var restoreDir = Path.GetDirectoryName(restorePath);
+                if (!string.IsNullOrWhiteSpace(restoreDir))
+                    Directory.CreateDirectory(restoreDir);
+
+                if (File.Exists(moved.BackupPath))
+                    File.Move(moved.BackupPath, restorePath, overwrite: true);
+                else if (Directory.Exists(moved.BackupPath))
+                    Directory.Move(moved.BackupPath, restorePath);
+            }
+
+            TryDeleteDirectory(backupRoot);
+            return new HiddenUntrackedFiles(false, Error: $"Failed to move conflicting untracked files: {ex.Message}");
+        }
+
+        return new HiddenUntrackedFiles(true, hidden, backupRoot);
+    }
+
+    private async Task RestoreHiddenUntrackedFilesAsync(HiddenUntrackedFiles hidden)
+    {
+        foreach (var entry in hidden.Files)
+        {
+            var restorePath = Path.Combine(_anchorRepoPath, entry.RelativePath);
+            if (File.Exists(restorePath) || Directory.Exists(restorePath))
+                continue;
+
+            var restoreDir = Path.GetDirectoryName(restorePath);
+            if (!string.IsNullOrWhiteSpace(restoreDir))
+                Directory.CreateDirectory(restoreDir);
+
+            if (File.Exists(entry.BackupPath))
+                File.Move(entry.BackupPath, restorePath, overwrite: true);
+            else if (Directory.Exists(entry.BackupPath))
+                Directory.Move(entry.BackupPath, restorePath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(hidden.BackupRoot))
+            await Task.Run(() => TryDeleteDirectory(hidden.BackupRoot));
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+        }
+    }
+
     private Task<GitResult> RunGitAsync(params string[] args)
         => RunGitInAsync(_anchorRepoPath, args);
 
@@ -398,6 +526,15 @@ public sealed class WorkspaceActor : UntypedActor, IWithTimers
     private sealed record AllocateResult(string TaskId, string WorktreePath, string BranchName, string BaseRef, bool Success, string? Error, IActorRef Requester);
     private sealed record ReleaseResult(string TaskId, IActorRef Requester, bool Success, string? Error);
     private sealed record MergeResult(string TaskId, bool Success, string? Sha, IReadOnlyList<string>? ConflictFiles, IActorRef Requester);
+    private sealed record HiddenUntrackedFiles(
+        bool Success,
+        IReadOnlyList<HiddenUntrackedFile>? Entries = null,
+        string? BackupRoot = null,
+        string? Error = null)
+    {
+        public IReadOnlyList<HiddenUntrackedFile> Files { get; } = Entries ?? Array.Empty<HiddenUntrackedFile>();
+    }
+    private sealed record HiddenUntrackedFile(string RelativePath, string BackupPath);
     private sealed record MergeQueueTick
     {
         public static readonly MergeQueueTick Instance = new();

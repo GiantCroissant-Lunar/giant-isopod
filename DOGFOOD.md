@@ -1,10 +1,10 @@
-# Dogfood Checklist
+# Workflow Checklist
 
-Use this checklist before relying on a runtime for real code-edit tasks.
+Use this checklist before relying on a runtime for real code-edit tasks in Giant Isopod.
 
 ## Acceptance Bar
 
-A runtime is dogfood-ready for the core development workflow only if all of these pass:
+A runtime is workflow-ready for the core development workflow only if all of these pass:
 
 1. `basic` smoke:
    `dotnet run --project project\tools\RealCliSmoke\RealCliSmoke.csproj -- <runtime> 8 basic`
@@ -61,7 +61,7 @@ Classify failures into one bucket before changing code:
 
 1. Make `kimi` pass all three smoke scenarios.
 2. Re-run `pi` after any shared runtime or parser changes.
-3. Only after both are green, use them for real dogfood tasks.
+3. Only after both are green, use them for real feature work.
 
 ## Parallel Feature Batch
 
@@ -180,7 +180,7 @@ Recommended split:
 3. smoke output verification
 4. final review
 
-### Feature 3: Multi-Feature Dogfood Runner
+### Feature 3: Multi-Feature Batch Runner
 
 Goal: submit a real DAG with independent code, test, and doc nodes instead of only flat task sets.
 
@@ -213,7 +213,7 @@ Recommended split:
 1. artifact classification
 2. follow-up task generation
 3. validator integration
-4. end-to-end dogfood verification
+4. end-to-end batch verification
 
 ### Feature 5: Middleware Pipeline
 
@@ -241,7 +241,7 @@ Recommended split:
 
 1. Runtime-aware dispatch
 2. Runtime process observability
-3. Multi-feature dogfood runner
+3. Multi-feature batch runner
 4. Artifact follow-up workflow
 5. Middleware pipeline
 

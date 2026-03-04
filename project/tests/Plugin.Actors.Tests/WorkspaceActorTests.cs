@@ -177,6 +177,30 @@ public class WorkspaceActorTests : TestKit, IDisposable
         Assert.Contains("task(T-AUTO): agent changes", log);
     }
 
+    [Fact]
+    public void MergeQueue_UntrackedAnchorFileDoesNotBlockMerge()
+    {
+        _workspace.Tell(new AllocateWorkspace("T-UNTRACKED", "HEAD"), TestActor);
+        var ws = ExpectMsg<WorkspaceAllocated>(TimeSpan.FromSeconds(10));
+
+        var worktreeTarget = Path.Combine(ws.WorktreePath, "src", "Feature.cs");
+        Directory.CreateDirectory(Path.GetDirectoryName(worktreeTarget)!);
+        File.WriteAllText(worktreeTarget, "public static class Feature { }\n");
+
+        var anchorConflictPath = Path.Combine(_tempRepoPath, "src", "Feature.cs");
+        Directory.CreateDirectory(Path.GetDirectoryName(anchorConflictPath)!);
+        File.WriteAllText(anchorConflictPath, "// untracked anchor content\n");
+
+        _workspace.Tell(new RequestMerge("T-UNTRACKED"), TestActor);
+        var merged = ExpectMsg<MergeSucceeded>(TimeSpan.FromSeconds(15));
+
+        Assert.Equal("T-UNTRACKED", merged.TaskId);
+        Assert.Contains("public static class Feature { }", File.ReadAllText(anchorConflictPath), StringComparison.Ordinal);
+
+        var status = RunGit(_tempRepoPath, "status", "--short");
+        Assert.DoesNotContain("?? src/Feature.cs", status, StringComparison.Ordinal);
+    }
+
     private static string RunGit(string workDir, params string[] args)
     {
         var psi = new System.Diagnostics.ProcessStartInfo("git")
