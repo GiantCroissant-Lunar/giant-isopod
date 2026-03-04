@@ -106,6 +106,8 @@ public static class PromptBuilder
         sb.AppendLine("Do not edit files or implement the task.");
         sb.AppendLine("Return outcome=decompose with a concrete subplan, or outcome=completed with no_op=true when the task should execute directly without decomposition.");
         sb.AppendLine("Every subtask must declare owned_paths, expected_files, and allow_no_op_completion.");
+        sb.AppendLine("depends_on_subtasks must contain only zero-based numeric subtask indices encoded as strings, such as [] or [\"0\", \"2\"].");
+        sb.AppendLine("Do not use symbolic dependency names like subtask-contracts or contracts.");
         sb.AppendLine("When a subtask updates, documents, amends, or records information in an existing file, set allow_no_op_completion=true so reruns can succeed if the file is already in the desired state.");
         if (executableSkills is { Count: > 0 })
         {
@@ -158,12 +160,13 @@ public static class PromptBuilder
         sb.AppendLine("- Always include artifacts_expected as an array of artifact types you changed or expect to produce. Use [] when there are none.");
         sb.AppendLine("- If the task should be decomposed, populate subplan instead of guessing.");
         sb.AppendLine("- Every subtask in a subplan must declare owned_paths, expected_files, and allow_no_op_completion.");
+        sb.AppendLine("- In subplans, depends_on_subtasks must use zero-based numeric indices encoded as strings, not names.");
         sb.AppendLine("- If you cannot complete the task and decomposition is not appropriate, set failure_reason.");
         sb.AppendLine("Schema examples:");
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"completed\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[\"Code\"],\"failure_reason\":null,\"subplan\":null}");
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"completed\",\"summary\":\"string\",\"no_op\":true,\"artifacts_expected\":[],\"failure_reason\":null,\"subplan\":null}");
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"failed\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[],\"failure_reason\":\"string\",\"subplan\":null}");
-        sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"decompose\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[],\"failure_reason\":null,\"subplan\":{\"reason\":\"TooLarge\",\"subtasks\":[{\"description\":\"string\",\"required_capabilities\":[\"code_edit\"],\"depends_on_subtasks\":[],\"budget_cap_seconds\":300,\"expected_output_types\":[\"Code\"],\"owned_paths\":[\"project/path/file.cs\"],\"expected_files\":[\"project/path/file.cs\"],\"allow_no_op_completion\":false}],\"stop_when\":{\"kind\":\"AllSubtasksComplete\",\"description\":\"string\"}}}");
+        sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"decompose\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[],\"failure_reason\":null,\"subplan\":{\"reason\":\"TooLarge\",\"subtasks\":[{\"description\":\"string\",\"required_capabilities\":[\"code_edit\"],\"depends_on_subtasks\":[],\"budget_cap_seconds\":300,\"expected_output_types\":[\"Code\"],\"owned_paths\":[\"project/path/file.cs\"],\"expected_files\":[\"project/path/file.cs\"],\"allow_no_op_completion\":false},{\"description\":\"string\",\"required_capabilities\":[\"code_edit\"],\"depends_on_subtasks\":[\"0\"],\"budget_cap_seconds\":300,\"expected_output_types\":[\"Code\"],\"owned_paths\":[\"project/path/other.cs\"],\"expected_files\":[\"project/path/other.cs\"],\"allow_no_op_completion\":true}],\"stop_when\":{\"kind\":\"AllSubtasksComplete\",\"description\":\"string\"}}}");
         sb.AppendLine("Example:");
         sb.AppendLine($"<{ResultEnvelopeTag}>");
         sb.AppendLine("{\"task_id\":\"string\",\"outcome\":\"completed\",\"summary\":\"string\",\"no_op\":false,\"artifacts_expected\":[\"Code\"],\"failure_reason\":null,\"subplan\":null}");
