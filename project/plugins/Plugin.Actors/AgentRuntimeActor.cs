@@ -123,12 +123,13 @@ public sealed class AgentRuntimeActor : UntypedActor
                 RuntimeAttemptResult? finalAttempt = null;
                 var runtimeConfig = _config.Runtimes.ResolveOrDefault(_runtimeId ?? _config.DefaultRuntimeId);
                 var runtimeId = _runtimeId ?? runtimeConfig.Id;
+                string? retryHint = null;
 
                 for (var attemptNumber = 1; attemptNumber <= MaxExecutionAttempts; attemptNumber++)
                 {
                     var prompt = attemptNumber == 1
                         ? execute.Prompt
-                        : BuildRetryPrompt(execute);
+                        : BuildRetryPrompt(execute, retryHint);
 
                     var executionContext = new RuntimeExecutionContext(
                         execute,
@@ -149,6 +150,8 @@ public sealed class AgentRuntimeActor : UntypedActor
 
                     if (!attempt.Retryable)
                         break;
+
+                    retryHint = attempt.RetryReason;
 
                     if (attemptNumber < MaxExecutionAttempts)
                     {
@@ -212,14 +215,18 @@ public sealed class AgentRuntimeActor : UntypedActor
 
         var transcript = output.ToString();
         var parsed = StructuredTaskResultParser.Parse(transcript, context.Request.TaskId);
-        var artifacts = await WorkspaceArtifactCollector.CollectAsync(
-            context.WorkingDirectory,
-            context.Request.TaskId,
-            _agentId,
-            _config.IgnoredArtifactPaths,
-            ct);
+        var artifacts = context.Request.CollectArtifacts
+            ? await WorkspaceArtifactCollector.CollectAsync(
+                context.WorkingDirectory,
+                context.Request.TaskId,
+                _agentId,
+                _config.IgnoredArtifactPaths,
+                ct)
+            : Array.Empty<ArtifactRef>();
 
-        return new RuntimeAttemptResult(parsed, artifacts, transcript);
+        return ApplyRetryHeuristics(
+            context.Request,
+            new RuntimeAttemptResult(parsed, artifacts, transcript));
     }
 
     private void StartAdhocExecution(string prompt)
@@ -270,7 +277,7 @@ public sealed class AgentRuntimeActor : UntypedActor
 
     private string ResolveWorkingDirectory(string? workspacePath)
     {
-        if (!string.IsNullOrWhiteSpace(workspacePath))
+        if (!string.IsNullOrWhiteSpace(workspacePath) && Directory.Exists(workspacePath))
             return workspacePath;
 
         if (!string.IsNullOrWhiteSpace(_config.RuntimeWorkingDirectory))
@@ -390,12 +397,55 @@ public sealed class AgentRuntimeActor : UntypedActor
             Subplan: parsed.Subplan));
     }
 
-    private static string BuildRetryPrompt(ExecuteTaskPrompt execute)
+    internal static RuntimeAttemptResult ApplyRetryHeuristics(
+        ExecuteTaskPrompt request,
+        RuntimeAttemptResult attempt)
+    {
+        if (!ShouldRetryForMissingArtifacts(request, attempt.Parsed, attempt.Artifacts))
+            return attempt;
+
+        return attempt with
+        {
+            Retryable = true,
+            RetryReason = BuildMissingArtifactRetryReason(request.AllowNoOpCompletion)
+        };
+    }
+
+    private static bool ShouldRetryForMissingArtifacts(
+        ExecuteTaskPrompt request,
+        StructuredTaskResultParser.ParsedTaskResult parsed,
+        IReadOnlyList<ArtifactRef> artifacts)
+    {
+        if (!parsed.HasEnvelope)
+            return false;
+
+        if (parsed.Outcome != StructuredTaskResultParser.ParsedTaskOutcome.Completed)
+            return false;
+
+        if (parsed.NoOp)
+            return false;
+
+        if (artifacts.Count > 0)
+            return false;
+
+        return parsed.ExpectedArtifactTypes.Count > 0 || request.AllowNoOpCompletion;
+    }
+
+    private static string BuildMissingArtifactRetryReason(bool allowNoOpCompletion)
+    {
+        return allowNoOpCompletion
+            ? "Runtime reported completion without workspace changes. If the task is already satisfied, return no_op=true and artifacts_expected=[]. Otherwise make the required file changes."
+            : "Runtime reported completion without the required workspace changes. Make the declared file changes or return failure_reason.";
+    }
+
+    private static string BuildRetryPrompt(ExecuteTaskPrompt execute, string? retryHint)
     {
         return $"""
 Your previous response did not satisfy the assigned task contract for task {execute.TaskId}.
 Work only in the current git worktree for this task. Do not answer unrelated questions. Either execute the task exactly or return failure_reason.
 Inspect any files you already changed. If they do not match the exact task, correct them before returning.
+{(string.IsNullOrWhiteSpace(retryHint) ? string.Empty : $"Previous attempt issue: {retryHint}\n")}
+{(execute.AllowNoOpCompletion ? "If the task is already satisfied with no file changes, return no_op=true and artifacts_expected=[].\n" : string.Empty)}\
 The final line of your response must be a <giant-isopod-result> envelope whose task_id is "{execute.TaskId}".
 
 {execute.Prompt}
@@ -419,7 +469,8 @@ public record ExecuteTaskPrompt(
     string Prompt,
     string? GraphId = null,
     string? WorkspacePath = null,
-    bool AllowNoOpCompletion = false);
+    bool AllowNoOpCompletion = false,
+    bool CollectArtifacts = true);
 
 /// <summary>Sets the token budget for the active task on this runtime actor.</summary>
 public record SetTokenBudget(string TaskId, int MaxTokens);

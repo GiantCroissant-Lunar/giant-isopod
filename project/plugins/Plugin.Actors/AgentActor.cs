@@ -172,7 +172,7 @@ public sealed class AgentActor : UntypedActor
                 if (TryGetPlannerParentTaskId(task.TaskId, out var plannerParentTaskId))
                 {
                     _plannerParentTasks[plannerParentTaskId] =
-                        new ActiveTaskContext(plannerParentTaskId, task.GraphId, WorkspacePath: null, task.AllowNoOpCompletion);
+                        new ActiveTaskContext(plannerParentTaskId, task.GraphId, task.WorkspacePath, task.AllowNoOpCompletion);
                 }
 
                 if (task.Budget?.MaxTokens is { } maxTokens)
@@ -295,7 +295,8 @@ public sealed class AgentActor : UntypedActor
                         synthesisPrompt,
                         synthesisTask.GraphId,
                         synthesisTask.WorkspacePath,
-                        synthesisTask.AllowNoOpCompletion));
+                        synthesisTask.AllowNoOpCompletion,
+                        CollectArtifacts: false));
                     _logger.LogInformation("Agent {AgentId} received {Count} subtask results for synthesis of {TaskId}",
                         _agentId, subtasksCompleted.Results.Count, subtasksCompleted.ParentTaskId);
                 }

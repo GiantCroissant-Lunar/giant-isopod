@@ -73,7 +73,9 @@ public static class PromptBuilder
     {
         var sb = new StringBuilder();
         sb.Append("Parent task: ").AppendLine(parentTaskId);
-        sb.AppendLine("Synthesize the completed subtask results into one final deliverable.");
+        sb.AppendLine("Synthesize the completed subtask results into one final summary.");
+        sb.AppendLine("Do not modify files during synthesis unless the parent task explicitly requires a new final artifact.");
+        sb.AppendLine("If the subtasks already produced the final deliverables, return a completed result with artifacts_expected=[] and summarize what is already in place.");
         sb.AppendLine("Subtask results:");
         foreach (var result in results)
         {
@@ -85,7 +87,7 @@ public static class PromptBuilder
                 sb.Append(SecurityElement.Escape(result.Summary));
             sb.AppendLine();
         }
-        sb.AppendLine("Produce a concise summary and include any artifacts in the final result envelope.");
+        sb.AppendLine("Produce a concise summary only. Do not invent new artifacts.");
         sb.AppendLine();
         AppendStructuredResultContract(sb, parentTaskId);
         return sb.ToString();
@@ -104,6 +106,7 @@ public static class PromptBuilder
         sb.AppendLine("Do not edit files or implement the task.");
         sb.AppendLine("Return outcome=decompose with a concrete subplan, or outcome=completed with no_op=true when the task should execute directly without decomposition.");
         sb.AppendLine("Every subtask must declare owned_paths, expected_files, and allow_no_op_completion.");
+        sb.AppendLine("When a subtask updates, documents, amends, or records information in an existing file, set allow_no_op_completion=true so reruns can succeed if the file is already in the desired state.");
         if (executableSkills is { Count: > 0 })
         {
             sb.AppendLine("Use only these existing executor skill ids in subtask required_capabilities:");

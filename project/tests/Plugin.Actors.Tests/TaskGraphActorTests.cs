@@ -232,6 +232,39 @@ public class TaskGraphActorTests : TestKit
         _dispatchProbe.ExpectNoMsg(TimeSpan.FromMilliseconds(200));
     }
 
+    [Fact]
+    public void PlannerSubtask_UpdateExistingFile_DefaultsToAllowNoOpCompletion()
+    {
+        _taskGraph.Tell(MakeGraph("g-plan-noop", new[]
+        {
+            new TaskNode(
+                "t1",
+                "decompose docs",
+                new HashSet<string> { "code_edit" },
+                PlannerRequiredCapabilities: new HashSet<string> { "task_decompose" },
+                PreferredPlannerRuntimeId: "claude-code")
+        }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+
+        _dispatchProbe.ExpectMsg<TaskRequest>(msg => msg.TaskId == "t1.__plan", TimeSpan.FromSeconds(5));
+
+        var subplan = MakeSubplan("t1", new[]
+        {
+            new SubtaskProposal(
+                "Update docs/decisions/010-agent-middleware-pipeline.md to record the A2A schema decision.",
+                new HashSet<string> { "code_edit" },
+                Array.Empty<string>(),
+                OwnedPaths: new[] { "docs/decisions/010-agent-middleware-pipeline.md" },
+                ExpectedFiles: new[] { "docs/decisions/010-agent-middleware-pipeline.md" },
+                AllowNoOpCompletion: false)
+        });
+
+        _taskGraph.Tell(new TaskCompleted("t1.__plan", "planner-1", true, "decompose", "g-plan-noop", Subplan: subplan));
+
+        var subtaskRequest = _dispatchProbe.ExpectMsg<TaskRequest>(msg => msg.TaskId == "t1/sub-0", TimeSpan.FromSeconds(5));
+        Assert.True(subtaskRequest.AllowNoOpCompletion);
+    }
+
     // ── Decomposition acceptance ──
 
     [Fact]

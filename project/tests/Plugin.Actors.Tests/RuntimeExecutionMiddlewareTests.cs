@@ -97,6 +97,36 @@ public class RuntimeExecutionMiddlewareTests
         Assert.Contains("timed out", result.Parsed.FailureReason, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void ApplyRetryHeuristics_MarksMissingArtifactsAsRetryable()
+    {
+        var request = new ExecuteTaskPrompt("agent-1", "task-1", "Do the task.", AllowNoOpCompletion: false);
+        var attempt = new RuntimeAttemptResult(
+            Parsed: CompletedParsed(expectedArtifacts: [ArtifactType.Doc]),
+            Artifacts: Array.Empty<ArtifactRef>(),
+            Transcript: "claimed success");
+
+        var result = AgentRuntimeActor.ApplyRetryHeuristics(request, attempt);
+
+        Assert.True(result.Retryable);
+        Assert.Contains("required workspace changes", result.RetryReason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ApplyRetryHeuristics_AddsNoOpHintForNoOpCapableTasks()
+    {
+        var request = new ExecuteTaskPrompt("agent-1", "task-1", "Do the task.", AllowNoOpCompletion: true);
+        var attempt = new RuntimeAttemptResult(
+            Parsed: CompletedParsed(expectedArtifacts: Array.Empty<ArtifactType>()),
+            Artifacts: Array.Empty<ArtifactRef>(),
+            Transcript: "claimed success");
+
+        var result = AgentRuntimeActor.ApplyRetryHeuristics(request, attempt);
+
+        Assert.True(result.Retryable);
+        Assert.Contains("no_op=true", result.RetryReason, StringComparison.Ordinal);
+    }
+
     private static RuntimeExecutionContext CreateContext(
         string runtimeId,
         string prompt = "Do the task.",
@@ -138,5 +168,18 @@ public class RuntimeExecutionMiddlewareTests
             NoOp: false,
             Subplan: null,
             ExpectedArtifactTypes: Array.Empty<ArtifactType>());
+    }
+
+    private static StructuredTaskResultParser.ParsedTaskResult CompletedParsed(IReadOnlyList<ArtifactType> expectedArtifacts)
+    {
+        return new StructuredTaskResultParser.ParsedTaskResult(
+            HasEnvelope: true,
+            EnvelopeTaskId: "task-1",
+            Outcome: StructuredTaskResultParser.ParsedTaskOutcome.Completed,
+            Summary: "done",
+            FailureReason: null,
+            NoOp: false,
+            Subplan: null,
+            ExpectedArtifactTypes: expectedArtifacts);
     }
 }

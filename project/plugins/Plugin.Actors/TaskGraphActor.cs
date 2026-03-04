@@ -292,6 +292,8 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 return;
             }
 
+            var allowNoOpCompletion = NormalizePlannerNoOpCompletion(proposal);
+
             var node = new TaskNode(
                 subtaskId,
                 proposal.Description,
@@ -299,7 +301,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 proposal.BudgetCap != null ? new TaskBudget(Deadline: proposal.BudgetCap) : null,
                 OwnedPaths: proposal.OwnedPaths,
                 ExpectedFiles: proposal.ExpectedFiles,
-                AllowNoOpCompletion: proposal.AllowNoOpCompletion);
+                AllowNoOpCompletion: allowNoOpCompletion);
 
             state.Nodes[subtaskId] = node;
             state.Status[subtaskId] = TaskNodeStatus.Pending;
@@ -1107,6 +1109,45 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     }
 
     private static string BuildPlannerTaskId(string taskId) => $"{taskId}{PlannerTaskSuffix}";
+
+    private static bool NormalizePlannerNoOpCompletion(SubtaskProposal proposal)
+    {
+        if (proposal.AllowNoOpCompletion)
+            return true;
+
+        if (proposal.ExpectedFiles is not { Count: > 0 })
+            return false;
+
+        var description = proposal.Description.Trim();
+        if (string.IsNullOrWhiteSpace(description))
+            return false;
+
+        if (LooksLikeCreateOnlyTask(description))
+            return false;
+
+        return LooksLikeUpdateTask(description);
+    }
+
+    private static bool LooksLikeUpdateTask(string description)
+    {
+        return description.Contains("update", StringComparison.OrdinalIgnoreCase)
+            || description.Contains("document", StringComparison.OrdinalIgnoreCase)
+            || description.Contains("record", StringComparison.OrdinalIgnoreCase)
+            || description.Contains("amend", StringComparison.OrdinalIgnoreCase)
+            || description.Contains("revise", StringComparison.OrdinalIgnoreCase)
+            || description.Contains("clarify", StringComparison.OrdinalIgnoreCase)
+            || description.Contains("refresh", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool LooksLikeCreateOnlyTask(string description)
+    {
+        return description.Contains("create ", StringComparison.OrdinalIgnoreCase)
+            || description.Contains("create a ", StringComparison.OrdinalIgnoreCase)
+            || description.Contains("create an ", StringComparison.OrdinalIgnoreCase)
+            || description.Contains("create new", StringComparison.OrdinalIgnoreCase)
+            || description.Contains("add new", StringComparison.OrdinalIgnoreCase)
+            || description.Contains("introduce new", StringComparison.OrdinalIgnoreCase);
+    }
 
     // ── Constants ──
 
