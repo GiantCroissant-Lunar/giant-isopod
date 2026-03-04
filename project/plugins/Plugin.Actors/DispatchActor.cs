@@ -221,6 +221,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
                 session.Request.GraphId,
                 session.Request.OwnedPaths,
                 session.Request.ExpectedFiles,
+                session.Request.RequiredCapabilities,
                 session.Request.AllowNoOpCompletion);
             var approval = new RiskApprovalRequired(taskId, RiskLevel.Critical, session.Request.Description);
             Context.System.EventStream.Publish(approval);
@@ -245,6 +246,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             session.Request.GraphId,
             session.Request.OwnedPaths,
             session.Request.ExpectedFiles,
+            session.Request.RequiredCapabilities,
             session.Request.AllowNoOpCompletion);
     }
 
@@ -257,6 +259,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         string? graphId = null,
         IReadOnlyList<string>? ownedPaths = null,
         IReadOnlyList<string>? expectedFiles = null,
+        IReadOnlySet<string>? requiredCapabilities = null,
         bool allowNoOpCompletion = false)
     {
         // Attempt workspace allocation; on failure or timeout, award without workspace (graceful degradation)
@@ -267,7 +270,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
                 if (t.IsCompletedSuccessfully && t.Result is WorkspaceAllocated allocated)
                     workspacePath = allocated.WorktreePath;
 
-                return new WorkspaceAllocationDone(taskId, agentId, description, budget, originalSender, graphId, workspacePath, ownedPaths, expectedFiles, allowNoOpCompletion);
+                return new WorkspaceAllocationDone(taskId, agentId, description, budget, originalSender, graphId, workspacePath, ownedPaths, expectedFiles, requiredCapabilities, allowNoOpCompletion);
             })
             .PipeTo(Self);
 
@@ -294,6 +297,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             done.WorkspacePath,
             done.OwnedPaths,
             done.ExpectedFiles,
+            done.RequiredCapabilities,
             done.AllowNoOpCompletion);
         _agentSupervisor.Tell(assignment);
         done.OriginalSender.Tell(assignment);
@@ -392,6 +396,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
             pending.GraphId,
             pending.OwnedPaths,
             pending.ExpectedFiles,
+            pending.RequiredCapabilities,
             pending.AllowNoOpCompletion);
     }
 
@@ -445,6 +450,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         string? GraphId = null,
         IReadOnlyList<string>? OwnedPaths = null,
         IReadOnlyList<string>? ExpectedFiles = null,
+        IReadOnlySet<string>? RequiredCapabilities = null,
         bool AllowNoOpCompletion = false);
     private sealed record WorkspaceAllocationDone(
         string TaskId,
@@ -456,6 +462,7 @@ public sealed class DispatchActor : UntypedActor, IWithTimers
         string? WorkspacePath,
         IReadOnlyList<string>? OwnedPaths,
         IReadOnlyList<string>? ExpectedFiles,
+        IReadOnlySet<string>? RequiredCapabilities,
         bool AllowNoOpCompletion);
 }
 

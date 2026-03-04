@@ -22,6 +22,13 @@ public class RuntimeRegistryTests
                 "baseUrl": "https://api.example.com"
             },
             {
+                "type": "kimi-wire",
+                "id": "kimi-wire",
+                "displayName": "Kimi Wire",
+                "executable": "kimi",
+                "args": ["--wire"]
+            },
+            {
                 "type": "sdk",
                 "id": "sdk-agent",
                 "displayName": "SDK Agent",
@@ -51,7 +58,7 @@ public class RuntimeRegistryTests
     {
         var registry = RuntimeRegistry.LoadFromJson(ValidRuntimesJson);
 
-        Assert.Equal(3, registry.All.Count);
+        Assert.Equal(4, registry.All.Count);
     }
 
     [Fact]
@@ -84,6 +91,17 @@ public class RuntimeRegistryTests
         var sdk = registry.Resolve("sdk-agent") as SdkRuntimeConfig;
         Assert.NotNull(sdk);
         Assert.Equal("my-sdk", sdk!.SdkName);
+    }
+
+    [Fact]
+    public void LoadFromJson_KimiWireRuntimeDeserializes()
+    {
+        var registry = RuntimeRegistry.LoadFromJson(ValidRuntimesJson);
+
+        var kimiWire = registry.Resolve("kimi-wire") as KimiWireRuntimeConfig;
+        Assert.NotNull(kimiWire);
+        Assert.Equal("kimi", kimiWire!.Executable);
+        Assert.Contains("--wire", kimiWire.Args);
     }
 
     [Fact]

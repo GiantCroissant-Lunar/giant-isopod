@@ -15,6 +15,7 @@ public sealed class AgentRuntimeActor : UntypedActor
     private const int MaxExecutionAttempts = 3;
     private static readonly IReadOnlyList<IRuntimeExecutionMiddleware> RuntimeMiddlewares =
     [
+        new KimiAgentFileRuntimeMiddleware(),
         new PromptTransportRuntimeMiddleware(),
         new RetryTimeoutRuntimeMiddleware(),
         new StructuredResultNormalizationMiddleware()
@@ -193,12 +194,13 @@ public sealed class AgentRuntimeActor : UntypedActor
         CancellationToken ct)
     {
         var output = new StringBuilder();
+        using var launchResources = PrepareRuntimeLaunchResources(context);
         await using var runtime = RuntimeFactory.Create(
             _agentId,
             context.RuntimeConfig,
             _model,
             context.WorkingDirectory,
-            _config.RuntimeEnvironment);
+            MergeRuntimeEnvironment(_config.RuntimeEnvironment, launchResources.Placeholders));
         _runtime = runtime;
 
         await runtime.StartAsync(ct);
@@ -227,6 +229,46 @@ public sealed class AgentRuntimeActor : UntypedActor
         return ApplyRetryHeuristics(
             context.Request,
             new RuntimeAttemptResult(parsed, artifacts, transcript));
+    }
+
+    private static RuntimeLaunchResourceScope PrepareRuntimeLaunchResources(RuntimeExecutionContext context)
+    {
+        if (string.IsNullOrWhiteSpace(context.LaunchArtifacts.AgentFileContent))
+            return RuntimeLaunchResourceScope.Empty;
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "giant-isopod-runtime-artifacts", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+        var systemPromptPath = Path.Combine(tempDir, "system.md");
+        var agentFilePath = Path.Combine(tempDir, $"kimi-agent-{SanitizeFileName(context.Request.TaskId)}.yaml");
+        if (!string.IsNullOrWhiteSpace(context.LaunchArtifacts.SystemPromptContent))
+        {
+            File.WriteAllText(systemPromptPath, context.LaunchArtifacts.SystemPromptContent, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
+        File.WriteAllText(agentFilePath, context.LaunchArtifacts.AgentFileContent, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        return new RuntimeLaunchResourceScope(
+            tempDir,
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["agent_file_path"] = agentFilePath,
+                ["agent_system_prompt_path"] = systemPromptPath
+            });
+    }
+
+    private static Dictionary<string, string> MergeRuntimeEnvironment(
+        IReadOnlyDictionary<string, string> runtimeEnvironment,
+        IReadOnlyDictionary<string, string> launchPlaceholders)
+    {
+        var merged = new Dictionary<string, string>(runtimeEnvironment, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in launchPlaceholders)
+            merged[key] = value;
+        return merged;
+    }
+
+    private static string SanitizeFileName(string value)
+    {
+        var invalidChars = Path.GetInvalidFileNameChars();
+        return string.Concat(value.Select(ch => invalidChars.Contains(ch) ? '_' : ch));
     }
 
     private void StartAdhocExecution(string prompt)
@@ -470,6 +512,7 @@ public record ExecuteTaskPrompt(
     string? GraphId = null,
     string? WorkspacePath = null,
     bool AllowNoOpCompletion = false,
+    IReadOnlySet<string>? TaskSkills = null,
     bool CollectArtifacts = true);
 
 /// <summary>Sets the token budget for the active task on this runtime actor.</summary>
@@ -488,3 +531,35 @@ public sealed record RuntimeAttemptResult(
     string Transcript,
     bool Retryable = false,
     string? RetryReason = null);
+
+internal sealed class RuntimeLaunchResourceScope : IDisposable
+{
+    public static RuntimeLaunchResourceScope Empty { get; } = new(null, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+
+    public RuntimeLaunchResourceScope(string? directoryPath, IReadOnlyDictionary<string, string> placeholders)
+    {
+        DirectoryPath = directoryPath;
+        Placeholders = placeholders;
+    }
+
+    public string? DirectoryPath { get; }
+    public IReadOnlyDictionary<string, string> Placeholders { get; }
+
+    public void Dispose()
+    {
+        if (string.IsNullOrWhiteSpace(DirectoryPath))
+            return;
+
+        try
+        {
+            if (Directory.Exists(DirectoryPath))
+                Directory.Delete(DirectoryPath, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+}

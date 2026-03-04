@@ -18,6 +18,7 @@ public static class RuntimeFactory
         return config switch
         {
             CliRuntimeConfig cli => new CliAgentRuntime(agentId, cli, model, workingDirectory, extraEnv),
+            KimiWireRuntimeConfig kimiWire => new KimiWireAgentRuntime(agentId, kimiWire, model, workingDirectory, extraEnv),
             ApiRuntimeConfig => new ApiAgentRuntime(agentId),
             SdkRuntimeConfig => new SdkAgentRuntime(agentId),
             _ => throw new InvalidOperationException($"Unknown runtime config type: {config.GetType().Name}")

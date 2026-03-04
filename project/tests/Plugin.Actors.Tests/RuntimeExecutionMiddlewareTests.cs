@@ -5,7 +5,7 @@ using Xunit;
 
 namespace GiantIsopod.Plugin.Actors.Tests;
 
-public class RuntimeExecutionMiddlewareTests
+public partial class RuntimeExecutionMiddlewareTests
 {
     [Fact]
     public async Task PromptTransportMiddleware_HardensGeminiPrompt()
@@ -26,6 +26,29 @@ public class RuntimeExecutionMiddlewareTests
         Assert.NotNull(observed);
         Assert.Contains("Do not ask for the first task", observed!.EffectivePrompt, StringComparison.Ordinal);
         Assert.Contains("Create Probe.txt.", observed.EffectivePrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task KimiAgentFileRuntimeMiddleware_GeneratesAgentFileAndSystemPrompt()
+    {
+        var middleware = new KimiAgentFileRuntimeMiddleware();
+        var context = CreateContext(runtimeId: "kimi-wire", prompt: "Update Foo.cs.");
+        context = context.withTaskSkills(new HashSet<string>(StringComparer.Ordinal) { "code_edit", "implementation" });
+
+        RuntimeExecutionContext? observed = null;
+        await middleware.InvokeAsync(
+            context,
+            (ctx, _) =>
+            {
+                observed = ctx;
+                return Task.FromResult(CreateUnknownResult());
+            },
+            CancellationToken.None);
+
+        Assert.NotNull(observed);
+        Assert.Contains("version: 1", observed!.LaunchArtifacts.AgentFileContent, StringComparison.Ordinal);
+        Assert.Contains("system_prompt_path: ./system.md", observed.LaunchArtifacts.AgentFileContent, StringComparison.Ordinal);
+        Assert.Contains("Primary mode: implementation.", observed.LaunchArtifacts.SystemPromptContent, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -148,6 +171,30 @@ public class RuntimeExecutionMiddlewareTests
             maxAttempts,
             prompt);
     }
+
+}
+
+internal static class RuntimeExecutionContextTestExtensions
+{
+    internal static RuntimeExecutionContext withTaskSkills(this RuntimeExecutionContext context, IReadOnlySet<string> taskSkills)
+    {
+        return new RuntimeExecutionContext(
+            context.Request with { TaskSkills = taskSkills },
+            context.RuntimeConfig,
+            context.RuntimeId,
+            context.WorkingDirectory,
+            context.AttemptNumber,
+            context.MaxAttempts,
+            context.OriginalPrompt)
+        {
+            EffectivePrompt = context.EffectivePrompt,
+            LaunchArtifacts = context.LaunchArtifacts
+        };
+    }
+}
+
+public partial class RuntimeExecutionMiddlewareTests
+{
 
     private static RuntimeAttemptResult CreateUnknownResult()
     {

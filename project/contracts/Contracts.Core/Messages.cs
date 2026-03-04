@@ -46,6 +46,7 @@ public record TaskAssigned(
     string? WorkspacePath = null,
     IReadOnlyList<string>? OwnedPaths = null,
     IReadOnlyList<string>? ExpectedFiles = null,
+    IReadOnlySet<string>? RequiredCapabilities = null,
     bool AllowNoOpCompletion = false);
 public record TaskCompleted(string TaskId, string AgentId, bool Success, string? Summary = null, string? GraphId = null, IReadOnlyList<ArtifactRef>? Artifacts = null, ProposedSubplan? Subplan = null);
 public record TaskFailed(string TaskId, string? Reason = null, IReadOnlySet<string>? UnmetCapabilities = null, string? GraphId = null);

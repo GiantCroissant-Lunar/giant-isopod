@@ -44,6 +44,12 @@ public sealed class RuntimeExecutionContext
     public int MaxAttempts { get; }
     public string OriginalPrompt { get; }
     public string EffectivePrompt { get; set; }
+    public RuntimeLaunchArtifacts LaunchArtifacts { get; set; } = RuntimeLaunchArtifacts.Empty;
+}
+
+public sealed record RuntimeLaunchArtifacts(string? AgentFileContent = null, string? SystemPromptContent = null)
+{
+    public static RuntimeLaunchArtifacts Empty { get; } = new();
 }
 
 public static class RuntimeExecutionPipeline
@@ -64,6 +70,67 @@ public static class RuntimeExecutionPipeline
         }
 
         return current(context, cancellationToken);
+    }
+}
+
+public sealed class KimiAgentFileRuntimeMiddleware : IRuntimeExecutionMiddleware
+{
+    public Task<RuntimeAttemptResult> InvokeAsync(
+        RuntimeExecutionContext context,
+        RuntimeExecutionMiddlewareDelegate next,
+        CancellationToken cancellationToken)
+    {
+        if (!context.RuntimeId.StartsWith("kimi-wire", StringComparison.OrdinalIgnoreCase))
+            return next(context, cancellationToken);
+
+        context.LaunchArtifacts = BuildLaunchArtifacts(context);
+
+        return next(context, cancellationToken);
+    }
+
+    private static RuntimeLaunchArtifacts BuildLaunchArtifacts(RuntimeExecutionContext context)
+    {
+        var skills = context.Request.TaskSkills?.ToArray() ?? Array.Empty<string>();
+        var prompt = new List<string>
+        {
+            "You are Kimi running inside Giant Isopod.",
+            "Follow the assigned task literally.",
+            "The task description, owned paths, expected files, and result envelope are hard requirements.",
+            "Do not go searching for a different task.",
+            "Stop immediately after the requested work is complete and emit the final giant-isopod result envelope."
+        };
+
+        if (skills.Contains("implementation", StringComparer.Ordinal))
+        {
+            prompt.Add("Primary mode: implementation. Focus on direct code changes in the target files.");
+            prompt.Add("Do not explore unrelated files, tests, docs, or repository metadata unless the task explicitly requires it.");
+        }
+
+        if (skills.Contains("testing", StringComparer.Ordinal))
+        {
+            prompt.Add("Primary mode: testing. Focus on test changes first and avoid modifying production files unless the task explicitly requires it.");
+        }
+
+        if (skills.Contains("review", StringComparer.Ordinal))
+        {
+            prompt.Add("Primary mode: review. Prefer reading and evaluation; do not modify files unless the task explicitly instructs you to.");
+        }
+
+        if (skills.Contains("task_decompose", StringComparer.Ordinal))
+        {
+            prompt.Add("Primary mode: planning. Produce a decomposition only when the task contract asks for subplanning.");
+        }
+
+        var systemPrompt = string.Join(Environment.NewLine, prompt);
+        var agentFile = """
+version: 1
+agent:
+  name: giant-isopod-kimi
+  extend: default
+  system_prompt_path: ./system.md
+""";
+
+        return new RuntimeLaunchArtifacts(agentFile, systemPrompt);
     }
 }
 

@@ -141,8 +141,12 @@ public sealed class CliAgentRuntime : IAgentRuntime
         if (effectiveModel?.ModelId is { } modelId)
             placeholders["model"] = modelId;
 
+        var resolvedPlaceholders = new Dictionary<string, string>(placeholders, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in _extraEnv)
+            resolvedPlaceholders[key] = value;
+
         var args = _config.Args
-            .Select(arg => ResolvePlaceholders(arg, placeholders))
+            .Select(arg => ResolvePlaceholders(arg, resolvedPlaceholders))
             .ToArray();
 
         var environmentPlaceholders = new Dictionary<string, string>(_extraEnv, StringComparer.OrdinalIgnoreCase);

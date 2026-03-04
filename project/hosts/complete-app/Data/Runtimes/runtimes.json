@@ -130,6 +130,18 @@
       "defaults": {}
     },
     {
+      "type": "kimi-wire",
+      "id": "kimi-wire",
+      "displayName": "Kimi Wire",
+      "executable": "kimi",
+      "args": ["--wire", "--yolo", "--no-thinking", "--agent-file", "{agent_file_path}"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      },
+      "defaults": {}
+    },
+    {
       "type": "cli",
       "id": "kimi-debug",
       "displayName": "Kimi Debug",

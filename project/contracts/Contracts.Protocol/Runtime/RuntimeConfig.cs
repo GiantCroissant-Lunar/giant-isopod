@@ -8,6 +8,7 @@ namespace GiantIsopod.Contracts.Protocol.Runtime;
 /// </summary>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(CliRuntimeConfig), "cli")]
+[JsonDerivedType(typeof(KimiWireRuntimeConfig), "kimi-wire")]
 [JsonDerivedType(typeof(ApiRuntimeConfig), "api")]
 [JsonDerivedType(typeof(SdkRuntimeConfig), "sdk")]
 public abstract record RuntimeConfig

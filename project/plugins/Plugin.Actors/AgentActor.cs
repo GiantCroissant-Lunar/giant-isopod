@@ -168,11 +168,11 @@ public sealed class AgentActor : UntypedActor
 
             case TaskAssigned task:
                 _activeTaskCount++;
-                _activeTasks[task.TaskId] = new ActiveTaskContext(task.TaskId, task.GraphId, task.WorkspacePath, task.AllowNoOpCompletion);
+                _activeTasks[task.TaskId] = new ActiveTaskContext(task.TaskId, task.GraphId, task.WorkspacePath, task.AllowNoOpCompletion, task.RequiredCapabilities);
                 if (TryGetPlannerParentTaskId(task.TaskId, out var plannerParentTaskId))
                 {
                     _plannerParentTasks[plannerParentTaskId] =
-                        new ActiveTaskContext(plannerParentTaskId, task.GraphId, task.WorkspacePath, task.AllowNoOpCompletion);
+                        new ActiveTaskContext(plannerParentTaskId, task.GraphId, task.WorkspacePath, task.AllowNoOpCompletion, task.RequiredCapabilities);
                 }
 
                 if (task.Budget?.MaxTokens is { } maxTokens)
@@ -296,6 +296,7 @@ public sealed class AgentActor : UntypedActor
                         synthesisTask.GraphId,
                         synthesisTask.WorkspacePath,
                         synthesisTask.AllowNoOpCompletion,
+                        synthesisTask.TaskSkills,
                         CollectArtifacts: false));
                     _logger.LogInformation("Agent {AgentId} received {Count} subtask results for synthesis of {TaskId}",
                         _agentId, subtasksCompleted.Results.Count, subtasksCompleted.ParentTaskId);
@@ -323,7 +324,8 @@ public sealed class AgentActor : UntypedActor
                         $"Your proposed subtask decomposition for task {rejected.ParentTaskId} was rejected: {rejected.Reason}. Please complete the task directly.",
                         rejectedTask.GraphId,
                         rejectedTask.WorkspacePath,
-                        rejectedTask.AllowNoOpCompletion));
+                        rejectedTask.AllowNoOpCompletion,
+                        rejectedTask.TaskSkills));
                 }
                 break;
 
@@ -377,7 +379,8 @@ public sealed class AgentActor : UntypedActor
             prompt,
             task.GraphId,
             task.WorkspacePath,
-            task.AllowNoOpCompletion));
+            task.AllowNoOpCompletion,
+            task.RequiredCapabilities));
     }
 
     private void RegisterArtifacts(TaskCompleted completed)
@@ -541,7 +544,7 @@ public sealed class AgentActor : UntypedActor
     private sealed record RetrievalComplete(TaskAssigned Task, IReadOnlyList<KnowledgeEntry> Entries);
     private sealed record RetrievalFailed(TaskAssigned Task, string Reason);
     private sealed record DemoTick(int Index);
-    private sealed record ActiveTaskContext(string TaskId, string? GraphId, string? WorkspacePath, bool AllowNoOpCompletion);
+    private sealed record ActiveTaskContext(string TaskId, string? GraphId, string? WorkspacePath, bool AllowNoOpCompletion, IReadOnlySet<string>? TaskSkills);
     private sealed record RegisteredTaskCompleted(TaskCompleted Completed);
     private sealed record ArtifactRegistrationFailed(TaskCompleted Completed, string Reason);
 }
