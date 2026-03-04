@@ -10,8 +10,10 @@ namespace GiantIsopod.Hosts.CompleteApp;
 public partial class TaskGraphView : Control
 {
     private string? _activeGraphId;
+    private HSplitContainer? _splitContainer;
     private GraphEdit? _graphEdit;
     private Label? _titleLabel;
+    private RichTextLabel? _eventLog;
 
     // Track nodes per graph for status updates
     private readonly Dictionary<string, Dictionary<string, GraphNode>> _graphNodes = new();
@@ -30,6 +32,19 @@ public partial class TaskGraphView : Control
 
     public override void _Ready()
     {
+        var root = new VBoxContainer
+        {
+            AnchorLeft = 0,
+            AnchorTop = 0,
+            AnchorRight = 1,
+            AnchorBottom = 1,
+            OffsetLeft = 0,
+            OffsetTop = 0,
+            OffsetRight = 0,
+            OffsetBottom = 0,
+        };
+        AddChild(root);
+
         _titleLabel = new Label
         {
             Text = "Task Graph",
@@ -37,25 +52,67 @@ public partial class TaskGraphView : Control
         };
         _titleLabel.AddThemeColorOverride("font_color", new Color(0.8f, 0.85f, 0.9f));
         _titleLabel.AddThemeFontSizeOverride("font_size", 16);
-        AddChild(_titleLabel);
+        root.AddChild(_titleLabel);
+
+        _splitContainer = new HSplitContainer
+        {
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        };
+        _splitContainer.SplitOffsets = [860];
+        root.AddChild(_splitContainer);
 
         _graphEdit = new GraphEdit
         {
-            Position = new Vector2(0, 24),
-            Size = new Vector2(Size.X, Size.Y - 24),
             RightDisconnects = false,
             MinimapEnabled = false,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+            SizeFlagsVertical = SizeFlags.ExpandFill,
         };
-        AddChild(_graphEdit);
+        _splitContainer.AddChild(_graphEdit);
+
+        var eventPanel = new PanelContainer
+        {
+            CustomMinimumSize = new Vector2(320, 0),
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+        };
+        _splitContainer.AddChild(eventPanel);
+
+        var eventLayout = new VBoxContainer
+        {
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        };
+        eventPanel.AddChild(eventLayout);
+
+        var eventTitle = new Label
+        {
+            Text = "Lifecycle",
+        };
+        eventTitle.AddThemeColorOverride("font_color", new Color(0.78f, 0.82f, 0.88f));
+        eventTitle.AddThemeFontSizeOverride("font_size", 14);
+        eventLayout.AddChild(eventTitle);
+
+        _eventLog = new RichTextLabel
+        {
+            BbcodeEnabled = false,
+            FitContent = false,
+            ScrollFollowing = true,
+            SelectionEnabled = true,
+            SizeFlagsVertical = SizeFlags.ExpandFill,
+            SizeFlagsHorizontal = SizeFlags.ExpandFill,
+        };
+        _eventLog.AddThemeFontSizeOverride("normal_font_size", 12);
+        eventLayout.AddChild(_eventLog);
 
         Visible = false;
     }
 
     public override void _Notification(int what)
     {
-        if (what == NotificationResized && _graphEdit != null)
+        if (what == NotificationResized && _splitContainer != null)
         {
-            _graphEdit.Size = new Vector2(Size.X, Mathf.Max(0, Size.Y - 24));
+            _splitContainer.Size = Size;
         }
     }
 
@@ -104,6 +161,9 @@ public partial class TaskGraphView : Control
 
         if (_titleLabel != null)
             _titleLabel.Text = $"Task Graph: {graphId}";
+        if (_eventLog != null)
+            _eventLog.Clear();
+        AppendEvent(graphId, $"Graph submitted with {nodes.Count} task(s) and {edges.Count} edge(s).");
 
         Visible = true;
     }
@@ -128,6 +188,11 @@ public partial class TaskGraphView : Control
         {
             gNode.SelfModulate = color;
         }
+
+        var eventText = agentId is null
+            ? $"Task {taskId} -> {status}"
+            : $"Task {taskId} -> {status} ({agentId})";
+        AppendEvent(graphId, eventText);
     }
 
     public void HandleGraphCompleted(string graphId, IReadOnlyDictionary<string, bool> results)
@@ -135,6 +200,7 @@ public partial class TaskGraphView : Control
         var succeeded = results.Values.Count(v => v);
         if (_titleLabel != null)
             _titleLabel.Text = $"Task Graph: {graphId} — {succeeded}/{results.Count} succeeded";
+        AppendEvent(graphId, $"Graph completed: {succeeded}/{results.Count} succeeded.");
     }
 
     private GraphNode CreateTaskNode(TaskNode task)
@@ -202,6 +268,14 @@ public partial class TaskGraphView : Control
 
         _graphNodes.Remove(graphId);
         _graphEdges.Remove(graphId);
+    }
+
+    private void AppendEvent(string graphId, string message)
+    {
+        if (_eventLog == null) return;
+
+        var timestamp = Time.GetTimeStringFromSystem();
+        _eventLog.AppendText($"[{timestamp}] {graphId}: {message}\n");
     }
 
     /// <summary>
