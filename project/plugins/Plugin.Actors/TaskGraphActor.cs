@@ -1160,6 +1160,8 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         return queries
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(6)
+            .Concat(new[] { "Planning pitfall" })
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
 

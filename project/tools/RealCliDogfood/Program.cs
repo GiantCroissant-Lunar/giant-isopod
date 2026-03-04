@@ -34,9 +34,10 @@ if (!File.Exists(runtimesPath))
     return 1;
 }
 
-var tempMemory = Path.Combine(Path.GetTempPath(), $"giant-isopod-batch-memory-{Guid.NewGuid():N}");
+var tempMemory = ResolveBatchMemoryPath();
 Directory.CreateDirectory(tempMemory);
 var ignoredArtifactPaths = BuildIgnoredArtifactPaths(repoRoot, taskSpecArg);
+var cleanupTempMemory = ShouldCleanupBatchMemoryPath();
 
 try
 {
@@ -194,7 +195,8 @@ try
 }
 finally
 {
-    TryDeleteDirectory(tempMemory);
+    if (cleanupTempMemory)
+        TryDeleteDirectory(tempMemory);
 }
 
 static Dictionary<string, string> BuildRuntimeEnvironment()
@@ -204,6 +206,21 @@ static Dictionary<string, string> BuildRuntimeEnvironment()
     if (!string.IsNullOrWhiteSpace(zaiApiKey))
         env["ZAI_API_KEY"] = zaiApiKey;
     return env;
+}
+
+static string ResolveBatchMemoryPath()
+{
+    var overridePath = Environment.GetEnvironmentVariable("GIANT_ISOPOD_BATCH_MEMORY_DIR");
+    if (!string.IsNullOrWhiteSpace(overridePath))
+        return Path.GetFullPath(overridePath);
+
+    return Path.Combine(Path.GetTempPath(), $"giant-isopod-batch-memory-{Guid.NewGuid():N}");
+}
+
+static bool ShouldCleanupBatchMemoryPath()
+{
+    var overridePath = Environment.GetEnvironmentVariable("GIANT_ISOPOD_BATCH_MEMORY_DIR");
+    return string.IsNullOrWhiteSpace(overridePath);
 }
 
 static string ResolveTaskDescription(IEnumerable<string> args)
