@@ -181,6 +181,9 @@ public record AgentWorldConfig
     /// <summary>Extra environment variables merged into all agent runtimes (e.g. API keys).</summary>
     public Dictionary<string, string> RuntimeEnvironment { get; init; } = new();
 
+    /// <summary>Repo-relative paths that should be ignored by artifact collection for this world.</summary>
+    public IReadOnlyCollection<string> IgnoredArtifactPaths { get; init; } = Array.Empty<string>();
+
     public string MemvidExecutable { get; init; } = "memvid";
     public string MemorySidecarExecutable { get; init; } = "memory-sidecar";
     public string CheckpointBasePath { get; init; } = "";

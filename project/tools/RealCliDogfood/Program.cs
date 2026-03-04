@@ -35,6 +35,7 @@ if (!File.Exists(runtimesPath))
 
 var tempMemory = Path.Combine(Path.GetTempPath(), $"giant-isopod-batch-memory-{Guid.NewGuid():N}");
 Directory.CreateDirectory(tempMemory);
+var ignoredArtifactPaths = BuildIgnoredArtifactPaths(repoRoot, taskSpecArg);
 
 try
 {
@@ -61,6 +62,7 @@ try
         AnchorRepoPath = repoRoot,
         IntegrationBranch = ResolveCurrentBranch(repoRoot),
         RuntimeEnvironment = BuildRuntimeEnvironment(),
+        IgnoredArtifactPaths = ignoredArtifactPaths,
         MemvidExecutable = "memvid",
         MemorySidecarExecutable = "memory-sidecar"
     };
@@ -243,6 +245,40 @@ static string ResolveCurrentBranch(string repoRoot)
 
     var branch = stdout.Trim();
     return string.IsNullOrWhiteSpace(branch) ? "main" : branch;
+}
+
+static IReadOnlyCollection<string> BuildIgnoredArtifactPaths(string repoRoot, string? taskSpecArg)
+{
+    if (string.IsNullOrWhiteSpace(taskSpecArg) || !taskSpecArg.StartsWith("@", StringComparison.Ordinal))
+        return Array.Empty<string>();
+
+    var manifestPath = taskSpecArg[1..];
+    if (!TryGetRepoRelativePath(repoRoot, manifestPath, out var relativePath))
+        return Array.Empty<string>();
+
+    return new[] { relativePath };
+}
+
+static bool TryGetRepoRelativePath(string repoRoot, string path, out string relativePath)
+{
+    relativePath = string.Empty;
+
+    try
+    {
+        var fullRepoRoot = Path.GetFullPath(repoRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var fullPath = Path.GetFullPath(path);
+        if (!fullPath.StartsWith(fullRepoRoot, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        relativePath = Path.GetRelativePath(repoRoot, fullPath).Replace('\\', '/');
+        return !string.IsNullOrWhiteSpace(relativePath);
+    }
+    catch
+    {
+        return false;
+    }
 }
 
 static GraphManifest? TryLoadGraphManifest(string? taskSpecArg)

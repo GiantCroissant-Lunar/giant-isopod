@@ -43,6 +43,28 @@ public class WorkspaceArtifactCollectorTests : IDisposable
         Assert.All(artifacts, a => Assert.StartsWith("task-1:", a.ArtifactId, StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task CollectAsync_SkipsIgnoredRelativePaths()
+    {
+        File.WriteAllText(Path.Combine(_repoPath, "README.md"), "# updated\n");
+        Directory.CreateDirectory(Path.Combine(_repoPath, "project", "tools", "RealCliDogfood", "Batches"));
+        File.WriteAllText(
+            Path.Combine(_repoPath, "project", "tools", "RealCliDogfood", "Batches", "feature.json"),
+            "{ }\n");
+
+        var artifacts = await WorkspaceArtifactCollector.CollectAsync(
+            _repoPath,
+            "task-1",
+            "agent-1",
+            new[] { "project/tools/RealCliDogfood/Batches/feature.json" });
+
+        Assert.Single(artifacts);
+        Assert.Contains(artifacts, a => a.Metadata!["relativePath"] == "README.md");
+        Assert.DoesNotContain(
+            artifacts,
+            a => a.Metadata!["relativePath"] == "project/tools/RealCliDogfood/Batches/feature.json");
+    }
+
     private static string RunGit(string workDir, params string[] args)
     {
         var psi = new System.Diagnostics.ProcessStartInfo("git")

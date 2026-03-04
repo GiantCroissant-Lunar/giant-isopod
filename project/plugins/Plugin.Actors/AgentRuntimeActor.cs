@@ -216,6 +216,7 @@ public sealed class AgentRuntimeActor : UntypedActor
             context.WorkingDirectory,
             context.Request.TaskId,
             _agentId,
+            _config.IgnoredArtifactPaths,
             ct);
 
         return new RuntimeAttemptResult(parsed, artifacts, transcript);

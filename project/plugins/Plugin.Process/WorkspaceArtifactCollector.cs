@@ -14,6 +14,7 @@ public static class WorkspaceArtifactCollector
         string workspacePath,
         string taskId,
         string agentId,
+        IReadOnlyCollection<string>? ignoredRelativePaths = null,
         CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(workspacePath) || !Directory.Exists(workspacePath))
@@ -34,9 +35,18 @@ public static class WorkspaceArtifactCollector
         var normalizedWorkspaceRoot = Path.GetFullPath(
             workspacePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
             + Path.DirectorySeparatorChar;
+        var ignored = ignoredRelativePaths is { Count: > 0 }
+            ? new HashSet<string>(
+                ignoredRelativePaths.Select(NormalizeRelativePath),
+                StringComparer.OrdinalIgnoreCase)
+            : null;
         var artifacts = new List<ArtifactRef>(relativePaths.Count);
         foreach (var relativePath in relativePaths)
         {
+            var normalizedRelativePath = NormalizeRelativePath(relativePath);
+            if (ignored?.Contains(normalizedRelativePath) == true)
+                continue;
+
             var fullPath = Path.GetFullPath(Path.Combine(workspacePath, relativePath));
             if (!fullPath.StartsWith(normalizedWorkspaceRoot, StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -56,7 +66,7 @@ public static class WorkspaceArtifactCollector
                 Provenance: new ArtifactProvenance(taskId, agentId, createdAt),
                 Metadata: new Dictionary<string, string>
                 {
-                    ["relativePath"] = relativePath.Replace('\\', '/'),
+                    ["relativePath"] = normalizedRelativePath,
                     ["workspacePath"] = workspacePath
                 }));
         }
@@ -130,5 +140,10 @@ public static class WorkspaceArtifactCollector
     {
         var extension = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
         return string.IsNullOrWhiteSpace(extension) ? "unknown" : extension;
+    }
+
+    private static string NormalizeRelativePath(string relativePath)
+    {
+        return relativePath.Replace('\\', '/').TrimStart('/');
     }
 }
