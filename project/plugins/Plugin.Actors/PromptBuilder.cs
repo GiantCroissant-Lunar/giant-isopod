@@ -96,6 +96,7 @@ public static class PromptBuilder
     public static string BuildDecompositionPrompt(
         string taskId,
         string description,
+        IReadOnlyList<KnowledgeEntry>? planningEntries = null,
         IReadOnlySet<string>? executableSkills = null,
         IReadOnlyList<string>? ownedPaths = null,
         IReadOnlyList<string>? expectedFiles = null)
@@ -109,6 +110,24 @@ public static class PromptBuilder
         sb.AppendLine("depends_on_subtasks must contain only zero-based numeric subtask indices encoded as strings, such as [] or [\"0\", \"2\"].");
         sb.AppendLine("Do not use symbolic dependency names like subtask-contracts or contracts.");
         sb.AppendLine("When a subtask updates, documents, amends, or records information in an existing file, set allow_no_op_completion=true so reruns can succeed if the file is already in the desired state.");
+        if (planningEntries is { Count: > 0 })
+        {
+            sb.AppendLine("Planning feedback context:");
+            foreach (var entry in planningEntries)
+            {
+                sb.Append("- [category=").Append(SecurityElement.Escape(entry.Category));
+                sb.Append(" relevance=").Append(entry.Relevance.ToString("F2", CultureInfo.InvariantCulture));
+                if (entry.Tags is { Count: > 0 })
+                {
+                    foreach (var (key, value) in entry.Tags)
+                        sb.Append(' ').Append(key).Append('=').Append(SecurityElement.Escape(value));
+                }
+                sb.Append("] ");
+                sb.AppendLine(SecurityElement.Escape(entry.Content));
+            }
+            sb.AppendLine("Use this feedback to avoid repeating prior bad decompositions, overlapping file ownership, and invalid task boundaries.");
+        }
+
         if (executableSkills is { Count: > 0 })
         {
             sb.AppendLine("Use only these existing executor skill ids in subtask required_capabilities:");

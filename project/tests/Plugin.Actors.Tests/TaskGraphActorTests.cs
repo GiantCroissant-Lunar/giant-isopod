@@ -204,6 +204,53 @@ public class TaskGraphActorTests : TestKit
     }
 
     [Fact]
+    public void PlannerAssignment_UpdatesParentPlanningStatusWithAgent()
+    {
+        var node = new TaskNode(
+            "t-plan",
+            "complex task",
+            new HashSet<string> { "code_edit" },
+            PlannerRequiredCapabilities: new HashSet<string> { "task_decompose" },
+            PreferredPlannerRuntimeId: "claude-code");
+
+        _taskGraph.Tell(MakeGraph("g-plan-assign", new[] { node }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+
+        _dispatchProbe.ExpectMsg<TaskRequest>(msg => msg.TaskId == "t-plan.__plan", TimeSpan.FromSeconds(5));
+
+        _taskGraph.Tell(new TaskAssigned("t-plan.__plan", "planner-1", GraphId: "g-plan-assign"));
+
+        _viewportProbe.FishForMessage(
+            msg => msg is NotifyTaskNodeStatusChanged changed
+                   && changed.GraphId == "g-plan-assign"
+                   && changed.TaskId == "t-plan"
+                   && changed.Status == TaskNodeStatus.Planning
+                   && changed.AgentId == "planner-1",
+            TimeSpan.FromSeconds(5),
+            "Expected planning status update with assigned planner agent.");
+    }
+
+    [Fact]
+    public void TaskAssignment_UpdatesDispatchedStatusWithAgent()
+    {
+        _taskGraph.Tell(MakeGraph("g-assign", new[] { Node("t1", caps: "code_edit") }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+
+        _dispatchProbe.ExpectMsg<TaskRequest>(msg => msg.TaskId == "t1", TimeSpan.FromSeconds(5));
+
+        _taskGraph.Tell(new TaskAssigned("t1", "agent-1", GraphId: "g-assign"));
+
+        _viewportProbe.FishForMessage(
+            msg => msg is NotifyTaskNodeStatusChanged changed
+                   && changed.GraphId == "g-assign"
+                   && changed.TaskId == "t1"
+                   && changed.Status == TaskNodeStatus.Dispatched
+                   && changed.AgentId == "agent-1",
+            TimeSpan.FromSeconds(5),
+            "Expected dispatched status update with assigned executor agent.");
+    }
+
+    [Fact]
     public void PlannerEnabledTask_SubplanFromPlannerInsertsSubtasks()
     {
         _taskGraph.Tell(MakeGraph("g-plan-sub", new[]
@@ -230,6 +277,51 @@ public class TaskGraphActorTests : TestKit
         var subtaskRequest = _dispatchProbe.ExpectMsg<TaskRequest>(msg => msg.TaskId == "t1/sub-0", TimeSpan.FromSeconds(5));
         Assert.Contains("cap-1", subtaskRequest.RequiredCapabilities);
         _dispatchProbe.ExpectNoMsg(TimeSpan.FromMilliseconds(200));
+    }
+
+    [Fact]
+    public void PlannerEnabledTask_QueriesPlanningKnowledgeBeforeDispatch()
+    {
+        var knowledgeProbe = CreateTestProbe();
+        var taskGraph = CreateTaskGraph(NullTaskGraphCheckpointStore.Instance, knowledgeProbe.Ref);
+        var now = DateTimeOffset.UtcNow;
+
+        taskGraph.Tell(MakeGraph("g-plan-knowledge", new[]
+        {
+            new TaskNode(
+                "t1",
+                "Refactor executable resolution for isolated worktrees.",
+                new HashSet<string> { "code_edit" },
+                PlannerRequiredCapabilities: new HashSet<string> { "task_decompose" },
+                PreferredPlannerRuntimeId: "claude-code",
+                OwnedPaths: new[] { "project/plugins/Plugin.Process" },
+                ExpectedFiles: new[] { "project/plugins/Plugin.Process/CliExecutableResolver.cs" })
+        }), TestActor);
+        ExpectMsg<TaskGraphAccepted>();
+
+        var query = knowledgeProbe.ExpectMsg<QueryKnowledge>(TimeSpan.FromSeconds(5));
+        Assert.Equal("task-planner", query.AgentId);
+        Assert.Equal("planning-pitfall", query.Category);
+        Assert.Contains("CliExecutableResolver.cs", query.Query);
+
+        _dispatchProbe.ExpectNoMsg(TimeSpan.FromMilliseconds(200));
+
+        knowledgeProbe.Reply(new KnowledgeResult(
+            "task-planner",
+            new[]
+            {
+                new KnowledgeEntry(
+                    "Do not split resolver and sidecar executable discovery into overlapping file clusters.",
+                    "planning-pitfall",
+                    0.91,
+                    new Dictionary<string, string> { ["kind"] = "merge_conflict" },
+                    now)
+            }));
+
+        var plannerDispatch = _dispatchProbe.ExpectMsg<TaskRequest>(TimeSpan.FromSeconds(5));
+        Assert.Equal("t1.__plan", plannerDispatch.TaskId);
+        Assert.Contains("Planning feedback context:", plannerDispatch.Description);
+        Assert.Contains("Do not split resolver and sidecar executable discovery", plannerDispatch.Description);
     }
 
     [Fact]

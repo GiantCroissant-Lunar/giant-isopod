@@ -15,6 +15,7 @@ namespace GiantIsopod.Plugin.Actors;
 public sealed class TaskGraphActor : UntypedActor, IWithTimers
 {
     private const string PlannerTaskSuffix = ".__plan";
+    private static readonly TimeSpan PlanningKnowledgeTimeout = TimeSpan.FromSeconds(5);
     private readonly IActorRef _dispatch;
     private readonly IActorRef _agentSupervisor;
     private readonly IActorRef _viewport;
@@ -87,6 +88,10 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
                 HandleTaskFailed(failed);
                 break;
 
+            case TaskAssigned assigned:
+                HandleTaskAssigned(assigned);
+                break;
+
             case GraphTimedOut timedOut:
                 HandleGraphTimedOut(timedOut);
                 break;
@@ -105,6 +110,14 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
             case ValidationComplete validation:
                 HandleValidationComplete(validation);
+                break;
+
+            case PlannerKnowledgeLoaded loaded:
+                HandlePlannerKnowledgeLoaded(loaded);
+                break;
+
+            case PlannerKnowledgeUnavailable unavailable:
+                HandlePlannerKnowledgeUnavailable(unavailable);
                 break;
         }
     }
@@ -198,6 +211,29 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
         CheckGraphCompletion(graphId, state);
         PersistGraphStateIfActive(graphId, state);
+    }
+
+    private void HandleTaskAssigned(TaskAssigned assigned)
+    {
+        if (TryResolvePlannerTask(assigned.TaskId, assigned.GraphId, out var plannerGraphId, out var plannerState, out var parentTaskId))
+        {
+            plannerState.AssignedAgent[parentTaskId] = assigned.AgentId;
+            plannerState.PlannerRequestsInFlight.Remove(parentTaskId);
+            plannerState.Status[parentTaskId] = TaskNodeStatus.Planning;
+            _viewport.Tell(new NotifyTaskNodeStatusChanged(plannerGraphId, parentTaskId, TaskNodeStatus.Planning, assigned.AgentId));
+            PersistGraphStateIfActive(plannerGraphId, plannerState);
+            return;
+        }
+
+        if (!TryFindGraph(assigned.TaskId, assigned.GraphId, out var graphId, out var state))
+            return;
+
+        state.AssignedAgent[assigned.TaskId] = assigned.AgentId;
+        if (state.Status.GetValueOrDefault(assigned.TaskId) == TaskNodeStatus.Dispatched)
+        {
+            _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, assigned.TaskId, TaskNodeStatus.Dispatched, assigned.AgentId));
+            PersistGraphStateIfActive(graphId, state);
+        }
     }
 
     private void HandleDecomposition(string graphId, GraphState state, TaskCompleted completed)
@@ -808,19 +844,8 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
             {
                 state.Status[taskId] = TaskNodeStatus.Planning;
                 _viewport.Tell(new NotifyTaskNodeStatusChanged(state.GraphId, taskId, TaskNodeStatus.Planning));
-                _logger.LogDebug("Graph {GraphId}: dispatching planner task for {TaskId}", state.GraphId, taskId);
-
-                var plannerRequest = new TaskRequest(
-                    BuildPlannerTaskId(taskId),
-                    PromptBuilder.BuildDecompositionPrompt(taskId, node.Description, node.RequiredCapabilities, node.OwnedPaths, node.ExpectedFiles),
-                    node.PlannerRequiredCapabilities,
-                    state.GraphId,
-                    node.PreferredPlannerRuntimeId,
-                    node.OwnedPaths,
-                    node.ExpectedFiles,
-                    AllowNoOpCompletion: true);
-
-                _dispatch.Tell(plannerRequest);
+                if (!state.PlannerRequestsInFlight.Contains(taskId))
+                    BeginPlannerDispatch(state, taskId, node);
                 continue;
             }
 
@@ -852,6 +877,86 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
 
             _dispatch.Tell(request);
         }
+    }
+
+    private void BeginPlannerDispatch(GraphState state, string taskId, TaskNode node)
+    {
+        state.PlannerRequestsInFlight.Add(taskId);
+        _logger.LogDebug("Graph {GraphId}: preparing planner task for {TaskId}", state.GraphId, taskId);
+
+        if (_knowledgeSupervisor == ActorRefs.Nobody)
+        {
+            DispatchPlannerRequest(state.GraphId, state, taskId, node, Array.Empty<KnowledgeEntry>());
+            return;
+        }
+
+        var query = BuildPlannerKnowledgeQuery(node);
+        _knowledgeSupervisor.Ask<KnowledgeResult>(
+                new QueryKnowledge(PlannerKnowledgeAgentId, query, "planning-pitfall", TopK: 5),
+                PlanningKnowledgeTimeout)
+            .ContinueWith(task =>
+            {
+                if (task.IsCompletedSuccessfully)
+                    return (object)new PlannerKnowledgeLoaded(state.GraphId, taskId, task.Result.Entries);
+
+                return new PlannerKnowledgeUnavailable(
+                    state.GraphId,
+                    taskId,
+                    task.Exception?.GetBaseException()?.Message ?? "timeout");
+            })
+            .PipeTo(Self);
+    }
+
+    private void HandlePlannerKnowledgeLoaded(PlannerKnowledgeLoaded loaded)
+    {
+        if (!_graphs.TryGetValue(loaded.GraphId, out var state) ||
+            !state.Nodes.TryGetValue(loaded.ParentTaskId, out var node) ||
+            state.PlannerResolved.Contains(loaded.ParentTaskId))
+        {
+            return;
+        }
+
+        DispatchPlannerRequest(loaded.GraphId, state, loaded.ParentTaskId, node, loaded.Entries);
+    }
+
+    private void HandlePlannerKnowledgeUnavailable(PlannerKnowledgeUnavailable unavailable)
+    {
+        if (!_graphs.TryGetValue(unavailable.GraphId, out var state) ||
+            !state.Nodes.TryGetValue(unavailable.ParentTaskId, out var node) ||
+            state.PlannerResolved.Contains(unavailable.ParentTaskId))
+        {
+            return;
+        }
+
+        _logger.LogDebug(
+            "Graph {GraphId}: planner context unavailable for {TaskId}; continuing without prior planning feedback ({Reason})",
+            unavailable.GraphId,
+            unavailable.ParentTaskId,
+            unavailable.Reason);
+
+        DispatchPlannerRequest(unavailable.GraphId, state, unavailable.ParentTaskId, node, Array.Empty<KnowledgeEntry>());
+    }
+
+    private void DispatchPlannerRequest(
+        string graphId,
+        GraphState state,
+        string taskId,
+        TaskNode node,
+        IReadOnlyList<KnowledgeEntry> planningEntries)
+    {
+        var plannerRequest = new TaskRequest(
+            BuildPlannerTaskId(taskId),
+            PromptBuilder.BuildDecompositionPrompt(taskId, node.Description, planningEntries, node.RequiredCapabilities, node.OwnedPaths, node.ExpectedFiles),
+            node.PlannerRequiredCapabilities ?? new HashSet<string>(StringComparer.Ordinal),
+            graphId,
+            node.PreferredPlannerRuntimeId,
+            node.OwnedPaths,
+            node.ExpectedFiles,
+            AllowNoOpCompletion: true);
+
+        _logger.LogDebug("Graph {GraphId}: dispatching planner task for {TaskId}", graphId, taskId);
+        _dispatch.Tell(plannerRequest);
+        PersistGraphStateIfActive(graphId, state);
     }
 
     private void CancelDependents(GraphState state, string failedTaskId)
@@ -984,6 +1089,19 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         _knowledgeSupervisor.Tell(new StoreKnowledge(PlannerKnowledgeAgentId, content, category, tags));
     }
 
+    private static string BuildPlannerKnowledgeQuery(TaskNode node)
+    {
+        var parts = new List<string> { node.Description };
+        if (node.OwnedPaths is { Count: > 0 })
+            parts.AddRange(node.OwnedPaths);
+        if (node.ExpectedFiles is { Count: > 0 })
+            parts.AddRange(node.ExpectedFiles);
+
+        return string.Join(" | ", parts
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
     private static string BuildValidationFailureFeedback(
         string graphId,
         string taskId,
@@ -1041,6 +1159,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         if (!TryResolvePlannerTask(completed.TaskId, completed.GraphId, out var graphId, out var state, out var parentTaskId))
             return false;
 
+        state.PlannerRequestsInFlight.Remove(parentTaskId);
         state.PlannerResolved.Add(parentTaskId);
         state.AssignedAgent[parentTaskId] = completed.AgentId;
 
@@ -1068,6 +1187,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         if (!TryResolvePlannerTask(failed.TaskId, failed.GraphId, out var graphId, out var state, out var parentTaskId))
             return false;
 
+        state.PlannerRequestsInFlight.Remove(parentTaskId);
         state.PlannerResolved.Add(parentTaskId);
         state.Status[parentTaskId] = TaskNodeStatus.Pending;
         _viewport.Tell(new NotifyTaskNodeStatusChanged(graphId, parentTaskId, TaskNodeStatus.Pending));
@@ -1176,6 +1296,7 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
         public Dictionary<string, int> ValidationAttempts { get; } = new();
         public HashSet<string> PendingWorkspaceRelease { get; } = new();
         public HashSet<string> PlannerResolved { get; } = new();
+        public HashSet<string> PlannerRequestsInFlight { get; } = new();
 
         /// <summary>
         /// Builds graph state from a SubmitTaskGraph message.
@@ -1466,6 +1587,8 @@ public sealed class TaskGraphActor : UntypedActor, IWithTimers
     }
 
     private record GraphTimedOut(string GraphId);
+    private sealed record PlannerKnowledgeLoaded(string GraphId, string ParentTaskId, IReadOnlyList<KnowledgeEntry> Entries);
+    private sealed record PlannerKnowledgeUnavailable(string GraphId, string ParentTaskId, string Reason);
 
     internal sealed class PendingValidationEntry
     {
